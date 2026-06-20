@@ -255,11 +255,39 @@ export async function createBooking(payload: {
   deliveryAddressId?: string;
   shippingFee?: number;
   note?: string;
+  paymentMethod?: string;
 }) {
   return apiRequest<BookingResponse>("/bookings", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+// ---------- Payment API functions ----------
+
+export type PaymentLinkResponse = {
+  checkoutUrl: string;
+  qrCode: string;
+  orderCode: number;
+  amount: number;
+};
+
+export type PaymentStatusResponse = {
+  status: string;
+  paid: boolean;
+  paidAt?: string;
+  orderCode?: string;
+};
+
+export async function createPaymentLink(bookingId: string) {
+  return apiRequest<PaymentLinkResponse>("/payments/create-link", {
+    method: "POST",
+    body: JSON.stringify({ bookingId }),
+  });
+}
+
+export async function getPaymentStatus(bookingId: string) {
+  return apiRequest<PaymentStatusResponse>(`/payments/${bookingId}/status`);
 }
 
 export async function getMyBookings() {

@@ -67,12 +67,10 @@ function writeCartData(data: CartData): void {
   window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(data));
 }
 
-/** Lấy danh sách items trong giỏ */
 export function getCart(): CartItem[] {
   return readCartData().items;
 }
 
-/** Thêm 1 item vào giỏ. Nếu garmentSizeId đã tồn tại thì bỏ qua (không thêm trùng). */
 export function addToCart(item: CartItem): void {
   const data = readCartData();
   const exists = data.items.some((i) => i.garmentSizeId === item.garmentSizeId);
@@ -82,26 +80,22 @@ export function addToCart(item: CartItem): void {
   }
 }
 
-/** Xoá 1 item khỏi giỏ theo garmentSizeId */
 export function removeFromCart(garmentSizeId: string): void {
   const data = readCartData();
   data.items = data.items.filter((i) => i.garmentSizeId !== garmentSizeId);
   writeCartData(data);
 }
 
-/** Xoá toàn bộ giỏ hàng */
 export function clearCart(): void {
   if (typeof window === "undefined") return;
   writeCartData({ items: [] });
   window.localStorage.removeItem(LEGACY_CART_STORAGE_KEY);
 }
 
-/** Số lượng items trong giỏ */
 export function cartCount(): number {
   return readCartData().items.length;
 }
 
-/** Tổng quan giỏ hàng */
 export function getCartSummary(): {
   items: CartItem[];
   rentalTotal: number;
@@ -117,9 +111,8 @@ export function getCartSummary(): {
   };
 }
 
-/** Lắng nghe thay đổi giỏ hàng (cho component khác sync) */
 export function onCartChange(callback: () => void): () => void {
-  if (typeof window === "undefined") return () => { };
+  if (typeof window === "undefined") return () => {};
   const handler = (event: StorageEvent) => {
     if (event.key === CART_STORAGE_KEY || event.key === LEGACY_CART_STORAGE_KEY) callback();
   };

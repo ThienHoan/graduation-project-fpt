@@ -1,4 +1,4 @@
-import { ArrayMinSize, IsArray, IsDateString, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from "class-validator";
+import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from "class-validator";
 
 export class CreateBookingDto {
   @IsArray()
@@ -29,4 +29,9 @@ export class CreateBookingDto {
   @IsNumber()
   @Min(0)
   shippingFee?: number;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(["cash", "qr_code"])
+  paymentMethod?: string;
 }

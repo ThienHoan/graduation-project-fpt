@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
-import { createBooking, getMyAddresses, type CustomerAddress } from "@/lib/api";
+import { createBooking, createPaymentLink, getMyAddresses, type CustomerAddress } from "@/lib/api";
 import { getCart, clearCart } from "@/lib/cart";
 
 function formatVND(amount: number) {
@@ -46,6 +46,7 @@ function BookingReviewInner() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState<CustomerAddress | null>(null);
   const [addressLoading, setAddressLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "qr_code">("cash");
 
   const cartItems = getCart();
   const days = startDate && endDate ? daysBetween(startDate, endDate) : 0;
@@ -86,13 +87,32 @@ function BookingReviewInner() {
       pickupMethod,
       deliveryAddressId: pickupMethod === "delivery" ? deliveryAddressId : undefined,
       shippingFee: pickupMethod === "delivery" && shippingFee > 0 ? shippingFee : undefined,
+      paymentMethod,
     });
-    setSubmitting(false);
-    if (res.success && res.data) {
-      clearCart();
-      router.push(`/booking/success?bookingId=${res.data.id}`);
-    } else {
+    if (!res.success || !res.data) {
+      setSubmitting(false);
       setErrorMsg(res.message ?? "Không thể tạo booking. Vui lòng thử lại.");
+      return;
+    }
+
+    const bookingId = res.data.id;
+
+    if (paymentMethod === "qr_code") {
+      const linkRes = await createPaymentLink(bookingId);
+      if (!linkRes.success || !linkRes.data) {
+        setSubmitting(false);
+        setErrorMsg(linkRes.message ?? "Không thể tạo link thanh toán. Vui lòng thử lại.");
+        return;
+      }
+      clearCart();
+      localStorage.setItem("heritage-payment", JSON.stringify({
+        bookingId,
+        amount: linkRes.data.amount,
+      }));
+      window.location.href = linkRes.data.checkoutUrl;
+    } else {
+      clearCart();
+      router.push(`/booking/success?bookingId=${bookingId}`);
     }
   }
 
@@ -235,6 +255,28 @@ function BookingReviewInner() {
             <div className="mt-8 border-t border-sand pt-6">
               <div className="mb-2 flex items-end justify-between gap-4"><span className="text-lg text-ink">Tổng thanh toán</span><span className="font-display text-4xl text-lotus">{formatVND(grandTotal)}</span></div>
               <p className="text-right text-xs text-stone-500">Gồm tiền thuê{shippingFee > 0 ? ", phí giao hàng" : ""} và tiền cọc hoàn lại</p>
+            </div>
+
+            <div className="mt-8 border-t border-sand pt-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">Phương thức thanh toán</h3>
+              <div className="space-y-3">
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
+                  <input type="radio" name="paymentMethod" value="cash" checked={paymentMethod === "cash"} onChange={() => setPaymentMethod("cash")} className="h-4 w-4 text-lotus focus:ring-lotus" />
+                  <span className="material-symbols-outlined text-xl text-stone-500">payments</span>
+                  <div>
+                    <span className="text-sm font-medium text-ink">Tiền mặt</span>
+                    <p className="text-xs text-stone-500">Thanh toán tại cửa hàng khi nhận đồ</p>
+                  </div>
+                </label>
+                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
+                  <input type="radio" name="paymentMethod" value="qr_code" checked={paymentMethod === "qr_code"} onChange={() => setPaymentMethod("qr_code")} className="h-4 w-4 text-lotus focus:ring-lotus" />
+                  <span className="material-symbols-outlined text-xl text-stone-500">qr_code_2</span>
+                  <div>
+                    <span className="text-sm font-medium text-ink">Chuyển khoản (QR)</span>
+                    <p className="text-xs text-stone-500">Quét mã QR để thanh toán qua ngân hàng</p>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <label className="mt-8 flex cursor-pointer items-start gap-3 text-sm leading-7 text-stone-600">
