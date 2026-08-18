@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { AppRole, AssetStatus, BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PricingService } from "../pricing/pricing.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { LocationsService } from "../locations/locations.service";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
@@ -82,6 +83,7 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly locations: LocationsService,
+    private readonly pricing: PricingService,
   ) { }
 
   private parseDateRange(startDate: string, endDate: string) {
@@ -236,14 +238,22 @@ export class BookingsService {
     const sizeMap = new Map(sizes.map((s) => [s.id, s]));
     let rentalTotal = 0;
     let depositTotal = 0;
-    const itemsData = dto.garmentSizeIds.map((sizeId) => {
+    const itemsData: Array<{
+      garmentId: string;
+      garment_size_id: string;
+      dailyPrice: number;
+      depositAmount: number;
+    }> = [];
+    for (const sizeId of dto.garmentSizeIds) {
       const size = sizeMap.get(sizeId)!;
-      const dp = Number(size.daily_price ?? 0);
+      // Giá theo ngày TẠO booking (booking.createdAt): price_period active chứa
+      // ngày hôm nay, fallback về giá cơ sở. Không tính theo từng ngày thuê.
+      const dp = await this.pricing.effectiveDailyPrice(sizeId);
       const da = Number(size.deposit_amount ?? 0);
       rentalTotal += dp * days;
       depositTotal += da;
-      return { garmentId: size.garment_id, garment_size_id: sizeId, dailyPrice: dp, depositAmount: da };
-    });
+      itemsData.push({ garmentId: size.garment_id, garment_size_id: sizeId, dailyPrice: dp, depositAmount: da });
+    }
 
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.

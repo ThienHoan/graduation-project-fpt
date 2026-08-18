@@ -12,6 +12,7 @@ import { InspectionsModule } from "./modules/inspections/inspections.module";
 import { AiModule } from "./modules/ai/ai.module";
 import { LocationsModule } from "./modules/locations/locations.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
+import { PricingModule } from "./modules/pricing/pricing.module";
 import { RefundsModule } from "./modules/refunds/refunds.module";
 import { UsersModule } from "./modules/users/users.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -34,6 +35,7 @@ import { ReviewsModule } from "./modules/reviews/reviews.module";
     NotificationsModule,
     InspectionsModule,
     PaymentsModule,
+    PricingModule,
     RefundsModule,
     AiModule,
     ChatModule,

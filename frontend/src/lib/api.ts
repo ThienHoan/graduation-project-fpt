@@ -1031,6 +1031,234 @@ export async function updateAdminSetting(key: string, value: any) {
   });
 }
 
+// ---------- Pricing (điều chỉnh giá AI) ----------
+
+export type PriceCalendarEntry = {
+  id: string;
+  name: string;
+  occasionType: "holiday" | "occasion" | "peak_season" | "off_season";
+  fromDate: string;
+  toDate: string;
+  adjustmentPercent: number;
+  priority: number;
+  garmentKeywords: string[];
+  isActive: boolean;
+  note: string | null;
+  createdAt: string;
+};
+
+export type PriceSuggestionEntry = {
+  id: string;
+  garmentSizeId: string;
+  garmentId: string | null;
+  garmentName: string | null;
+  sizeLabel: string | null;
+  calendarId: string | null;
+  calendarName: string | null;
+  fromDate: string;
+  toDate: string;
+  basePrice: number;
+  purchaseCost: number;
+  targetRentalDays: number;
+  recommendedAdjustmentPct: number;
+  suggestedPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  validPrice: number;
+  demandPressure: number | null;
+  bookingPressure: number | null;
+  confidence: number | null;
+  reason: Record<string, unknown>;
+  source: "ai" | "owner";
+  status: "pending" | "approved" | "rejected" | "deactivated";
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+};
+
+export type PricePeriodEntry = {
+  id: string;
+  garmentSizeId: string;
+  garmentName: string | null;
+  sizeLabel: string | null;
+  fromDate: string;
+  toDate: string;
+  dailyPrice: number;
+  source: "base" | "ai_suggestion" | "owner";
+  sourceSuggestionId: string | null;
+  occasionType: string | null;
+  eventName: string | null;
+  isActive: boolean;
+  createdAt: string;
+};
+
+export type PriceCalendarPayload = {
+  name: string;
+  occasionType: string;
+  fromDate: string;
+  toDate: string;
+  adjustmentPercent?: number;
+  priority?: number;
+  garmentKeywords?: string[];
+  isActive?: boolean;
+  note?: string;
+};
+
+export type GenerateSuggestionsResult = {
+  generated: number;
+  skipped: Array<{
+    sizeId?: string;
+    error?: string;
+    note?: string;
+    garmentName?: string | null;
+    sizeLabel?: string | null;
+  }>;
+  suggestions: string[];
+  window: { from: string; to: string; calendarId: string | null };
+};
+
+export async function getPricingCalendar(query?: {
+  activeOnly?: boolean;
+  upcoming?: boolean;
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (query?.activeOnly) params.append("activeOnly", "true");
+  if (query?.upcoming) params.append("upcoming", "true");
+  if (query?.search) params.append("search", query.search);
+  if (query?.from) params.append("from", query.from);
+  if (query?.to) params.append("to", query.to);
+  if (query?.page) params.append("page", String(query.page));
+  if (query?.limit) params.append("limit", String(query.limit));
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: PriceCalendarEntry[]; total: number; page: number; limit: number }>(`/pricing/calendar${queryStr}`);
+}
+
+export async function createPricingCalendar(payload: PriceCalendarPayload) {
+  return apiRequest<PriceCalendarEntry>("/pricing/calendar", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePricingCalendar(id: string, payload: Partial<PriceCalendarPayload>) {
+  return apiRequest<PriceCalendarEntry>(`/pricing/calendar/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removePricingCalendar(id: string) {
+  return apiRequest<{ id: string; deactivated: boolean }>(`/pricing/calendar/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getPricingSuggestions(query?: {
+  status?: string;
+  calendarId?: string;
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (query?.status) params.append("status", query.status);
+  if (query?.calendarId) params.append("calendarId", query.calendarId);
+  if (query?.search) params.append("search", query.search);
+  if (query?.from) params.append("from", query.from);
+  if (query?.to) params.append("to", query.to);
+  if (query?.page) params.append("page", String(query.page));
+  if (query?.limit) params.append("limit", String(query.limit));
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: PriceSuggestionEntry[]; total: number; page: number; limit: number }>(`/pricing/suggestions${queryStr}`);
+}
+
+export async function generatePricingSuggestions(payload: { calendarId?: string; from?: string; to?: string }) {
+  return apiRequest<GenerateSuggestionsResult>("/pricing/suggestions/generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createPricingSuggestion(payload: {
+  garmentSizeIds: string[];
+  from: string;
+  to: string;
+  validPrice: number;
+  calendarId?: string;
+}) {
+  return apiRequest<{
+    created: Array<{ id: string }>;
+    skipped: Array<{ sizeId: string; name: string | null; sizeLabel: string | null; error: string }>;
+  }>("/pricing/suggestions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePricingSuggestionPrice(id: string, validPrice: number) {
+  return apiRequest<{ id: string; suggestion: PriceSuggestionEntry }>(`/pricing/suggestions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ validPrice }),
+  });
+}
+
+export async function approvePricingSuggestion(id: string) {
+  return apiRequest<{ id: string; status: string }>(`/pricing/suggestions/${id}/approve`, { method: "POST" });
+}
+
+export async function rejectPricingSuggestion(id: string) {
+  return apiRequest<{ id: string; status: string }>(`/pricing/suggestions/${id}/reject`, { method: "POST" });
+}
+
+export async function bulkPricingSuggestionAction(ids: string[], action: "approve" | "reject") {
+  return apiRequest<{
+    action: string;
+    succeeded: string[];
+    failed: Array<{ id: string; reason: string }>;
+    successCount: number;
+    failureCount: number;
+  }>(`/pricing/suggestions/bulk`, { method: "POST", body: JSON.stringify({ ids, action }) });
+}
+
+export async function deactivatePricingSuggestion(id: string) {
+  return apiRequest<{ id: string; status: string }>(`/pricing/suggestions/${id}/deactivate`, { method: "POST" });
+}
+
+export async function getPricingPeriods(query?: {
+  sizeId?: string;
+  activeOnly?: boolean;
+  endDateGte?: string;
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (query?.sizeId) params.append("sizeId", query.sizeId);
+  if (query?.activeOnly) params.append("activeOnly", "true");
+  if (query?.endDateGte) params.append("endDateGte", query.endDateGte);
+  if (query?.search) params.append("search", query.search);
+  if (query?.from) params.append("from", query.from);
+  if (query?.to) params.append("to", query.to);
+  if (query?.page) params.append("page", String(query.page));
+  if (query?.limit) params.append("limit", String(query.limit));
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<{ items: PricePeriodEntry[]; total: number; page: number; limit: number }>(`/pricing/periods${queryStr}`);
+}
+
+export async function deactivatePricingPeriod(id: string) {
+  return apiRequest<{ id: string; isActive: boolean }>(`/pricing/periods/${id}/deactivate`, { method: "POST" });
+}
+
 // ---------- Notifications ----------
 
 export type NotificationItem = {

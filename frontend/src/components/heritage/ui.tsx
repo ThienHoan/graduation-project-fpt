@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
@@ -8,8 +10,8 @@ import { bookingFlowSteps } from "@/lib/heritage-mock-data";
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 type StaffNavKey = "overview" | "inspection"| "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat";
-type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
+type ManagerNavKey = "overview" | "inventory" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing";
+export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
   currentStep,
@@ -223,6 +225,7 @@ export function ManagerPortalShell({
     { key: "finance", label: "Tài chính", icon: "payments", href: "/dashboard/manager#finance" },
     { key: "reviews", label: "Đánh giá", icon: "reviews", href: "/dashboard/manager/reviews" },
     { key: "refunds", label: "Duyệt hoàn cọc", icon: "currency_exchange", href: "/dashboard/manager#refunds" },
+    { key: "pricing", label: "Điều chỉnh giá", icon: "price_change", href: "/dashboard/manager/pricing" },
     { key: "chat", label: "CSKH", icon: "chat", href: "/chat" },
   ] as const;
 

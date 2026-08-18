@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from "@nes
 import { TryonStatus, type TryonCategory } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PricingService } from "../pricing/pricing.service";
 import type { CreateTryonDto, TryonMode } from "./dto/create-tryon.dto";
 import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
 import type { AdvisorProduct, OpenRouterResponse, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
@@ -77,7 +78,10 @@ type ReplicateResult = {
 export class AiService {
   private readonly logger = new Logger(AiService.name);
 
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pricing: PricingService,
+  ) { }
 
   async createTryon(dto: CreateTryonDto, customerId: string) {
     const size = await this.prisma.garment_sizes.findFirst({
@@ -531,30 +535,32 @@ export class AiService {
     let droppedSize: string[] | undefined;
 
     if (intent === "search") {
-      catalog = await this.queryCatalog(filters);
+      // Khách cung cấp ngày thuê → giá hiệu lực tính theo ngày TẠO booking hôm nay.
+      const onDate = dto.rentalStartDate && dto.rentalEndDate ? new Date() : undefined;
+      catalog = await this.queryCatalog(filters, onDate);
       this.logger.debug(`Catalog count: ${catalog.length}`);
 
       if (catalog.length === 0 && filters?.occasion) {
         this.logger.debug("0 results with occasion, retrying without occasion");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined });
+        catalog = await this.queryCatalog({ ...filters, occasion: undefined }, onDate);
         if (catalog.length > 0) droppedOccasion = filters.occasion;
       }
 
       if (catalog.length === 0 && filters?.keyword) {
         this.logger.debug("0 results with keyword, retrying without keyword");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined });
+        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined }, onDate);
         if (catalog.length > 0) droppedKeyword = filters.keyword;
       }
 
       if (catalog.length === 0 && filters?.color) {
         this.logger.debug("0 results with color, retrying without color");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined });
+        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined }, onDate);
         if (catalog.length > 0) droppedColor = filters.color;
       }
 
       if (catalog.length === 0 && filters?.size) {
         this.logger.debug("0 results with size, retrying without size");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined, size: undefined });
+        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined, size: undefined }, onDate);
         if (catalog.length > 0) droppedSize = filters.size;
       }
 
@@ -578,7 +584,7 @@ export class AiService {
     return ok(this.parseAdvisorResponse(raw, promptCatalog));
   }
 
-  private async queryCatalog(filters?: ProductFilters): Promise<AdvisorProduct[]> {
+  private async queryCatalog(filters?: ProductFilters, onDate?: Date): Promise<AdvisorProduct[]> {
     const where: Record<string, unknown> = { isActive: true, deletedAt: null };
 
     if (filters?.category?.length) {
@@ -667,9 +673,20 @@ export class AiService {
       (budgetMin === undefined || price >= budgetMin) &&
       (budgetMax === undefined || price <= budgetMax);
 
+    // Khi khách có ngày thuê, dùng giá hiệu lực (price_period active hôm nay)
+    // thay cho giá cơ sở khi hiển thị/lọc budget.
+    const effectivePrices = onDate
+      ? await this.pricing.effectiveDailyPriceMap(
+          garments.flatMap((g) => g.garment_sizes.map((s) => s.id)),
+          onDate,
+        )
+      : null;
+
     return garments.map((g) => {
       const activeSizes = g.garment_sizes;
-      const allPrices = activeSizes.map((s) => Number(s.daily_price)).filter((p) => p > 0);
+      const priceOf = (s: { id: string; daily_price: unknown }): number =>
+        effectivePrices?.get(s.id) ?? Number(s.daily_price);
+      const allPrices = activeSizes.map((s) => priceOf(s)).filter((p) => p > 0);
       // When a price filter is set, show the cheapest size that actually matches
       // the budget (not the cheapest size overall) to avoid misleading prices.
       const matchingPrices = allPrices.filter(inBudget);

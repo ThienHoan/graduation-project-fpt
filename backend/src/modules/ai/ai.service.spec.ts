@@ -50,6 +50,12 @@ function createMockPrisma() {
   return prisma;
 }
 
+function createMockPricing() {
+  return {
+    effectiveDailyPriceMap: vi.fn(async () => new Map()),
+  } as any;
+}
+
 function createMockOpenRouterResponse(content: string) {
   return {
     id: "test-id",
@@ -71,7 +77,7 @@ describe("AiService", () => {
   beforeEach(() => {
     originalFetch = global.fetch;
     prisma = createMockPrisma();
-    service = new AiService(prisma as never);
+    service = new AiService(prisma as never, createMockPricing());
     process.env.OPENROUTER_API_KEY = "sk-or-v1-test-key";
     process.env.OPENROUTER_MODEL = "openai/gpt-4o";
   });

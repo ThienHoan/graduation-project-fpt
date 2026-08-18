@@ -88,6 +88,41 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
     kind: "number",
     defaultValue: { value: 38000 },
   },
+  {
+    key: "pricing_target_rental_days",
+    label: "Số ngày thuê kỳ vọng (pricing)",
+    description: "Dùng để tính giá sàn: purchase_cost / target_rental_days. Nhỏ hơn hoặc bằng 0 → cấu hình lỗi.",
+    kind: "number",
+    defaultValue: { value: 30 },
+  },
+  {
+    key: "pricing_abs_min_per_day",
+    label: "Giá sàn tuyệt đối/ngày (pricing)",
+    description: "Mức giá tối thiểu tuyệt đối mỗi ngày, áp cùng với mức sàn theo giá nhập.",
+    kind: "number",
+    defaultValue: { value: 0 },
+  },
+  {
+    key: "pricing_max_uplift_pct",
+    label: "Phần trăm tăng giá tối đa (pricing)",
+    description: "Giới hạn trần giá: base_price × (1 + max_uplift_pct/100). Nhỏ hơn 0 → cấu hình lỗi.",
+    kind: "number",
+    defaultValue: { value: 50 },
+  },
+  {
+    key: "pricing_advice_lead_days",
+    label: "Số ngày khuyên trước sự kiện (pricing)",
+    description: "Scheduler mỗi ngày sinh đề xuất cho sự kiện bắt đầu trong X ngày tới.",
+    kind: "number",
+    defaultValue: { value: 7 },
+  },
+  {
+    key: "pricing_fail_fast_per_round",
+    label: "Fail-fast toàn lượt (pricing)",
+    description: "Khi bật, nếu một size lỗi (sàn > trần, thiếu giá nhập...) sẽ dừng cả lượt sinh thay vì bỏ qua size đó.",
+    kind: "json",
+    defaultValue: { value: false },
+  },
 ];
 
 export const ADMIN_ROLE_OPTIONS: AppRole[] = ["customer", "staff", "manager_owner", "admin"];

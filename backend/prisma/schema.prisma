@@ -29,12 +29,13 @@ model UserAccount {
   messages                                               messages[]
   notifications                                          Notification[]
   penaltiesCreated                                       Penalty[]
+  price_suggestions                                      price_suggestions[]
   profile                                                Profile?
   refunds                                                Refund[]
-  tryonRequests                                          TryonRequest[]
   customerReviews                                        Review[]                @relation("CustomerReviews")
-  staffRepliedReviews                                    Review[]                @relation("StaffRepliedReviews")
   staffReportedReviews                                   Review[]                @relation("StaffReportedReviews")
+  staffRepliedReviews                                    Review[]                @relation("StaffRepliedReviews")
+  tryonRequests                                          TryonRequest[]
 
   @@map("user_accounts")
 }
@@ -87,10 +88,10 @@ model Address {
   ward         String?
   district     String?
   city         String?
-  latitude     Float?
-  longitude    Float?
   isDefault    Boolean     @default(false) @map("is_default")
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  latitude     Float?
+  longitude    Float?
   customer     UserAccount @relation(fields: [customerId], references: [id])
   bookings     Booking[]   @relation("DeliveryAddress")
 
@@ -124,8 +125,8 @@ model Garment {
   images            GarmentImage[]
   garment_sizes     garment_sizes[]
   category          GarmentCategory? @relation(fields: [categoryId], references: [id])
-  tryonRequests     TryonRequest[]
   reviews           Review[]         @relation("GarmentReviews")
+  tryonRequests     TryonRequest[]
 
   @@map("garments")
 }
@@ -171,13 +172,13 @@ model Booking {
   pickupMethod          String                 @default("store_pickup") @map("pickup_method")
   rentalTotal           Decimal                @default(0) @map("rental_total") @db.Decimal(12, 2)
   depositTotal          Decimal                @default(0) @map("deposit_total") @db.Decimal(12, 2)
-  shippingFee           Decimal                @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   penaltyTotal          Decimal                @default(0) @map("penalty_total") @db.Decimal(12, 2)
   note                  String?
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime               @default(now()) @map("updated_at") @db.Timestamptz(6)
   deliveryAddressId     String?                @map("delivery_address_id") @db.Uuid
   paymentDueAt          DateTime?              @map("payment_due_at") @db.Timestamptz(6)
+  shippingFee           Decimal                @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   paymentMethod         String                 @default("cash") @map("payment_method")
   items                 BookingItem[]
   statusHistory         BookingStatusHistory[]
@@ -451,16 +452,18 @@ model SystemSetting {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model garment_sizes {
-  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  garment_id     String         @db.Uuid
-  size_label     String?        @db.VarChar
-  daily_price    Decimal?       @default(0) @db.Decimal(12, 2)
-  deposit_amount Decimal?       @default(0) @db.Decimal(12, 2)
-  is_active      Boolean?       @default(true)
-  created_at     DateTime?      @default(now()) @db.Timestamptz(6)
-  booking_items  BookingItem[]
-  garment_assets GarmentAsset[]
-  garments       Garment        @relation(fields: [garment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garment_id        String              @db.Uuid
+  size_label        String?             @db.VarChar
+  daily_price       Decimal?            @default(0) @db.Decimal(12, 2)
+  deposit_amount    Decimal?            @default(0) @db.Decimal(12, 2)
+  is_active         Boolean?            @default(true)
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  booking_items     BookingItem[]
+  garment_assets    GarmentAsset[]
+  garments          Garment             @relation(fields: [garment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  price_periods     price_periods[]
+  price_suggestions price_suggestions[]
 
   @@unique([garment_id, size_label])
 }
@@ -504,6 +507,110 @@ model messages {
   user_accounts   UserAccount   @relation(fields: [sender_id], references: [id], onDelete: Cascade)
 }
 
+model Review {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId     String        @map("customer_id") @db.Uuid
+  garmentId      String        @map("garment_id") @db.Uuid
+  bookingId      String        @map("booking_id") @db.Uuid
+  rating         Int           @default(5)
+  comment        String?
+  status         ReviewStatus? @default(public)
+  staffReply     String?       @map("staff_reply")
+  staffReplyAt   DateTime?     @map("staff_reply_at") @db.Timestamptz(6)
+  staffRepliedBy String?       @map("staff_replied_by") @db.Uuid
+  isReported     Boolean?      @default(false) @map("is_reported")
+  reportedReason String?       @map("reported_reason")
+  reportedAt     DateTime?     @map("reported_at") @db.Timestamptz(6)
+  reportedBy     String?       @map("reported_by") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  images         String[]      @default([]) @map("images")
+  video          String?       @map("video")
+  editCount      Int           @default(0) @map("edit_count")
+  isLocked       Boolean       @default(false) @map("is_locked")
+  booking        Booking       @relation("BookingReviews", fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer       UserAccount   @relation("CustomerReviews", fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  garment        Garment       @relation("GarmentReviews", fields: [garmentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reportedByUser UserAccount?  @relation("StaffReportedReviews", fields: [reportedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  repliedByUser  UserAccount?  @relation("StaffRepliedReviews", fields: [staffRepliedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([customerId, garmentId, bookingId])
+  @@map("reviews")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model price_calendar {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String
+  occasion_type      price_occasion_type @default(occasion)
+  from_date          DateTime            @db.Date
+  to_date            DateTime            @db.Date
+  adjustment_percent Int                 @default(0)
+  priority           Int                 @default(0)
+  garment_keywords   String[]            @default([])
+  is_active          Boolean             @default(true)
+  note               String?
+  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  price_suggestions  price_suggestions[]
+
+  @@index([is_active, from_date, to_date], map: "price_calendar_active_range_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model price_periods {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garment_size_id      String              @db.Uuid
+  from_date            DateTime            @db.Date
+  to_date              DateTime            @db.Date
+  daily_price          Decimal             @db.Decimal(12, 2)
+  source               price_period_source @default(ai_suggestion)
+  source_suggestion_id String?             @db.Uuid
+  is_active            Boolean             @default(true)
+  created_at           DateTime            @default(now()) @db.Timestamptz(6)
+  garment_sizes        garment_sizes       @relation(fields: [garment_size_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  price_suggestions    price_suggestions?  @relation(fields: [source_suggestion_id], references: [id], onUpdate: NoAction)
+
+  @@index([garment_size_id, is_active, from_date, to_date], map: "price_periods_garment_size_active_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model price_suggestions {
+  id                         String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garment_size_id            String                  @db.Uuid
+  from_date                  DateTime                @db.Date
+  to_date                    DateTime                @db.Date
+  base_price                 Decimal                 @db.Decimal(12, 2)
+  purchase_cost              Decimal                 @db.Decimal(12, 2)
+  target_rental_days         Int
+  recommended_adjustment_pct Decimal                 @db.Decimal(5, 2)
+  suggested_price            Decimal                 @db.Decimal(12, 2)
+  min_price                  Decimal                 @db.Decimal(12, 2)
+  max_price                  Decimal                 @db.Decimal(12, 2)
+  valid_price                Decimal                 @db.Decimal(12, 2)
+  demand_score               Decimal?                @db.Decimal(4, 2)
+  booking_score               Decimal?                @db.Decimal(4, 2)
+  confidence                 Decimal?                @db.Decimal(4, 2)
+  reason_json                Json?
+  status                     price_suggestion_status @default(pending)
+  source                     price_suggestion_source @default(ai)
+  reviewed_by                String?                 @db.Uuid
+  reviewed_at                DateTime?               @db.Timestamptz(6)
+  applied_at                 DateTime?               @db.Timestamptz(6)
+  created_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  calendar_id                String?                 @db.Uuid
+  price_periods              price_periods[]
+  price_calendar             price_calendar?         @relation(fields: [calendar_id], references: [id], onUpdate: NoAction)
+  garment_sizes              garment_sizes           @relation(fields: [garment_size_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user_accounts              UserAccount?            @relation(fields: [reviewed_by], references: [id], onUpdate: NoAction)
+
+  @@index([garment_size_id], map: "price_suggestions_garment_size_idx")
+  @@index([status])
+}
+
 enum AppRole {
   customer
   staff
@@ -539,11 +646,11 @@ enum BookingStatus {
   renting
   returned
   inspection_pending
-  refund_pending
   completed
   cancelled
   rejected
   overdue
+  refund_pending
 
   @@map("booking_status")
 }
@@ -602,38 +709,27 @@ enum ReviewStatus {
   @@map("review_status")
 }
 
-model Review {
-  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  customerId String       @map("customer_id") @db.Uuid
-  garmentId  String       @map("garment_id") @db.Uuid
-  bookingId  String       @map("booking_id") @db.Uuid
-  rating     Int          @default(5)
-  comment    String?
-  status     ReviewStatus @default(public)
+enum price_occasion_type {
+  holiday
+  occasion
+  peak_season
+  off_season
+}
 
-  staffReply     String?   @map("staff_reply")
-  staffReplyAt   DateTime? @map("staff_reply_at") @db.Timestamptz(6)
-  staffRepliedBy String?   @map("staff_replied_by") @db.Uuid
+enum price_period_source {
+  base
+  ai_suggestion
+  owner
+}
 
-  isReported     Boolean   @default(false) @map("is_reported")
-  reportedReason String?   @map("reported_reason")
-  reportedAt     DateTime? @map("reported_at") @db.Timestamptz(6)
-  reportedBy     String?   @map("reported_by") @db.Uuid
+enum price_suggestion_status {
+  pending
+  approved
+  rejected
+  deactivated
+}
 
-  editCount      Int       @default(0) @map("edit_count")
-  isLocked       Boolean   @default(false) @map("is_locked")
-
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
-  images    String[] @default([]) @map("images")
-  video     String?  @map("video")
-
-  customer       UserAccount  @relation("CustomerReviews", fields: [customerId], references: [id], onDelete: Cascade)
-  garment        Garment      @relation("GarmentReviews", fields: [garmentId], references: [id], onDelete: Cascade)
-  booking        Booking      @relation("BookingReviews", fields: [bookingId], references: [id], onDelete: Cascade)
-  repliedByUser  UserAccount? @relation("StaffRepliedReviews", fields: [staffRepliedBy], references: [id])
-  reportedByUser UserAccount? @relation("StaffReportedReviews", fields: [reportedBy], references: [id])
-
-  @@unique([customerId, garmentId, bookingId])
-  @@map("reviews")
+enum price_suggestion_source {
+  ai
+  owner
 }

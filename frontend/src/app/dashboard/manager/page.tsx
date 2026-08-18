@@ -635,7 +635,7 @@ export default function ManagerDashboardPage() {
       active={tab as any}
       title={meta.title}
       subtitle={meta.subtitle}
-      onTabChange={(key) => { if (key !== "reviews" && key !== "chat") goToTab(key); }}
+      onTabChange={(key) => { if (key !== "reviews" && key !== "chat" && key !== "pricing") goToTab(key); }}
       managerName={hasMounted ? (user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng") : "Quản lý cửa hàng"}
       managerEmail={hasMounted ? (user?.email ?? null) : null}
       currentDateLabel={hasMounted ? currentDateLabel : ""}
