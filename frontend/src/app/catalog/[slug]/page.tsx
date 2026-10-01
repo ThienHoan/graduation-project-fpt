@@ -8,7 +8,7 @@ import { CustomerFooter } from "@/components/customer/footer";
 import { useAuth } from "@/components/auth/auth-provider";
 import { getGarmentsGrouped, getGarmentReviews, type GarmentGrouped, type ReviewResponse } from "@/lib/api";
 import { addToCart, cartCount } from "@/lib/cart";
-import { garmentSpecs, pairingItems } from "@/lib/heritage-mock-data";
+import { pairingItems } from "@/lib/heritage-mock-data";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
 
@@ -303,6 +303,75 @@ async function handleConsult() {
                   </div>
                 </div>
 
+                {/* Size measurements */}
+                <div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <label className="text-sm font-semibold uppercase tracking-[0.18em] text-ink">Số đo trang phục (cm)</label>
+                  </div>
+                  {(() => {
+                    const rows: Array<{ key: string; label: string; get: (m: NonNullable<typeof selectedSize>["measurements"]) => number | null }> = [
+                      { key: "shoulder", label: "Vai", get: (m) => m?.shoulderCm ?? null },
+                      { key: "bust", label: "Ngực", get: (m) => m?.bustCm ?? null },
+                      { key: "waist", label: "Eo", get: (m) => m?.waistCm ?? null },
+                      { key: "hip", label: "Hông", get: (m) => m?.hipCm ?? null },
+                      { key: "length", label: "Dài áo", get: (m) => m?.lengthCm ?? null },
+                      { key: "sleeve", label: "Dài tay", get: (m) => m?.sleeveLengthCm ?? null },
+                    ];
+                    const visibleRows = rows.filter((r) =>
+                      (group?.sizes ?? []).some((s) => r.get(s.measurements) !== null),
+                    );
+                    if (visibleRows.length === 0) {
+                      return (
+                        <p className="rounded-lg border border-dashed border-sand bg-white px-4 py-3 text-sm text-stone-500">
+                          Shop chưa cập nhật số đo chi tiết cho mẫu này. Bạn có thể dùng tính năng thử đồ AI hoặc liên hệ tư vấn để chọn size.
+                        </p>
+                      );
+                    }
+                    return (
+                      <div className="overflow-x-auto rounded-lg border border-sand bg-white">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-sand bg-parchment/60">
+                              <th className="px-4 py-2.5 text-left font-semibold text-stone-500">Số đo</th>
+                              {(group?.sizes ?? []).map((s) => (
+                                <th
+                                  key={s.garmentSizeId}
+                                  className={`px-4 py-2.5 text-center font-semibold ${s.garmentSizeId === selectedGarmentId ? "text-lotus" : "text-ink"}`}
+                                >
+                                  {s.sizeLabel ?? "—"}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleRows.map((r) => (
+                              <tr key={r.key} className="border-b border-sand/60 last:border-0">
+                                <td className="px-4 py-2.5 text-stone-500">{r.label}</td>
+                                {(group?.sizes ?? []).map((s) => {
+                                  const v = r.get(s.measurements);
+                                  const active = s.garmentSizeId === selectedGarmentId;
+                                  return (
+                                    <td key={s.garmentSizeId} className={`px-4 py-2.5 text-center font-medium ${active ? "bg-parchment/50 text-lotus" : "text-ink"}`}>
+                                      {v !== null ? v : "—"}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                  <p className="mt-2 text-xs leading-5 text-stone-500">
+                    Đây là số đo thực tế của áo. Hãy đối chiếu với số đo cơ thể của bạn tại{" "}
+                    <Link href="/dashboard/customer/measurements" className="font-semibold text-lotus hover:underline">
+                      Số đo của tôi
+                    </Link>{" "}
+                    để chọn size vừa vặn — không dùng số đo áo làm số đo cơ thể.
+                  </p>
+                </div>
+
                 <Link href={`/try-on?garmentSizeId=${selectedGarmentId}`} className="group relative block overflow-hidden rounded-xl border border-antique/30 bg-gradient-to-r from-[#f9f5f0] to-white p-6 transition hover:border-antique/60">
                   <div className="flex items-start gap-3">
                     <span className="material-symbols-outlined text-lotus">magic_button</span>
@@ -349,14 +418,55 @@ async function handleConsult() {
 
               <section className="mt-12 border-t border-sand pt-8">
                 <h2 className="font-display text-4xl text-ink">Thông số chi tiết</h2>
-                <ul className="mt-6 space-y-4">
-                  {garmentSpecs.map((spec) => (
-                    <li key={spec.label} className="flex items-center justify-between gap-4 border-b border-sand/70 pb-3 text-sm">
-                      <span className="text-stone-500">{spec.label}</span>
-                      <span className="font-medium text-ink">{spec.value}</span>
-                    </li>
-                  ))}
-                </ul>
+                {(() => {
+                  const specs: Array<{ label: string; value: string }> = [];
+                  if (group?.description) specs.push({ label: "Mô tả", value: group.description });
+                  if (group?.color) specs.push({ label: "Màu sắc", value: group.color });
+                  if ((group?.material ?? []).length > 0) specs.push({ label: "Chất liệu", value: (group?.material ?? []).join(", ") });
+                  if ((group?.occasion ?? []).length > 0) specs.push({ label: "Dịp sử dụng", value: (group?.occasion ?? []).join(", ") });
+                  return (
+                    <>
+                      {specs.length > 0 ? (
+                        <ul className="mt-6 space-y-4">
+                          {specs.map((spec) => (
+                            <li key={spec.label} className="flex items-center justify-between gap-4 border-b border-sand/70 pb-3 text-sm">
+                              <span className="text-stone-500">{spec.label}</span>
+                              <span className="text-right font-medium text-ink">{spec.value}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-6 text-sm text-stone-500">Shop đang cập nhật thông số chi tiết cho mẫu này.</p>
+                      )}
+                      {(group?.careInstructions ?? []).length > 0 && (
+                        <div className="mt-6 rounded-lg border border-sand bg-white p-5">
+                          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-ink">
+                            <span className="material-symbols-outlined text-[18px] text-lotus">dry_cleaning</span>
+                            Hướng dẫn bảo quản
+                          </h3>
+                          <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-6 text-stone-600">
+                            {(group?.careInstructions ?? []).map((c, i) => (
+                              <li key={i}>{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {(group?.usageConditions ?? []).length > 0 && (
+                        <div className="mt-4 rounded-lg border border-sand bg-white p-5">
+                          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-ink">
+                            <span className="material-symbols-outlined text-[18px] text-lotus">contract</span>
+                            Điều kiện sử dụng
+                          </h3>
+                          <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-6 text-stone-600">
+                            {(group?.usageConditions ?? []).map((c, i) => (
+                              <li key={i}>{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </section>
             </div>
           </div>

@@ -31,6 +31,8 @@ getGarments,
   removeGarmentImage,
   getGarmentCategories,
   getGarmentSizes,
+  getGarmentSizesByGarment,
+  getCanonicalOccasions,
   createGarmentCategory,
   createGarmentSize,
   createAsset,
@@ -41,6 +43,7 @@ getGarments,
   type GarmentSummary,
   type GarmentDetail,
   type GarmentCategory,
+  type GarmentSizeOption,
   type AssetDetail,
   type AssetInspectionHistory,
   type InspectionLogEntry,
@@ -366,8 +369,11 @@ export default function ManagerDashboardPage() {
       if (selectedGarmentId) await refreshAssets(selectedGarmentId);
       await refreshAllAssets();
       setAssetModalOpen(false);
+      showToast("success", `Đã thêm tài sản ${payload.assetCode}.`);
     } else {
-      setErrorMsg(res.message ?? "Không thể tạo tài sản.");
+      const message = res.message ?? "Không thể tạo tài sản.";
+      setErrorMsg(message);
+      showToast("error", message);
     }
   }
 
@@ -401,6 +407,11 @@ export default function ManagerDashboardPage() {
         description: null,
         categoryId: null,
         color: null,
+        material: [],
+        occasion: [],
+        careInstructions: [],
+        usageConditions: [],
+        measurements: null,
         isActive: true,
         images: garment.images ?? [],
       } as GarmentDetail);
@@ -1494,7 +1505,39 @@ function GarmentFormModal({
   const [categoryId, setCategoryId] = useState(garment?.categoryId ?? "");
   const [description, setDescription] = useState(garment?.description ?? "");
   const [sizeLabel, setSizeLabel] = useState(garment?.sizeLabel ?? "");
-  const [color, setColor] = useState(garment?.color ?? "");
+  const STANDARD_COLORS = [
+    "Đỏ", "Trắng", "Đen", "Vàng", "Xanh dương", "Xanh ngọc", "Xanh lá",
+    "Hồng", "Tím", "Cam", "Nâu", "Xám", "Nhiều màu", "Họa tiết",
+  ];
+  const CUSTOM_COLOR_VALUE = "__custom";
+  const initialIsCustom = !!garment?.color && !STANDARD_COLORS.includes(garment.color);
+  const [colorSelect, setColorSelect] = useState(
+    !garment?.color ? "" : initialIsCustom ? CUSTOM_COLOR_VALUE : garment.color,
+  );
+  const [customColor, setCustomColor] = useState(initialIsCustom ? garment?.color ?? "" : "");
+  const [material, setMaterial] = useState((garment?.material ?? []).join(", "));
+  const [occasion, setOccasion] = useState<string[]>(garment?.occasion ?? []);
+  const [occasionOptions, setOccasionOptions] = useState<string[]>([]);
+  const [careInstructions, setCareInstructions] = useState((garment?.careInstructions ?? []).join("\n"));
+  const [usageConditions, setUsageConditions] = useState((garment?.usageConditions ?? []).join("\n"));
+  const [measurements, setMeasurements] = useState({
+    shoulderCm: garment?.measurements?.shoulderCm != null ? String(garment.measurements.shoulderCm) : "",
+    bustCm: garment?.measurements?.bustCm != null ? String(garment.measurements.bustCm) : "",
+    waistCm: garment?.measurements?.waistCm != null ? String(garment.measurements.waistCm) : "",
+    hipCm: garment?.measurements?.hipCm != null ? String(garment.measurements.hipCm) : "",
+    lengthCm: garment?.measurements?.lengthCm != null ? String(garment.measurements.lengthCm) : "",
+    sleeveLengthCm: garment?.measurements?.sleeveLengthCm != null ? String(garment.measurements.sleeveLengthCm) : "",
+  });
+
+  useEffect(() => {
+    getCanonicalOccasions().then((res) => {
+      if (res.success && res.data) setOccasionOptions(res.data);
+    });
+  }, []);
+
+  function toggleOccasion(value: string) {
+    setOccasion((prev) => (prev.includes(value) ? prev.filter((o) => o !== value) : [...prev, value]));
+  }
   const [dailyPrice, setDailyPrice] = useState(garment?.dailyPrice ? garment.dailyPrice.toLocaleString("vi-VN") : "");
   const [depositAmount, setDepositAmount] = useState(garment?.depositAmount ? garment.depositAmount.toLocaleString("vi-VN") : "");
 
@@ -1567,12 +1610,20 @@ function GarmentFormModal({
     
     const parsedDailyPrice = Number(dailyPrice.replace(/\D/g, ""));
     const parsedDeposit = Number(depositAmount.replace(/\D/g, ""));
+    const splitList = (v: string) => v.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+    const parseMeasure = (v: string) => {
+      const t = v.trim().replace(",", ".");
+      if (!t) return undefined;
+      const n = Number(t);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
 
     const newErrors: Record<string, string> = {};
     if (!name.trim()) newErrors.name = "Vui lòng nhập tên trang phục.";
     if (!categoryId) newErrors.categoryId = "Vui lòng chọn danh mục.";
     if (!sizeLabel.trim()) newErrors.sizeLabel = "Vui lòng nhập size.";
-    if (!color.trim()) newErrors.color = "Vui lòng nhập màu sắc.";
+    const effectiveColor = colorSelect === CUSTOM_COLOR_VALUE ? customColor.trim() : colorSelect.trim();
+    if (!effectiveColor) newErrors.color = "Vui lòng nhập màu sắc.";
     if (!parsedDailyPrice || parsedDailyPrice <= 0) newErrors.dailyPrice = "Giá thuê phải lớn hơn 0.";
     if (!parsedDeposit || parsedDeposit <= 0) newErrors.depositAmount = "Tiền cọc phải lớn hơn 0.";
     if (!description.trim()) newErrors.description = "Vui lòng nhập mô tả.";
@@ -1591,7 +1642,19 @@ function GarmentFormModal({
       categoryId: categoryId || undefined,
       description: description || undefined,
       sizeLabel: sizeLabel || undefined,
-      color: color || undefined,
+      color: (colorSelect === CUSTOM_COLOR_VALUE ? customColor.trim() : colorSelect.trim()) || undefined,
+      material: splitList(material),
+      occasion,
+      careInstructions: splitList(careInstructions),
+      usageConditions: splitList(usageConditions),
+      measurements: {
+        shoulderCm: parseMeasure(measurements.shoulderCm),
+        bustCm: parseMeasure(measurements.bustCm),
+        waistCm: parseMeasure(measurements.waistCm),
+        hipCm: parseMeasure(measurements.hipCm),
+        lengthCm: parseMeasure(measurements.lengthCm),
+        sleeveLengthCm: parseMeasure(measurements.sleeveLengthCm),
+      },
       dailyPrice: parsedDailyPrice,
       depositAmount: parsedDeposit,
     }, pendingImages, removedImageIds);
@@ -1707,10 +1770,14 @@ function GarmentFormModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Màu *</label>
-              <select value={color} onChange={(e) => setColor(e.target.value)} className={`w-full rounded-lg border ${errors.color ? 'border-red-500' : 'border-sand'} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}>
+              <select value={colorSelect} onChange={(e) => setColorSelect(e.target.value)} className={`w-full rounded-lg border ${errors.color ? 'border-red-500' : 'border-sand'} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}>
                 <option value="">— Chọn màu —</option>
-                {["Đỏ", "Trắng", "Đen", "Vàng", "Xanh dương", "Xanh ngọc", "Xanh lá", "Hồng", "Tím", "Cam", "Nâu", "Xám", "Nhiều màu", "Họa tiết"].map((c) => <option key={c} value={c}>{c}</option>)}
+                {STANDARD_COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
+                <option value={CUSTOM_COLOR_VALUE}>Màu khác (nhập tay)...</option>
               </select>
+              {colorSelect === CUSTOM_COLOR_VALUE && (
+                <input value={customColor} onChange={(e) => setCustomColor(e.target.value)} className={`mt-2 w-full rounded-lg border ${errors.color ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="Vd: Tím lavender, Xanh rêu..." />
+              )}
               {errors.color && <p className="mt-1 text-xs text-red-500">{errors.color}</p>}
             </div>
           </div>
@@ -1730,6 +1797,68 @@ function GarmentFormModal({
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Mô tả *</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`w-full rounded-lg border ${errors.description ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="Mô tả trang phục..." />
             {errors.description && <p className="mt-1 text-xs text-red-500">{errors.description}</p>}
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Chất liệu</label>
+            <input value={material} onChange={(e) => setMaterial(e.target.value)} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: Lụa tơ tằm, Gấm (cách nhau bằng dấu phẩy)" />
+            <p className="mt-1 text-xs text-stone-400">Nhiều chất liệu cách nhau bằng dấu phẩy.</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Dịp sử dụng</label>
+            {occasionOptions.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {occasionOptions.map((o) => {
+                  const active = occasion.includes(o);
+                  return (
+                    <button
+                      key={o}
+                      type="button"
+                      onClick={() => toggleOccasion(o)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? "border-lotus bg-lotus text-white" : "border-sand bg-white text-stone-600 hover:border-antique"}`}
+                    >
+                      {o}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-400">Đang tải danh sách dịp sử dụng...</p>
+            )}
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Số đo áo (cm)</label>
+            <div className="grid grid-cols-3 gap-3">
+              {([
+                ["shoulderCm", "Vai"],
+                ["bustCm", "Ngực"],
+                ["waistCm", "Eo"],
+                ["hipCm", "Hông"],
+                ["lengthCm", "Dài áo"],
+                ["sleeveLengthCm", "Dài tay"],
+              ] as const).map(([key, label]) => (
+                <div key={key}>
+                  <label className="mb-1 block text-[11px] font-medium text-stone-500">{label}</label>
+                  <input
+                    value={measurements[key]}
+                    onChange={(e) => setMeasurements((m) => ({ ...m, [key]: e.target.value }))}
+                    type="number" min={0} step="0.5"
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+                    placeholder="—"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-stone-400">Số đo thực tế của áo, dùng để khách đối chiếu khi chọn size.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Hướng dẫn bảo quản</label>
+              <textarea value={careInstructions} onChange={(e) => setCareInstructions(e.target.value)} rows={2} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Mỗi dòng một hướng dẫn..." />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Điều kiện sử dụng</label>
+              <textarea value={usageConditions} onChange={(e) => setUsageConditions(e.target.value)} rows={2} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Mỗi dòng một điều kiện..." />
+            </div>
           </div>
         </div>
 
@@ -1861,12 +1990,28 @@ function AssetFormModal({
   const [assetCode, setAssetCode] = useState("");
   const [conditionNote, setConditionNote] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
+  const [sizeOptions, setSizeOptions] = useState<GarmentSizeOption[]>([]);
+  const [garmentSizeId, setGarmentSizeId] = useState("");
+  const [sizesLoading, setSizesLoading] = useState(true);
+
+  useEffect(() => {
+    setSizesLoading(true);
+    getGarmentSizesByGarment(garmentId).then((res) => {
+      if (res.success && res.data) {
+        setSizeOptions(res.data);
+        if (res.data.length === 1) setGarmentSizeId(res.data[0].id);
+      }
+      setSizesLoading(false);
+    });
+  }, [garmentId]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (sizeOptions.length > 1 && !garmentSizeId) return;
     onSubmit({
       garmentId,
       assetCode,
+      garmentSizeId: garmentSizeId || undefined,
       conditionNote: conditionNote || undefined,
       purchaseCost: purchaseCost ? Number(purchaseCost) : undefined,
     });
@@ -1885,6 +2030,25 @@ function AssetFormModal({
 
         <div className="space-y-4">
           <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Size *</label>
+            {sizesLoading ? (
+              <p className="text-xs text-stone-400">Đang tải size...</p>
+            ) : sizeOptions.length === 0 ? (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                Mẫu này chưa có size nào. Hãy thêm size cho trang phục trước khi tạo tài sản.
+              </p>
+            ) : sizeOptions.length === 1 ? (
+              <p className="w-full rounded-lg border border-sand bg-stone-50 px-3 py-2 text-sm font-semibold text-ink">
+                {sizeOptions[0].sizeLabel ?? "—"} <span className="font-normal text-stone-400">(size duy nhất, tự động gán)</span>
+              </p>
+            ) : (
+              <select value={garmentSizeId} onChange={(e) => setGarmentSizeId(e.target.value)} required className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique">
+                <option value="">— Chọn size —</option>
+                {sizeOptions.map((s) => <option key={s.id} value={s.id}>{s.sizeLabel ?? "—"}</option>)}
+              </select>
+            )}
+          </div>
+          <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Mã tài sản *</label>
             <input value={assetCode} onChange={(e) => setAssetCode(e.target.value)} required className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: NB-005" />
             <p className="mt-1 text-xs text-stone-400">Mã duy nhất cho món đồ vật lý.</p>
@@ -1901,7 +2065,7 @@ function AssetFormModal({
 
         <div className="mt-6 flex justify-end gap-3">
           <button type="button" onClick={onClose} className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50">Hủy</button>
-          <button type="submit" disabled={submitting} className="rounded-lg bg-jade px-6 py-2.5 text-sm font-semibold text-white hover:bg-forest disabled:opacity-50">
+          <button type="submit" disabled={submitting || sizesLoading || sizeOptions.length === 0} className="rounded-lg bg-jade px-6 py-2.5 text-sm font-semibold text-white hover:bg-forest disabled:opacity-50">
             {submitting ? "Đang tạo..." : "Tạo tài sản"}
           </button>
         </div>

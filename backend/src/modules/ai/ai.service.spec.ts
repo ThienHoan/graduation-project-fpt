@@ -45,6 +45,7 @@ function createMockPrisma() {
     garment: {
       findMany: vi.fn(),
     },
+    $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
   } as any;
   return prisma;

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { StaffChatNavBadge } from "@/components/chat/staff-chat-nav-badge";
@@ -214,6 +215,9 @@ export function ManagerPortalShell({
     .slice(-2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "QL";
+  // Điều hướng SPA để layout/sidebar không unmount và không re-auth lại:
+  // trang chính chuyển tab nội bộ, trang con router.push (không full reload).
+  const router = useRouter();
   // Manager: nút chính là thêm trang phục (đi tới inventory), không phải tạo booking
   const items = [
     { key: "overview", label: "Tổng quan", icon: "dashboard", href: "/dashboard/manager" },
@@ -247,7 +251,14 @@ export function ManagerPortalShell({
         </div>
         <button
           type="button"
-          onClick={() => onTabChange?.("inventory")}
+          onClick={() => {
+            if (onTabChange) {
+              onTabChange("inventory");
+            } else {
+              // Trang con không có onTabChange: SPA về trang chính, tab kho trang phục
+              router.push("/dashboard/manager#inventory");
+            }
+          }}
           className="mb-6 inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-3 text-sm font-semibold text-white transition hover:bg-oxblood"
         >
           <span className="material-symbols-outlined text-[18px]">add</span>
@@ -261,11 +272,19 @@ export function ManagerPortalShell({
                 key={item.key}
                 href={item.href}
                 onClick={(e) => {
-                  if (item.href.includes('#') || item.href === '/dashboard/manager') {
-                    // CSKH là trang riêng (/chat) — điều hướng thẳng, không xử lý theo hash tab
-                  if (item.key === "chat") return;
+                  // Luôn chặn điều hướng thường để dùng SPA: sidebar giữ nguyên,
+                  // không remount layout, không hiện "Loading your account...".
                   e.preventDefault();
-                    onTabChange?.(item.key);
+                  const isHashTab =
+                    (item.href.includes('#') || item.href === '/dashboard/manager') &&
+                    item.key !== "chat";
+                  if (isHashTab && onTabChange) {
+                    // Trang chính: chuyển tab nội bộ, không reload.
+                    onTabChange(item.key);
+                  } else {
+                    // Trang con hoặc trang riêng: SPA sang route mới,
+                    // layout manager giữ nguyên nên sidebar không mất.
+                    router.push(item.href);
                   }
                 }}
                 className={isActive
@@ -299,7 +318,13 @@ export function ManagerPortalShell({
               {currentDateLabel || "Đang đồng bộ"}
             </div>
             <NotificationBell />
-            <button type="button" onClick={() => onTabChange?.("assets")} className="inline-flex items-center gap-2 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood">
+            <button type="button" onClick={() => {
+              if (onTabChange) {
+                onTabChange("assets");
+              } else {
+                router.push("/dashboard/manager#assets");
+              }
+            }} className="inline-flex items-center gap-2 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood">
               <span className="material-symbols-outlined text-[18px]">priority_high</span>
               Cần xử lý
             </button>

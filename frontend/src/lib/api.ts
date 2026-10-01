@@ -85,12 +85,26 @@ export type GarmentSummary = {
   images?: GarmentImage[];
 };
 
+export type GarmentMeasurements = {
+  shoulderCm: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  lengthCm: number | null;
+  sleeveLengthCm: number | null;
+};
+
 export type GarmentGrouped = {
   name: string;
   slug: string;
   garmentId: string;
   categoryName: string | null;
   description: string | null;
+  color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
   imageUrl: string | null;
   images: GarmentImage[];
   sizes: Array<{
@@ -99,6 +113,7 @@ export type GarmentGrouped = {
     sizeLabel: string | null;
     dailyPrice: number;
     depositAmount: number;
+    measurements: GarmentMeasurements | null;
   }>;
 };
 
@@ -814,6 +829,11 @@ export type GarmentDetail = GarmentSummary & {
   description: string | null;
   categoryId: string | null;
   color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
+  measurements: GarmentMeasurements | null;
   isActive: boolean;
   images: GarmentImage[];
 };
@@ -840,12 +860,30 @@ export async function createGarmentSize(sizeLabel: string) {
   });
 }
 
+export async function getCanonicalOccasions() {
+  return apiRequest<string[]>("/ai/occasions");
+}
+
+export type GarmentMeasurementsInput = {
+  shoulderCm?: number;
+  bustCm?: number;
+  waistCm?: number;
+  hipCm?: number;
+  lengthCm?: number;
+  sleeveLengthCm?: number;
+};
+
 export async function createGarment(payload: {
   name: string;
   categoryId?: string;
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice: number;
   depositAmount: number;
   isActive?: boolean;
@@ -862,6 +900,11 @@ export async function updateGarment(id: string, payload: {
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice?: number;
   depositAmount?: number;
   isActive?: boolean;
@@ -912,6 +955,7 @@ export async function getAllAssets(status?: string) {
 export async function createAsset(payload: {
   garmentId: string;
   assetCode: string;
+  garmentSizeId?: string;
   conditionNote?: string;
   purchaseCost?: number;
 }) {
@@ -919,6 +963,15 @@ export async function createAsset(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export type GarmentSizeOption = {
+  id: string;
+  sizeLabel: string | null;
+};
+
+export async function getGarmentSizesByGarment(garmentId: string) {
+  return apiRequest<GarmentSizeOption[]>(`/garments/${garmentId}/sizes`);
 }
 
 // ---------- Admin API ----------

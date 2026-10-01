@@ -55,27 +55,108 @@ const GENERAL_STOP_WORDS = new Set([
   "ngân sách", "budget",
 ]);
 
-const OCCASION_PHRASES = [
-  "sinh nhật", "kỷ yếu", "chụp kỷ yếu", "chụp ảnh", "chụp hình",
-  "đám cưới", "tiệc cưới", "cưới", "đám hỏi",
-  "tốt nghiệp", "lễ tốt nghiệp",
-  "hội nghị", "sự kiện", "họp mặt", "lễ hội",
-  "tết", "du lịch", "dạo phố", "đi chơi",
-  "tiệc", "lễ tân", "công sở", "văn phòng",
-];
+// 14 giá trị canonical cho dịp sử dụng. Mọi cách khách nói đều quy về các giá trị này.
+const OCCASION_PHRASES: Record<string, string> = {
+  // Đám cưới
+  "đám cưới": "Đám cưới",
+  "đi đám cưới": "Đám cưới",
+  "đi ăn cưới": "Đám cưới",
+  "lễ thành hôn": "Đám cưới",
+  "cưới": "Đám cưới",
+  "tiệc cưới": "Đám cưới",
+  "đám hỏi": "Đám cưới",
+  "lễ cưới": "Đám cưới",
+
+  // Kỷ yếu
+  "kỷ yếu": "Kỷ yếu",
+  "chụp kỷ yếu": "Kỷ yếu",
+  "ảnh kỷ yếu": "Kỷ yếu",
+
+  // Tốt nghiệp
+  "tốt nghiệp": "Tốt nghiệp",
+  "lễ tốt nghiệp": "Tốt nghiệp",
+
+  // Sinh nhật
+  "sinh nhật": "Sinh nhật",
+  "tiệc sinh nhật": "Sinh nhật",
+
+  // Chụp ảnh
+  "chụp ảnh": "Chụp ảnh",
+  "chụp hình": "Chụp ảnh",
+  "chụp hình ngoại cảnh": "Chụp ảnh",
+
+  // Chụp ảnh cưới
+  "chụp ảnh cưới": "Chụp ảnh cưới",
+  "chụp hình cưới": "Chụp ảnh cưới",
+  "ảnh cưới": "Chụp ảnh cưới",
+
+  // Chụp ảnh cổ trang
+  "chụp ảnh cổ trang": "Chụp ảnh cổ trang",
+  "chụp hình cổ trang": "Chụp ảnh cổ trang",
+  "ảnh cổ trang": "Chụp ảnh cổ trang",
+
+  // Sự kiện
+  "sự kiện": "Sự kiện",
+  "event": "Sự kiện",
+  "hội nghị": "Sự kiện",
+  "họp mặt": "Sự kiện",
+  "công sở": "Sự kiện",
+  "văn phòng": "Sự kiện",
+
+  // Lễ hội
+  "lễ hội": "Lễ hội",
+  "hội lễ": "Lễ hội",
+
+  // Tết
+  "tết": "Tết",
+  "đi tết": "Tết",
+  "tết nguyên đán": "Tết",
+
+  // Tiệc
+  "tiệc": "Tiệc",
+  "đi tiệc": "Tiệc",
+  "dự tiệc": "Tiệc",
+
+  // Lễ
+  "lễ": "Lễ",
+  "đi lễ": "Lễ",
+  "lễ tân": "Lễ",
+
+  // Ngoại giao
+  "ngoại giao": "Ngoại giao",
+  "sự kiện ngoại giao": "Ngoại giao",
+
+  // Dạo phố
+  "dạo phố": "Dạo phố",
+  "đi chơi": "Dạo phố",
+  "du lịch": "Dạo phố",
+  "đi du lịch": "Dạo phố",
+};
+
+// Cụm dài trước để "chụp ảnh cưới" không bị "chụp ảnh" cắt mất.
+const OCCASION_KEYS_BY_LENGTH = Object.keys(OCCASION_PHRASES).sort(
+  (a, b) => b.length - a.length,
+);
+
+// 14 giá trị canonical, dùng chung cho AI advisor, pricing và form quản trị.
+export function getCanonicalOccasions(): string[] {
+  return [...new Set(Object.values(OCCASION_PHRASES))];
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function extractOccasion(text: string): string[] | undefined {
   let lower = text.toLowerCase();
-  const found: string[] = [];
-  const sorted = [...OCCASION_PHRASES].sort((a, b) => b.length - a.length);
-  for (const phrase of sorted) {
-    const idx = lower.indexOf(phrase);
-    if (idx !== -1) {
-      found.push(phrase);
-      lower = lower.replace(phrase, " ").trim();
-    }
+  const found = new Set<string>();
+  for (const phrase of OCCASION_KEYS_BY_LENGTH) {
+    if (!lower.includes(phrase)) continue;
+    found.add(OCCASION_PHRASES[phrase]);
+    // Xóa mọi lần xuất hiện để các cụm ngắn hơn không match lại phần đã khớp.
+    lower = lower.split(phrase).join(" ");
   }
-  return found.length > 0 ? found : undefined;
+  return found.size > 0 ? [...found] : undefined;
 }
 
 function extractCategory(text: string): string[] | undefined {
@@ -274,9 +355,9 @@ function extractKeyword(text: string): string | undefined {
   cleaned = cleaned.replace(/(?:size|cỡ|số)\s+\S{1,8}/gi, "");
   cleaned = cleaned.replace(/(?:^|(?<=\s))(?:xxl|xxxl|xl|s|m|l|vừa|nhỏ|to|lớn|rất\s+to|rất\s+lớn)(?=\s|$|[.,;:!?])/gi, "");
 
-  const occSorted = [...OCCASION_PHRASES].sort((a, b) => b.length - a.length);
+  const occSorted = OCCASION_KEYS_BY_LENGTH;
   for (const phrase of occSorted) {
-    cleaned = cleaned.replace(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "");
+    cleaned = cleaned.replace(new RegExp(escapeRegex(phrase), "gi"), "");
   }
 
   // \b doesn't work with Vietnamese → use string includes

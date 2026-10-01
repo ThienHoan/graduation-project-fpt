@@ -35,6 +35,11 @@ export class AiController {
     return this.aiService.hideResult(id, user.id);
   }
 
+  @Get("occasions")
+  getOccasions() {
+    return this.aiService.getOccasions();
+  }
+
   @Post("product-advisor")
   @UseGuards(ThrottlerGuard)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })

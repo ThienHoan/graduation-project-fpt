@@ -43,6 +43,11 @@ export class GarmentsController {
     return this.garmentsService.findAllCategories();
   }
 
+  @Get(":id/sizes")
+  findSizesByGarment(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.findSizesByGarment(id);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) { return this.garmentsService.findOne(id); }
 

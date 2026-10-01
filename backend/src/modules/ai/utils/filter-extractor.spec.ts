@@ -110,6 +110,81 @@ describe("FilterExtractor", () => {
     });
   });
 
+  describe("extractOccasion", () => {
+    it("maps 'chụp kỷ yếu' to canonical 'Kỷ yếu'", () => {
+      const result = extractFilters("áo dài chụp kỷ yếu");
+      expect(result.occasion).toEqual(["Kỷ yếu"]);
+    });
+
+    it("maps 'đi đám cưới' to canonical 'Đám cưới'", () => {
+      const result = extractFilters("tôi cần áo dài đi đám cưới");
+      expect(result.occasion).toEqual(["Đám cưới"]);
+    });
+
+    it("prefers longer phrase 'chụp ảnh cưới' over 'chụp ảnh'", () => {
+      const result = extractFilters("áo dài chụp ảnh cưới");
+      expect(result.occasion).toEqual(["Chụp ảnh cưới"]);
+    });
+
+    it("does not leak 'chụp ảnh' when 'chụp ảnh cổ trang' matches", () => {
+      const result = extractFilters("chụp ảnh cổ trang");
+      expect(result.occasion).toEqual(["Chụp ảnh cổ trang"]);
+    });
+
+    it("deduplicates multiple aliases mapping to the same canonical", () => {
+      const result = extractFilters("đi ăn cưới và đám cưới");
+      expect(result.occasion).toEqual(["Đám cưới"]);
+    });
+
+    it("extracts multiple distinct occasions", () => {
+      const result = extractFilters("áo dài cho tết và chụp ảnh");
+      expect(result.occasion).toEqual(expect.arrayContaining(["Tết", "Chụp ảnh"]));
+      expect(result.occasion).toHaveLength(2);
+    });
+
+    it("returns undefined when no occasion mentioned", () => {
+      const result = extractFilters("áo dài đỏ");
+      expect(result.occasion).toBeUndefined();
+    });
+
+    it("does not leak occasion phrases into keyword", () => {
+      const result = extractFilters("áo dài chụp kỷ yếu");
+      expect(result.keyword).toBeUndefined();
+    });
+
+    it("maps standalone 'cưới' to canonical 'Đám cưới'", () => {
+      const result = extractFilters("vest cưới");
+      expect(result.occasion).toEqual(["Đám cưới"]);
+      expect(result.keyword).toBeUndefined();
+    });
+
+    it("prefers longer phrase 'tiệc cưới' over 'tiệc'", () => {
+      const result = extractFilters("áo dài tiệc cưới");
+      expect(result.occasion).toEqual(["Đám cưới"]);
+    });
+
+    it("maps 'đám hỏi' and 'lễ cưới' to canonical 'Đám cưới'", () => {
+      expect(extractFilters("thuê áo dài đám hỏi").occasion).toEqual(["Đám cưới"]);
+      expect(extractFilters("áo dài lễ cưới").occasion).toEqual(["Đám cưới"]);
+    });
+
+    it("maps 'du lịch' to canonical 'Dạo phố'", () => {
+      const result = extractFilters("thuê đồ đi du lịch");
+      expect(result.occasion).toEqual(["Dạo phố"]);
+    });
+
+    it("maps office phrases to canonical 'Sự kiện'", () => {
+      expect(extractFilters("mặc đi hội nghị").occasion).toEqual(["Sự kiện"]);
+      expect(extractFilters("đồng phục công sở").occasion).toEqual(["Sự kiện"]);
+      expect(extractFilters("áo dài văn phòng").occasion).toEqual(["Sự kiện"]);
+    });
+
+    it("maps 'lễ tân' to canonical 'Lễ'", () => {
+      const result = extractFilters("áo dài lễ tân");
+      expect(result.occasion).toEqual(["Lễ"]);
+    });
+  });
+
   describe("extractKeyword", () => {
     it("extracts remaining text as keyword after removing filters", () => {
       const result = extractFilters("áo dài đỏ vintage caro");
