@@ -3,6 +3,7 @@ export interface AdvisorProduct {
   name: string;
   category: string;
   color: string;
+  occasion: string;
   imageUrl: string;
   dailyPrice: number;
   depositAmount: number;
