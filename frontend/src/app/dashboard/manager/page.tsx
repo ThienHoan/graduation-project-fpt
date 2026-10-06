@@ -58,7 +58,14 @@ getGarments,
   type LaundryTicketResponse,
   type MaintenanceJobResponse,
   type CompleteMaintenanceStatus,
-
+  getFinancialSummary,
+  getRevenueByDay,
+  getFinancialTransactions,
+  getReconciliation,
+  type FinancialSummaryResponse,
+  type FinancialQueryParams,
+  type FinancialTransactionItem,
+  type ReconciliationResponse,
 } from "@/lib/api";
 
 function formatDate(iso: string) {
@@ -2761,8 +2768,8 @@ function DamagedTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function FinanceTab({
-  totalRentalRevenue, totalDepositHeld, totalPenalties,
-  depositHoldingCount, bookings,
+  totalRentalRevenue: _legacyRevenue, totalDepositHeld: _legacyDeposit, totalPenalties: _legacyPenalties,
+  depositHoldingCount: _legacyCount, bookings: _legacyBookings,
 }: {
   totalRentalRevenue: number;
   totalDepositHeld: number;
@@ -2770,111 +2777,391 @@ function FinanceTab({
   depositHoldingCount: number;
   bookings: StaffBookingResponse[];
 }) {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  // ── State ──
+  const [summary, setSummary] = useState<FinancialSummaryResponse | null>(null);
+  const [revenueByDay, setRevenueByDay] = useState<{ date: string; rentalRevenue: number; depositReceived: number }[]>([]);
+  const [transactions, setTransactions] = useState<FinancialTransactionItem[]>([]);
+  const [txTotal, setTxTotal] = useState(0);
+  const [txPage, setTxPage] = useState(1);
+  const [reconciliation, setReconciliation] = useState<ReconciliationResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const filteredBookings = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return bookings
-      .slice()
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .filter((b) => {
-        const byText = q
-          ? [b.id, b.customerName].some((v) => v?.toLowerCase().includes(q))
-          : true;
-        const byStatus = statusFilter === "all" ? true : b.status === statusFilter;
-        return byText && byStatus;
-      });
-  }, [bookings, search, statusFilter]);
+  // Filters
+  const [preset, setPreset] = useState<FinancialQueryParams["preset"]>("this_month");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [txStatusFilter, setTxStatusFilter] = useState("");
+  const [txMethodFilter, setTxMethodFilter] = useState("");
+  const [subView, setSubView] = useState<"overview" | "transactions" | "reconciliation">("overview");
+
+  const buildParams = (): FinancialQueryParams | null => {
+    const params: FinancialQueryParams = {};
+    if (preset) {
+      if (preset === "custom") {
+        if (!customStart || !customEnd) return null; // Wait until both dates are selected
+        if (new Date(customStart) > new Date(customEnd)) return null;
+        params.preset = preset;
+        params.startDate = customStart;
+        params.endDate = customEnd;
+      } else {
+        params.preset = preset;
+      }
+    }
+    if (txStatusFilter) params.transactionStatus = txStatusFilter;
+    if (txMethodFilter) params.method = txMethodFilter;
+    return params;
+  };
+
+  const fetchData = async () => {
+    const params = buildParams();
+    if (!params) {
+      // Clear data if custom date range is incomplete/invalid to avoid stale data
+      setSummary(null);
+      setRevenueByDay([]);
+      setTransactions([]);
+      setReconciliation(null);
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    try {
+      const [summaryRes, revenueRes, txRes, reconRes] = await Promise.all([
+        getFinancialSummary(params),
+        getRevenueByDay(params),
+        getFinancialTransactions({ ...params, page: txPage, limit: 20 }),
+        getReconciliation(params),
+      ]);
+      if (summaryRes.success && summaryRes.data) setSummary(summaryRes.data);
+      if (revenueRes.success && revenueRes.data) setRevenueByDay(revenueRes.data);
+      if (txRes.success && txRes.data) {
+        setTransactions(txRes.data.items);
+        setTxTotal(txRes.data.total);
+      }
+      if (reconRes.success && reconRes.data) setReconciliation(reconRes.data);
+    } catch {
+      setError("Không thể tải dữ liệu tài chính.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, [preset, customStart, customEnd, txStatusFilter, txMethodFilter, txPage]);
+
+  // ── Chart data ──
+  const maxRevenue = Math.max(...revenueByDay.map((d) => Math.max(d.rentalRevenue, d.depositReceived)), 1);
+
+  const DEPOSIT_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+    PENDING: { label: "Đang giữ", color: "bg-amber-100 text-amber-700" },
+    PARTIALLY_REFUNDED: { label: "Hoàn 1 phần", color: "bg-blue-100 text-blue-700" },
+    FULLY_REFUNDED: { label: "Đã hoàn", color: "bg-emerald-100 text-emerald-700" },
+    DEDUCTED: { label: "Đã trừ", color: "bg-orange-100 text-orange-700" },
+    FORFEITED: { label: "Bị giữ", color: "bg-red-100 text-red-700" },
+  };
+
+  const TX_TYPE_LABELS: Record<string, { label: string; color: string }> = {
+    RENTAL: { label: "Thuê", color: "bg-jade/10 text-jade" },
+    DEPOSIT: { label: "Cọc", color: "bg-amber-100 text-amber-700" },
+    REFUND: { label: "Hoàn cọc", color: "bg-blue-100 text-blue-700" },
+    DAMAGE_DEDUCTION: { label: "Phạt", color: "bg-red-100 text-red-700" },
+    FORFEITED_DEPOSIT: { label: "Giữ cọc", color: "bg-stone-100 text-stone-600" },
+  };
+
+  if (loading && !summary) {
+    return <div className="py-20 text-center text-stone-400">Đang tải dữ liệu tài chính...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
+        {error}
+        <button onClick={fetchData} className="ml-4 rounded-lg bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700">
+          Thử lại
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-3">
-        <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Doanh thu cho thuê</p>
-          <p className="mt-2 font-display text-3xl text-jade">{formatVND(totalRentalRevenue)}</p>
-          <p className="mt-1 text-sm text-stone-500">Từ các đơn completed + đang thuê</p>
-        </div>
-        <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Tiền cọc đang giữ</p>
-          <p className="mt-2 font-display text-3xl text-amber-700">{formatVND(totalDepositHeld)}</p>
-          <p className="mt-1 text-sm text-stone-500">{depositHoldingCount} đơn đang giữ cọc — trừ khi duyệt hoàn</p>
-        </div>
-        <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Tiền phạt phát sinh</p>
-          <p className="mt-2 font-display text-3xl text-red-700">{formatVND(totalPenalties)}</p>
-          <p className="mt-1 text-sm text-stone-500">Từ các lần kiểm tra phát hiện hư hỏng</p>
+      {/* ── Filter Bar ── */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-3 shadow-sm">
+        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Bộ lọc:</span>
+        {(["today", "this_month", "this_year"] as const).map((p) => {
+          const labels = { today: "Hôm nay", this_month: "Tháng này", this_year: "Năm nay" } as const;
+          return (
+            <button
+              key={p}
+              onClick={() => { setPreset(p); setTxPage(1); }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${preset === p ? "bg-lotus text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
+            >
+              {labels[p]}
+            </button>
+          );
+        })}
+        <button
+          onClick={() => { setPreset("custom"); setTxPage(1); }}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${preset === "custom" ? "bg-lotus text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
+        >
+          Tuỳ chọn
+        </button>
+        {preset === "custom" && (
+          <>
+            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="rounded-lg border border-sand px-3 py-1.5 text-xs" />
+            <span className="text-stone-400">→</span>
+            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="rounded-lg border border-sand px-3 py-1.5 text-xs" />
+          </>
+        )}
+        <div className="ml-auto flex gap-2">
+          {(["overview", "transactions", "reconciliation"] as const).map((v) => {
+            const vLabels = { overview: "Tổng quan", transactions: "Giao dịch", reconciliation: "Đối soát" };
+            return (
+              <button
+                key={v}
+                onClick={() => setSubView(v)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${subView === v ? "bg-antique text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
+              >
+                {vLabels[v]}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand px-6 py-4">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Đối soát đơn gần đây</h3>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative min-w-[220px]">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
-                placeholder="Tìm mã đơn, khách hàng..."
-              />
+      {subView === "overview" && summary && (
+        <>
+          {/* ── KPI Cards ── */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <KPICard label="Doanh thu cho thuê" value={formatVND(summary.rentalRevenue)} icon="payments" tone="jade" hint="Không bao gồm tiền cọc" />
+            <KPICard label="Tiền cọc đang giữ" value={formatVND(summary.depositHeld)} icon="account_balance_wallet" tone="amber" hint={`${summary.depositHeldCount} đơn`} />
+            <KPICard label="Đã hoàn cọc" value={formatVND(summary.refundedDeposit)} icon="currency_exchange" tone="blue" />
+            <KPICard label="Khấu trừ hư hỏng" value={formatVND(summary.damageDeduction)} icon="warning" tone="red" />
+            <KPICard label="Cọc bị giữ" value={formatVND(summary.forfeitedDeposit)} icon="block" tone="stone" />
+            <KPICard label="Số giao dịch" value={String(summary.totalTransactions)} icon="receipt_long" tone="purple" />
+          </div>
+
+          {/* ── Charts ── */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Revenue by Day Chart */}
+            <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
+              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Doanh thu theo ngày</h3>
+              <p className="mb-4 text-xs text-stone-400">Chỉ tính tiền thuê — không bao gồm tiền cọc</p>
+              {revenueByDay.length === 0 ? (
+                <div className="flex h-40 items-center justify-center text-sm text-stone-400">Chưa có dữ liệu trong khoảng thời gian này.</div>
+              ) : (
+                <div className="flex items-end gap-1 overflow-x-auto" style={{ minHeight: 160 }}>
+                  {revenueByDay.map((d) => (
+                    <div key={d.date} className="flex flex-col items-center gap-1" style={{ flex: "1 0 32px", maxWidth: 48 }}>
+                      <div
+                        title={`${d.date}: ${formatVND(d.rentalRevenue)}`}
+                        className="w-full rounded-t-md bg-jade transition-all hover:bg-emerald-700"
+                        style={{ height: `${Math.max((d.rentalRevenue / maxRevenue) * 120, d.rentalRevenue > 0 ? 4 : 1)}px` }}
+                      />
+                      <span className="text-[9px] text-stone-400">{d.date.slice(5)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
-              aria-label="Lọc trạng thái đơn"
-            >
-              <option value="all">Tất cả trạng thái</option>
-              {Object.entries(STATUS_LABELS).map(([key, meta]) => (
-                <option key={key} value={key}>{meta.label}</option>
-              ))}
-            </select>
+
+            {/* Rental vs Deposit Chart */}
+            <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
+              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Thuê vs Cọc theo ngày</h3>
+              <div className="mb-4 flex items-center gap-4 text-xs text-stone-500">
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-jade" /> Tiền thuê</span>
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-antique" /> Tiền cọc</span>
+              </div>
+              {revenueByDay.length === 0 ? (
+                <div className="flex h-40 items-center justify-center text-sm text-stone-400">Chưa có dữ liệu.</div>
+              ) : (
+                <div className="flex items-end gap-1 overflow-x-auto" style={{ minHeight: 160 }}>
+                  {revenueByDay.map((d) => {
+                    const localMax = Math.max(d.rentalRevenue, d.depositReceived, 1);
+                    return (
+                      <div key={d.date} className="flex flex-col items-center gap-1" style={{ flex: "1 0 32px", maxWidth: 48 }}>
+                        <div className="flex w-full items-end justify-center gap-0.5" style={{ height: 120 }}>
+                          <div
+                            title={`Thuê: ${formatVND(d.rentalRevenue)}`}
+                            className="w-1/2 rounded-t-md bg-jade transition-all hover:bg-emerald-700"
+                            style={{ height: `${Math.max((d.rentalRevenue / maxRevenue) * 100, d.rentalRevenue > 0 ? 3 : 1)}%` }}
+                          />
+                          <div
+                            title={`Cọc: ${formatVND(d.depositReceived)}`}
+                            className="w-1/2 rounded-t-md bg-antique transition-all hover:bg-bronze"
+                            style={{ height: `${Math.max((d.depositReceived / maxRevenue) * 100, d.depositReceived > 0 ? 3 : 1)}%` }}
+                          />
+                        </div>
+                        <span className="text-[9px] text-stone-400">{d.date.slice(5)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Booking Stats ── */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Tổng đơn</p>
+              <p className="mt-2 font-display text-2xl text-ink">{summary.totalBookings}</p>
+              <p className="mt-1 text-[10px] text-stone-400">Bao gồm tất cả trạng thái</p>
+            </div>
+            <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Đã thanh toán</p>
+              <p className="mt-2 font-display text-2xl text-jade">{summary.paidBookings}</p>
+              <p className="mt-1 text-[10px] text-stone-400">Hoàn tất thanh toán</p>
+            </div>
+            <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Chưa thanh toán</p>
+              <p className="mt-2 font-display text-2xl text-amber-700">{summary.unpaidBookings}</p>
+              <p className="mt-1 text-[10px] text-stone-400">Chờ khách thanh toán</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {subView === "transactions" && (
+        <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand px-6 py-4">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Giao dịch tài chính</h3>
+            <div className="flex gap-2">
+              <select
+                value={txStatusFilter}
+                onChange={(e) => { setTxStatusFilter(e.target.value); setTxPage(1); }}
+                className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                aria-label="Lọc loại giao dịch"
+              >
+                <option value="">Tất cả loại giao dịch</option>
+                <option value="RENTAL">Thanh toán tiền thuê</option>
+                <option value="DEPOSIT">Tiền cọc</option>
+                <option value="REFUND">Hoàn cọc</option>
+                <option value="DAMAGE_DEDUCTION">Khấu trừ hư hỏng</option>
+              </select>
+              <select
+                value={txMethodFilter}
+                onChange={(e) => { setTxMethodFilter(e.target.value); setTxPage(1); }}
+                className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                aria-label="Lọc phương thức"
+              >
+                <option value="">Tất cả phương thức</option>
+                <option value="cash">Tiền mặt (CASH)</option>
+                <option value="bank_transfer">Chuyển khoản (QR/BANK)</option>
+              </select>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-mist text-xs uppercase tracking-[0.14em] text-stone-500">
+                <tr>
+                  <th className="px-6 py-3">ID</th>
+                  <th className="px-6 py-3">Đơn hàng</th>
+                  <th className="px-6 py-3">Khách hàng</th>
+                  <th className="px-6 py-3">Loại</th>
+                  <th className="px-6 py-3">Số tiền</th>
+                  <th className="px-6 py-3">Phương thức</th>
+                  <th className="px-6 py-3">Trạng thái</th>
+                  <th className="px-6 py-3">Thời gian</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-sand">
+                {transactions.length === 0 ? (
+                  <tr><td colSpan={8} className="px-6 py-10 text-center text-stone-400">Chưa có giao dịch nào.</td></tr>
+                ) : (
+                  transactions.map((tx) => {
+                    const typeMeta = TX_TYPE_LABELS[tx.type] ?? { label: tx.rawType, color: "bg-stone-100 text-stone-600" };
+                    return (
+                      <tr key={tx.id} className="transition hover:bg-mist">
+                        <td className="px-6 py-3 font-mono text-xs text-stone-500">#{tx.id.slice(0, 8)}</td>
+                        <td className="px-6 py-3 font-semibold text-ink">{tx.bookingId ? `#${tx.bookingId.slice(0, 8).toUpperCase()}` : "—"}</td>
+                        <td className="px-6 py-3 text-stone-600">{tx.customerName ?? "—"}</td>
+                        <td className="px-6 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${typeMeta.color}`}>{typeMeta.label}</span></td>
+                        <td className="px-6 py-3 text-ink font-semibold">{formatVND(tx.amount)}</td>
+                        <td className="px-6 py-3 text-stone-500 text-xs uppercase">{tx.method ?? "—"}</td>
+                        <td className="px-6 py-3 text-xs text-stone-500">{tx.status}</td>
+                        <td className="px-6 py-3 text-xs text-stone-400">{new Date(tx.createdAt).toLocaleString("vi-VN")}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          {txTotal > 20 && (
+            <div className="flex items-center justify-between border-t border-sand px-6 py-3">
+              <span className="text-xs text-stone-500">Trang {txPage} / {Math.ceil(txTotal / 20)} — {txTotal} giao dịch</span>
+              <div className="flex gap-2">
+                <button disabled={txPage <= 1} onClick={() => setTxPage((p) => p - 1)} className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40">← Trước</button>
+                <button disabled={txPage >= Math.ceil(txTotal / 20)} onClick={() => setTxPage((p) => p + 1)} className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40">Tiếp →</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subView === "reconciliation" && reconciliation && (
+        <div className="space-y-6">
+          <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Đối soát giao dịch</h3>
+            <p className="mb-6 text-xs text-stone-400">
+              Kỳ: {new Date(reconciliation.period.start).toLocaleDateString("vi-VN")} → {new Date(reconciliation.period.end).toLocaleDateString("vi-VN")}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <ReconCard label="Doanh thu cho thuê" value={formatVND(reconciliation.rentalRevenue)} color="text-jade" />
+              <ReconCard label="Tiền cọc đã thu" value={formatVND(reconciliation.depositReceived)} color="text-amber-700" />
+              <ReconCard label="Đã hoàn cọc" value={formatVND(reconciliation.refundedDeposit)} color="text-blue-600" />
+              <ReconCard label="Phạt hư hỏng" value={formatVND(reconciliation.damageDeduction)} color="text-red-600" />
+              <ReconCard label="Số giao dịch" value={String(reconciliation.transactionCount)} color="text-stone-700" />
+              <ReconCard label="Dòng tiền ròng" value={formatVND(reconciliation.netCashFlow)} color="text-ink" highlight />
+            </div>
+          </div>
+
+          {/* Reconciliation verification */}
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Kiểm tra nghiệp vụ</h4>
+            <ul className="space-y-1 text-sm text-emerald-800">
+              <li>✓ Doanh thu cho thuê <b>KHÔNG</b> bao gồm tiền cọc</li>
+              <li>✓ Dòng tiền ròng = Doanh thu + Cọc thu − Cọc hoàn = {formatVND(reconciliation.rentalRevenue + reconciliation.depositReceived - reconciliation.refundedDeposit)}</li>
+              <li>✓ Tiền phạt được ghi nhận riêng: {formatVND(reconciliation.damageDeduction)}</li>
+            </ul>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-mist text-xs uppercase tracking-[0.14em] text-stone-500">
-              <tr>
-                <th className="px-6 py-3">Mã đơn</th>
-                <th className="px-6 py-3">Khách hàng</th>
-                <th className="px-6 py-3">Tiền thuê</th>
-                <th className="px-6 py-3">Tiền cọc</th>
-                <th className="px-6 py-3">Phạt</th>
-                <th className="px-6 py-3">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-sand">
-              {bookings.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-stone-400">Chưa có đơn nào.</td>
-                </tr>
-              ) : filteredBookings.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-stone-400">Không tìm thấy đơn phù hợp.</td>
-                </tr>
-              ) : (
-                filteredBookings.map((b) => {
-                  const s = STATUS_LABELS[b.status] ?? { label: b.status, color: "bg-stone-100 text-stone-600" };
-                  return (
-                    <tr key={b.id} className="transition hover:bg-mist">
-                      <td className="px-6 py-4 font-semibold text-ink">#{b.id.slice(0, 8).toUpperCase()}</td>
-                      <td className="px-6 py-4 text-stone-600">{b.customerName ?? "—"}</td>
-                      <td className="px-6 py-4 text-ink">{formatVND(b.rentalTotal)}</td>
-                      <td className="px-6 py-4 text-stone-600">{formatVND(b.depositTotal)}</td>
-                      <td className="px-6 py-4 text-red-700">{(b.penaltyTotal ?? 0) > 0 ? formatVND(b.penaltyTotal ?? 0) : "—"}</td>
-                      <td className="px-6 py-4">
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}>{s.label}</span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+      )}
+    </div>
+  );
+}
+
+function KPICard({ label, value, icon, tone, hint }: { label: string; value: string; icon: string; tone: string; hint?: string }) {
+  const toneMap: Record<string, string> = {
+    jade: "border-emerald-200 bg-emerald-50",
+    amber: "border-amber-200 bg-amber-50",
+    blue: "border-blue-200 bg-blue-50",
+    red: "border-red-200 bg-red-50",
+    stone: "border-stone-200 bg-stone-50",
+    purple: "border-purple-200 bg-purple-50",
+  };
+  const textMap: Record<string, string> = {
+    jade: "text-jade", amber: "text-amber-700", blue: "text-blue-700",
+    red: "text-red-700", stone: "text-stone-600", purple: "text-purple-700",
+  };
+  return (
+    <div className={`rounded-xl border p-4 shadow-sm ${toneMap[tone] ?? "border-sand bg-white"}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`material-symbols-outlined text-[18px] ${textMap[tone] ?? "text-stone-500"}`}>{icon}</span>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500 leading-tight">{label}</p>
       </div>
+      <p className={`font-display text-xl ${textMap[tone] ?? "text-ink"}`}>{value}</p>
+      {hint && <p className="mt-1 text-[10px] text-stone-400">{hint}</p>}
+    </div>
+  );
+}
+
+function ReconCard({ label, value, color, highlight }: { label: string; value: string; color: string; highlight?: boolean }) {
+  return (
+    <div className={`rounded-lg border p-4 ${highlight ? "border-ink bg-parchment" : "border-sand bg-mist"}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500">{label}</p>
+      <p className={`mt-1 font-display text-xl ${color}`}>{value}</p>
     </div>
   );
 }

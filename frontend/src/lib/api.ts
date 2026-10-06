@@ -722,6 +722,201 @@ export async function getCustomerRefund(bookingId: string) {
   return apiRequest<CustomerRefundResponse[]>(`/refunds/customer/booking/${bookingId}`);
 }
 
+// ---------- Financial Dashboard types ----------
+
+export type FinancialSummaryResponse = {
+  rentalRevenue: number;
+  depositReceived: number;
+  depositHeld: number;
+  depositHeldCount: number;
+  refundedDeposit: number;
+  damageDeduction: number;
+  forfeitedDeposit: number;
+  totalTransactions: number;
+  totalBookings: number;
+  paidBookings: number;
+  unpaidBookings: number;
+};
+
+export type RevenueByDayResponse = {
+  date: string;
+  rentalRevenue: number;
+  depositReceived: number;
+}[];
+
+export type RevenueByPaymentMethodResponse = {
+  paymentMethod: string;
+  rentalRevenue: number;
+  depositReceived: number;
+  refundedAmount: number;
+  transactionCount: number;
+}[];
+
+export type DepositListItem = {
+  bookingId: string;
+  customerId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  originalDeposit: number;
+  refundedAmount: number;
+  damageDeduction: number;
+  forfeitedAmount: number;
+  remainingAmount: number;
+  status: string;
+  bookingStatus: string;
+  createdAt: string;
+  updatedAt: string;
+  refunds: Array<{
+    id: string;
+    amount: number;
+    status: string;
+    reason: string | null;
+    refundMethod: string;
+    processedBy: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  penalties: Array<{
+    id: string;
+    amount: number;
+    reason: string;
+    createdBy: string | null;
+    createdAt: string;
+  }>;
+};
+
+export type DepositDetailResponse = {
+  bookingId: string;
+  customer: {
+    id: string;
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+  };
+  originalDeposit: number;
+  refundedAmount: number;
+  damageDeduction: number;
+  forfeitedAmount: number;
+  remainingAmount: number;
+  status: string;
+  bookingStatus: string;
+  items: Array<{
+    id: string;
+    garmentName: string | null;
+    sizeLabel: string | null;
+    imageUrl: string | null;
+  }>;
+  history: Array<{
+    action: string;
+    amount: number;
+    reason: string | null;
+    processedBy: string | null;
+    processedAt: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FinancialTransactionItem = {
+  id: string;
+  bookingId: string | null;
+  customerName: string | null;
+  type: string;
+  rawType: string;
+  amount: number;
+  method: string | null;
+  status: string;
+  note: string | null;
+  createdAt: string;
+  processedBy: string | null;
+};
+
+export type FinancialTransactionsResponse = {
+  items: FinancialTransactionItem[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type ReconciliationResponse = {
+  period: { start: string; end: string };
+  rentalRevenue: number;
+  depositReceived: number;
+  refundedDeposit: number;
+  damageDeduction: number;
+  transactionCount: number;
+  netCashFlow: number;
+};
+
+export type FinancialQueryParams = {
+  preset?: "today" | "this_month" | "this_year" | "custom" | string;
+  startDate?: string;
+  endDate?: string;
+  paymentMethod?: string;
+  transactionStatus?: string;
+  method?: string;
+};
+
+// ---------- Financial Dashboard API functions ----------
+
+function buildFinancialQueryString(params?: FinancialQueryParams): string {
+  if (!params) return "";
+  const searchParams = new URLSearchParams();
+  if (params.preset) searchParams.set("preset", params.preset);
+  if (params.startDate) searchParams.set("startDate", params.startDate);
+  if (params.endDate) searchParams.set("endDate", params.endDate);
+  if (params.paymentMethod) searchParams.set("paymentMethod", params.paymentMethod);
+  if (params.transactionStatus) searchParams.set("transactionStatus", params.transactionStatus);
+  if (params.method) searchParams.set("method", params.method);
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function getFinancialSummary(params?: FinancialQueryParams) {
+  return apiRequest<FinancialSummaryResponse>(`/financial/summary${buildFinancialQueryString(params)}`);
+}
+
+export async function getRevenueByDay(params?: FinancialQueryParams) {
+  return apiRequest<RevenueByDayResponse>(`/financial/revenue-by-day${buildFinancialQueryString(params)}`);
+}
+
+export async function getRevenueByPaymentMethod(params?: FinancialQueryParams) {
+  return apiRequest<RevenueByPaymentMethodResponse>(`/financial/revenue-by-payment-method${buildFinancialQueryString(params)}`);
+}
+
+export async function getFinancialDeposits(params?: FinancialQueryParams & { bookingId?: string; customerId?: string; status?: string }) {
+  const searchParams = new URLSearchParams();
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+  if (params?.bookingId) searchParams.set("bookingId", params.bookingId);
+  if (params?.customerId) searchParams.set("customerId", params.customerId);
+  if (params?.status) searchParams.set("status", params.status);
+  const qs = searchParams.toString();
+  return apiRequest<DepositListItem[]>(`/financial/deposits${qs ? `?${qs}` : ""}`);
+}
+
+export async function getDepositDetail(bookingId: string) {
+  return apiRequest<DepositDetailResponse>(`/financial/deposits/${bookingId}`);
+}
+
+export async function getFinancialTransactions(params?: FinancialQueryParams & { page?: number; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+  if (params?.transactionStatus) searchParams.set("transactionStatus", params.transactionStatus);
+  if (params?.method) searchParams.set("method", params.method);
+  if (params?.page) searchParams.set("page", String(params.page));
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const qs = searchParams.toString();
+  return apiRequest<FinancialTransactionsResponse>(`/financial/transactions${qs ? `?${qs}` : ""}`);
+}
+
+export async function getReconciliation(params?: FinancialQueryParams) {
+  return apiRequest<ReconciliationResponse>(`/financial/reconciliation${buildFinancialQueryString(params)}`);
+}
+
 // ---------- Asset maintenance API functions ----------
 
 export type AssetNeedingProcessing = {
