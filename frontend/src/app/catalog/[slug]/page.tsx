@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { useAuth } from "@/components/auth/auth-provider";
-import { getGarmentsGrouped, getGarmentReviews, type GarmentGrouped, type ReviewResponse } from "@/lib/api";
+import { getGarmentsGrouped, getGarmentReviews, getSizeAvailabilityCalendar, type GarmentGrouped, type GroupedGarmentAccessory, type ReviewResponse } from "@/lib/api";
+import { RentalDateCalendar } from "@/components/customer/rental-date-calendar";
 import { addToCart, cartCount } from "@/lib/cart";
-import { pairingItems } from "@/lib/heritage-mock-data";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
 
@@ -43,6 +43,9 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const today = todayIso();
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(addDays(today, 2));
+  const maxDate = addDays(today, 365);
+  const [fullyBookedDates, setFullyBookedDates] = useState<Set<string>>(new Set());
+  const [calLoading, setCalLoading] = useState(false);
   const { user } = useAuth();
   
   const hasPublicReview = Boolean(user && reviewsData?.reviews.some((r) => r.customerId === user.id));
@@ -76,6 +79,56 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
       setLoading(false);
     });
   }, [garmentId]);
+
+  // Tải lịch còn hàng của size đang chọn (12 tháng tới) để disable ngày hết hàng
+  useEffect(() => {
+    if (!selectedGarmentId) return;
+    let cancelled = false;
+    setCalLoading(true);
+    getSizeAvailabilityCalendar(selectedGarmentId, today, maxDate).then((res) => {
+      if (cancelled) return;
+      setCalLoading(false);
+      if (res.success && res.data) {
+        setFullyBookedDates(new Set(res.data.days.filter((d) => !d.available).map((d) => d.date)));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGarmentId]);
+
+  // Nếu ngày bắt đầu đang chọn rơi vào ngày disable (mặc định ban đầu hoặc
+  // sau khi đổi size), tự dời về ngày trống gần nhất và thu khoảng còn 1 ngày.
+  useEffect(() => {
+    if (fullyBookedDates.size === 0) return;
+    if (startDate >= today && !fullyBookedDates.has(startDate)) return;
+    let d = today;
+    while (d <= maxDate && fullyBookedDates.has(d)) {
+      d = addDays(d, 1);
+    }
+    if (d <= maxDate && !fullyBookedDates.has(d)) {
+      setStartDate(d);
+      setEndDate(d);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullyBookedDates]);
+
+  // Các ngày hết hàng nằm gọn trong khoảng đang chọn
+  const blockedInRange = useMemo(() => {
+    if (!startDate || !endDate || endDate < startDate) return [];
+    const out: string[] = [];
+    let d = startDate;
+    while (d <= endDate) {
+      if (fullyBookedDates.has(d)) out.push(d);
+      d = addDays(d, 1);
+    }
+    return out;
+  }, [startDate, endDate, fullyBookedDates]);
+
+  function formatShortDate(iso: string) {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  }
 
   if (notFoundFlag) notFound();
 
@@ -133,7 +186,7 @@ async function handleConsult() {
   }
 
   function handleBookNow() {
-    if (!group || !selectedSize) return;
+    if (!group || !selectedSize || blockedInRange.length > 0) return;
     const s = selectedSize;
     addToCart({
       garmentSizeId: s.garmentSizeId,
@@ -253,27 +306,56 @@ async function handleConsult() {
                 </div>
               </div>
 
+              <div className="mb-8">
+                <h2 className="mb-4 font-display text-3xl text-ink">Thông số chi tiết</h2>
+                {(() => {
+                  const specs: Array<{ label: string; value: string }> = [];
+                  if (group?.description) specs.push({ label: "Mô tả", value: group.description });
+                  if (group?.color) specs.push({ label: "Màu sắc", value: group.color });
+                  if ((group?.material ?? []).length > 0) specs.push({ label: "Chất liệu", value: (group?.material ?? []).join(", ") });
+                  if ((group?.occasion ?? []).length > 0) specs.push({ label: "Dịp sử dụng", value: (group?.occasion ?? []).join(", ") });
+                  return specs.length > 0 ? (
+                    <ul className="space-y-4">
+                      {specs.map((spec) => (
+                        <li key={spec.label} className="flex items-center justify-between gap-4 border-b border-sand/70 pb-3 text-sm">
+                          <span className="text-stone-500">{spec.label}</span>
+                          <span className="text-right font-medium text-ink">{spec.value}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-stone-500">Shop đang cập nhật thông số chi tiết cho mẫu này.</p>
+                  );
+                })()}
+              </div>
+
               <div className="space-y-8">
                 {/* Date range picker */}
                 <div>
                   <label className="mb-3 block text-sm font-semibold uppercase tracking-[0.18em] text-ink">Khoảng thời gian thuê</label>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="relative">
-                      <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">calendar_month</span>
-                      <input
-                        type="date" min={today} value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        className="w-full rounded-lg border border-sand bg-white py-3 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-antique"
-                      />
-                    </div>
-                    <div className="relative">
-                      <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">calendar_month</span>
-                      <input
-                        type="date" min={startDate} value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="w-full rounded-lg border border-sand bg-white py-3 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-antique"
-                      />
-                    </div>
+                  <div className="rounded-xl border border-sand bg-white p-4 sm:p-5">
+                    <RentalDateCalendar
+                      startDate={startDate}
+                      endDate={endDate}
+                      minDate={today}
+                      maxDate={maxDate}
+                      fullyBookedDates={fullyBookedDates}
+                      loading={calLoading}
+                      onChange={(s, e) => {
+                        setStartDate(s);
+                        setEndDate(e);
+                      }}
+                    />
+                    <p className="mt-3 text-center text-sm text-stone-600">
+                      Nhận: <span className="font-semibold text-ink">{formatShortDate(startDate)}</span>
+                      {" → "}
+                      Trả: <span className="font-semibold text-ink">{formatShortDate(endDate)}</span>
+                    </p>
+                    {blockedInRange.length > 0 && (
+                      <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-xs font-medium text-red-600">
+                        Khoảng ngày chứa ngày hết hàng ({blockedInRange.map(formatShortDate).join(", ")}). Vui lòng chọn lại ngày.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -388,7 +470,9 @@ async function handleConsult() {
                 <button
                   type="button"
                   onClick={handleBookNow}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood"
+                  disabled={blockedInRange.length > 0}
+                  title={blockedInRange.length > 0 ? "Khoảng ngày chứa ngày hết hàng, vui lòng chọn lại" : undefined}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Đặt thuê ngay
                   <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
@@ -416,86 +500,44 @@ async function handleConsult() {
                 <p className="text-center text-sm text-stone-500">Đã bao gồm công là ủi, làm sạch và hỗ trợ chỉnh sửa cơ bản.</p>
               </div>
 
-              <section className="mt-12 border-t border-sand pt-8">
-                <h2 className="font-display text-4xl text-ink">Thông số chi tiết</h2>
-                {(() => {
-                  const specs: Array<{ label: string; value: string }> = [];
-                  if (group?.description) specs.push({ label: "Mô tả", value: group.description });
-                  if (group?.color) specs.push({ label: "Màu sắc", value: group.color });
-                  if ((group?.material ?? []).length > 0) specs.push({ label: "Chất liệu", value: (group?.material ?? []).join(", ") });
-                  if ((group?.occasion ?? []).length > 0) specs.push({ label: "Dịp sử dụng", value: (group?.occasion ?? []).join(", ") });
-                  return (
-                    <>
-                      {specs.length > 0 ? (
-                        <ul className="mt-6 space-y-4">
-                          {specs.map((spec) => (
-                            <li key={spec.label} className="flex items-center justify-between gap-4 border-b border-sand/70 pb-3 text-sm">
-                              <span className="text-stone-500">{spec.label}</span>
-                              <span className="text-right font-medium text-ink">{spec.value}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-6 text-sm text-stone-500">Shop đang cập nhật thông số chi tiết cho mẫu này.</p>
-                      )}
-                      {(group?.careInstructions ?? []).length > 0 && (
-                        <div className="mt-6 rounded-lg border border-sand bg-white p-5">
-                          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-ink">
-                            <span className="material-symbols-outlined text-[18px] text-lotus">dry_cleaning</span>
-                            Hướng dẫn bảo quản
-                          </h3>
-                          <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-6 text-stone-600">
-                            {(group?.careInstructions ?? []).map((c, i) => (
-                              <li key={i}>{c}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {(group?.usageConditions ?? []).length > 0 && (
-                        <div className="mt-4 rounded-lg border border-sand bg-white p-5">
-                          <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-ink">
-                            <span className="material-symbols-outlined text-[18px] text-lotus">contract</span>
-                            Điều kiện sử dụng
-                          </h3>
-                          <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-6 text-stone-600">
-                            {(group?.usageConditions ?? []).map((c, i) => (
-                              <li key={i}>{c}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </section>
-            </div>
+              </div>
           </div>
         ) : null}
 
-        {/* Pairing accessories */}
-        {group && (
-          <section className="mt-24 rounded-lg border border-sand bg-mist px-6 py-12 lg:px-12">
-            <div className="grid items-center gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-              <div>
-                <h2 className="font-display text-5xl text-ink">Phối hợp phụ kiện</h2>
-                <p className="mt-4 text-base leading-8 text-stone-600">Gợi ý phụ kiện để hoàn thiện thần thái trang phục.</p>
-                <div className="mt-8 space-y-4">
-                  {pairingItems.map((item) => (
-                    <div key={item.title} className="flex items-center gap-4 rounded-lg border border-sand bg-white p-4 transition hover:border-antique">
-                      <img alt={item.title} className="h-16 w-16 rounded object-cover" src={item.image} />
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-ink">{item.title}</h3>
-                        <p className="text-sm text-antique">{item.price}</p>
-                      </div>
-                      <span className="material-symbols-outlined text-stone-500">add_circle</span>
-                    </div>
+        {/* Pairing accessories (real links of this garment) */}
+        {group && (group.accessories ?? []).length > 0 && (
+          <AccessoriesShowcase accessories={group.accessories ?? []} />
+        )}
+
+        {/* Care & usage terms */}
+        {group && ((group?.careInstructions ?? []).length > 0 || (group?.usageConditions ?? []).length > 0) && (
+          <section className="mt-24 grid gap-6 md:grid-cols-2">
+            {(group?.careInstructions ?? []).length > 0 && (
+              <div className="rounded-xl border border-sand bg-white p-6 sm:p-8">
+                <h2 className="flex items-center gap-2 font-display text-3xl text-ink">
+                  <span className="material-symbols-outlined text-lotus">dry_cleaning</span>
+                  Hướng dẫn bảo quản
+                </h2>
+                <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-stone-600">
+                  {(group?.careInstructions ?? []).map((c, i) => (
+                    <li key={i}>{c}</li>
                   ))}
-                </div>
+                </ul>
               </div>
-              <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg border border-sand bg-lotus/5">
-                <span className="material-symbols-outlined text-[60px] text-antique/30">diamond</span>
+            )}
+            {(group?.usageConditions ?? []).length > 0 && (
+              <div className="rounded-xl border border-sand bg-white p-6 sm:p-8">
+                <h2 className="flex items-center gap-2 font-display text-3xl text-ink">
+                  <span className="material-symbols-outlined text-lotus">contract</span>
+                  Điều kiện sử dụng
+                </h2>
+                <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-stone-600">
+                  {(group?.usageConditions ?? []).map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
               </div>
-            </div>
+            )}
           </section>
         )}
 
@@ -608,5 +650,80 @@ async function handleConsult() {
       </main>
       <CustomerFooter />
     </div>
+  );
+}
+
+function AccessoriesShowcase({
+  accessories,
+}: {
+  accessories: GroupedGarmentAccessory[];
+}) {
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const safeIdx = Math.min(selectedIdx, Math.max(0, accessories.length - 1));
+  const selected = accessories[safeIdx];
+
+  return (
+    <section className="mt-24 rounded-lg border border-sand bg-mist px-6 py-12 lg:px-12">
+      <div className="grid items-center gap-10 lg:grid-cols-[0.95fr_1.05fr]">
+        <div>
+          <h2 className="font-display text-5xl text-ink">Phối hợp phụ kiện</h2>
+          <p className="mt-4 text-base leading-8 text-stone-600">Nhấn vào từng phụ kiện để xem ảnh chi tiết.</p>
+          <div className="mt-8 space-y-4">
+            {accessories.map((item, i) => {
+              const active = i === safeIdx;
+              return (
+                <button
+                  key={item.accessoryId}
+                  type="button"
+                  onClick={() => setSelectedIdx(i)}
+                  className={`flex w-full items-center gap-4 rounded-lg border bg-white p-4 text-left transition ${
+                    active ? "border-lotus ring-2 ring-lotus/20" : "border-sand hover:border-antique"
+                  }`}
+                >
+                  {item.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img alt={item.name} className="h-16 w-16 rounded object-cover" src={item.imageUrl} />
+                  ) : (
+                    <div className="flex h-16 w-16 items-center justify-center rounded bg-mist">
+                      <span className="material-symbols-outlined text-2xl text-stone-300">diamond</span>
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-ink">{item.name}</h3>
+                    <p className="text-sm text-antique">Số lượng: {item.quantity}</p>
+                    <p className="text-xs text-stone-500">
+                      {item.isIncluded ? "Đi kèm miễn phí" : `+ ${formatVND(item.extraPrice)} / ngày`}
+                      {item.replacementValue > 0 && ` · Đền ${formatVND(item.replacementValue)} nếu mất/hỏng`}
+                    </p>
+                  </div>
+                  <span className={`material-symbols-outlined ${active ? "text-lotus" : "text-stone-500"}`}>
+                    {active ? "check_circle" : "add_circle"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg border border-sand bg-lotus/5">
+          {selected?.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={selected.accessoryId}
+              alt={selected.name}
+              src={selected.imageUrl}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span className="material-symbols-outlined text-[60px] text-antique/30">diamond</span>
+          )}
+          {selected && (
+            <div className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-2.5 backdrop-blur-sm">
+              <p className="truncate text-sm font-semibold text-white">{selected.name}</p>
+              <p className="text-xs text-white/80">Số lượng: {selected.quantity}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

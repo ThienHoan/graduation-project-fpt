@@ -3,13 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { AssetStatus, Prisma } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CreateGarmentDto } from "./dto/create-garment.dto";
 import type { UpdateGarmentDto } from "./dto/update-garment.dto";
 import type { AddGarmentImageDto } from "./dto/add-image.dto";
+import type { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.dto";
+import type { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { normalizeStringArray, type GarmentMeasurementsDto } from "./dto/garment-details.dto";
 
 type GarmentWithCategory = {
@@ -312,6 +314,7 @@ export class GarmentsService {
         category: true,
         images: { orderBy: { sortOrder: "asc" } },
         garment_sizes: { where: { is_active: true }, orderBy: { size_label: "asc" } },
+        garment_accessories: { include: { accessories: true } },
       },
       orderBy: { name: "asc" },
     });
@@ -330,6 +333,16 @@ export class GarmentsService {
       imageUrl: string | null;
       images: Array<{ id: string; imageUrl: string; altText: string | null; sortOrder: number }>;
       imageIdsSeen: Set<string>;
+      accessoryMap: Map<string, {
+        accessoryId: string;
+        code: string;
+        name: string;
+        imageUrl: string | null;
+        quantity: number;
+        isIncluded: boolean;
+        extraPrice: number;
+        replacementValue: number;
+      }>;
       sizeMap: Map<string, {
         garmentSizeId: string;
         sizeLabel: string | null;
@@ -372,6 +385,7 @@ export class GarmentsService {
           images: [],
           imageIdsSeen: new Set(),
           sizeMap: new Map(),
+          accessoryMap: new Map(),
         });
       }
 
@@ -409,6 +423,22 @@ export class GarmentsService {
           });
         }
       }
+
+      // Merge accessories, deduplicate by accessory id
+      for (const link of g.garment_accessories ?? []) {
+        const acc = link.accessories;
+        if (!acc || group.accessoryMap.has(acc.id)) continue;
+        group.accessoryMap.set(acc.id, {
+          accessoryId: acc.id,
+          code: acc.code,
+          name: acc.name,
+          imageUrl: acc.image_url ?? null,
+          quantity: link.quantity ?? 1,
+          isIncluded: link.is_included ?? true,
+          extraPrice: Number(link.extra_price ?? 0),
+          replacementValue: Number(acc.replacement_value ?? 0),
+        });
+      }
     }
 
     return ok(
@@ -426,8 +456,158 @@ export class GarmentsService {
         imageUrl: group.imageUrl,
         images: group.images.sort((a, b) => a.sortOrder - b.sortOrder),
         sizes: Array.from(group.sizeMap.values()).sort((a, b) => (a.sizeLabel ?? "").localeCompare(b.sizeLabel ?? "")),
+        accessories: Array.from(group.accessoryMap.values()).sort((a, b) => a.name.localeCompare(b.name, "vi")),
       })),
     );
+  }
+
+  // ── Garment accessories (phụ kiện đi kèm) ─────────────────────────────────
+
+  /**
+   * Số lượng gắn cho 1 mẫu không được vượt số tài sản khả dụng
+   * (loại trừ retired/lost) của phụ kiện đó.
+   */
+  private async assertAccessoryQuantity(accessoryId: string, quantity: number) {
+    const usable = await this.prisma.accessory_assets.count({
+      where: {
+        accessory_id: accessoryId,
+        status: { notIn: [AssetStatus.retired, AssetStatus.lost] },
+      },
+    });
+    if (quantity > usable) {
+      throw new BadRequestException(
+        `Số lượng (${quantity}) vượt quá số tài sản khả dụng của phụ kiện (hiện có ${usable} món). Hãy nhập kho thêm hoặc giảm số lượng.`,
+      );
+    }
+  }
+
+  private serializeGarmentAccessory(link: {
+    id: string;
+    quantity: number;
+    is_included: boolean;
+    extra_price: unknown;
+    note: string | null;
+    accessories: {
+      id: string;
+      code: string;
+      name: string;
+      category: string | null;
+      color: string | null;
+      image_url: string | null;
+    };
+  }) {
+    return {
+      id: link.id,
+      quantity: link.quantity,
+      isIncluded: link.is_included,
+      extraPrice: Number(link.extra_price ?? 0),
+      note: link.note,
+      accessory: {
+        id: link.accessories.id,
+        code: link.accessories.code,
+        name: link.accessories.name,
+        category: link.accessories.category,
+        color: link.accessories.color,
+        imageUrl: link.accessories.image_url,
+      },
+    };
+  }
+
+  async findGarmentAccessories(garmentId: string) {
+    const garment = await this.prisma.garment.findFirst({
+      where: { id: garmentId, isActive: true },
+    });
+    if (!garment) throw new NotFoundException("Garment not found.");
+
+    const links = await this.prisma.garment_accessories.findMany({
+      where: { garment_id: garmentId },
+      include: { accessories: true },
+      orderBy: { created_at: "asc" },
+    });
+    return ok(links.map((l) => this.serializeGarmentAccessory(l)));
+  }
+
+  async addGarmentAccessory(garmentId: string, dto: CreateGarmentAccessoryDto) {
+    const garment = await this.prisma.garment.findFirst({
+      where: { id: garmentId, isActive: true },
+    });
+    if (!garment) throw new NotFoundException("Garment not found.");
+
+    const accessory = await this.prisma.accessories.findUnique({
+      where: { id: dto.accessoryId },
+    });
+    if (!accessory || !accessory.is_active) {
+      throw new NotFoundException("Phụ kiện không tồn tại hoặc đã ngừng sử dụng.");
+    }
+
+    const dup = await this.prisma.garment_accessories.findUnique({
+      where: { garment_id_accessory_id: { garment_id: garmentId, accessory_id: dto.accessoryId } },
+    });
+    if (dup) {
+      throw new BadRequestException("Phụ kiện này đã được gắn cho trang phục. Hãy sửa thay vì thêm mới.");
+    }
+
+    try {
+      await this.assertAccessoryQuantity(dto.accessoryId, dto.quantity ?? 1);
+      const link = await this.prisma.garment_accessories.create({
+        data: {
+          garment_id: garmentId,
+          accessory_id: dto.accessoryId,
+          quantity: dto.quantity ?? 1,
+          is_included: dto.isIncluded ?? true,
+          extra_price: dto.extraPrice ?? 0,
+          note: dto.note?.trim() || null,
+        },
+        include: { accessories: true },
+      });
+      return ok(this.serializeGarmentAccessory(link));
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new BadRequestException("Phụ kiện này đã được gắn cho trang phục.");
+      }
+      throw error;
+    }
+  }
+
+  async updateGarmentAccessory(
+    garmentId: string,
+    accessoryId: string,
+    dto: UpdateGarmentAccessoryDto,
+  ) {
+    const link = await this.prisma.garment_accessories.findUnique({
+      where: { garment_id_accessory_id: { garment_id: garmentId, accessory_id: accessoryId } },
+      include: { accessories: true },
+    });
+    if (!link) throw new NotFoundException("Chưa gắn phụ kiện này cho trang phục.");
+
+    if (dto.quantity !== undefined) {
+      await this.assertAccessoryQuantity(accessoryId, dto.quantity);
+    }
+
+    const updated = await this.prisma.garment_accessories.update({
+      where: { id: link.id },
+      data: {
+        ...(dto.quantity !== undefined ? { quantity: dto.quantity } : {}),
+        ...(dto.isIncluded !== undefined ? { is_included: dto.isIncluded } : {}),
+        ...(dto.extraPrice !== undefined ? { extra_price: dto.extraPrice } : {}),
+        ...(dto.note !== undefined ? { note: dto.note?.trim() || null } : {}),
+      },
+      include: { accessories: true },
+    });
+    return ok(this.serializeGarmentAccessory(updated));
+  }
+
+  async removeGarmentAccessory(garmentId: string, accessoryId: string) {
+    const link = await this.prisma.garment_accessories.findUnique({
+      where: { garment_id_accessory_id: { garment_id: garmentId, accessory_id: accessoryId } },
+    });
+    if (!link) throw new NotFoundException("Chưa gắn phụ kiện này cho trang phục.");
+
+    await this.prisma.garment_accessories.delete({ where: { id: link.id } });
+    return ok({ garmentId, accessoryId, removed: true });
   }
 
   // ── Category CRUD ──────────────────────────────────────────────────────────

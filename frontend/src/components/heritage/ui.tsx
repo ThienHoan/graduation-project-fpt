@@ -11,7 +11,7 @@ import { bookingFlowSteps } from "@/lib/heritage-mock-data";
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 type StaffNavKey = "overview" | "inspection"| "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing";
+type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -223,6 +223,7 @@ export function ManagerPortalShell({
     { key: "overview", label: "Tổng quan", icon: "dashboard", href: "/dashboard/manager" },
     { key: "assets", label: "Gán tài sản", icon: "swap_horiz", href: "/dashboard/manager#assets" },
     { key: "inventory", label: "Kho trang phục", icon: "inventory_2", href: "/dashboard/manager#inventory" },
+    { key: "accessories", label: "Kho phụ kiện", icon: "diamond", href: "/dashboard/manager/accessories" },
     { key: "inspection-log", label: "Nhật ký kiểm tra", icon: "fact_check", href: "/dashboard/manager#inspection-log" },
     { key: "laundry", label: "Giặt sấy", icon: "dry_cleaning", href: "/dashboard/manager#laundry" },
     { key: "damaged", label: "Hư hỏng & Mất", icon: "report_problem", href: "/dashboard/manager#damaged" },

@@ -32,6 +32,11 @@ getGarments,
   getGarmentCategories,
   getGarmentSizes,
   getGarmentSizesByGarment,
+  getGarmentAccessories,
+  addGarmentAccessory,
+  updateGarmentAccessory,
+  removeGarmentAccessory,
+  getAccessories,
   getCanonicalOccasions,
   createGarmentCategory,
   createGarmentSize,
@@ -44,6 +49,8 @@ getGarments,
   type GarmentDetail,
   type GarmentCategory,
   type GarmentSizeOption,
+  type GarmentAccessoryLink,
+  type AccessoryItem,
   type AssetDetail,
   type AssetInspectionHistory,
   type InspectionLogEntry,
@@ -646,7 +653,7 @@ export default function ManagerDashboardPage() {
       active={tab as any}
       title={meta.title}
       subtitle={meta.subtitle}
-      onTabChange={(key) => { if (key !== "reviews" && key !== "chat" && key !== "pricing") goToTab(key); }}
+      onTabChange={(key) => { if (key !== "reviews" && key !== "chat" && key !== "pricing" && key !== "accessories") goToTab(key); }}
       managerName={hasMounted ? (user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng") : "Quản lý cửa hàng"}
       managerEmail={hasMounted ? (user?.email ?? null) : null}
       currentDateLabel={hasMounted ? currentDateLabel : ""}
@@ -1452,6 +1459,9 @@ function InventoryTab({
             )}
           </div>
         )}
+        {selectedGarmentId && (
+          <GarmentAccessoriesSection garmentId={selectedGarmentId} />
+        )}
       </section>
 
       {/* Garment Create/Edit Modal */}
@@ -1932,6 +1942,339 @@ function GarmentFormModal({
           <button type="button" onClick={handleClose} className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50">Hủy</button>
           <button type="submit" disabled={submitting} className="rounded-lg bg-lotus px-6 py-2.5 text-sm font-semibold text-white hover:bg-oxblood disabled:opacity-50">
             {submitting ? "Đang lưu..." : garment ? "Lưu thay đổi" : "Tạo trang phục"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Section + Modal: Garment <-> Accessory links (Phụ kiện đi kèm)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
+  const [links, setLinks] = useState<GarmentAccessoryLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<GarmentAccessoryLink | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    const res = await getGarmentAccessories(garmentId);
+    setLoading(false);
+    if (res.success && res.data) {
+      setLinks(res.data);
+    } else {
+      setError(res.message ?? "Không thể tải phụ kiện đi kèm.");
+    }
+  }
+
+  useEffect(() => {
+    setEditing(null);
+    setModalOpen(false);
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [garmentId]);
+
+  async function handleSave(
+    payload: { accessoryId: string; quantity: number; isIncluded: boolean; extraPrice: number; note?: string },
+    link?: GarmentAccessoryLink | null,
+  ) {
+    setSaving(true);
+    const res = link
+      ? await updateGarmentAccessory(garmentId, link.accessory.id, {
+        quantity: payload.quantity,
+        isIncluded: payload.isIncluded,
+        extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
+        note: payload.note,
+      })
+      : await addGarmentAccessory(garmentId, {
+        ...payload,
+        extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
+      });
+    setSaving(false);
+    if (res.success) {
+      setModalOpen(false);
+      setEditing(null);
+      await load();
+    } else {
+      setError(res.message ?? "Không thể lưu. Vui lòng thử lại.");
+    }
+  }
+
+  async function handleRemove(link: GarmentAccessoryLink) {
+    if (!window.confirm(`Gỡ "${link.accessory.name}" khỏi trang phục?`)) return;
+    const res = await removeGarmentAccessory(garmentId, link.accessory.id);
+    if (res.success) {
+      await load();
+    } else {
+      setError(res.message ?? "Không thể gỡ. Vui lòng thử lại.");
+    }
+  }
+
+  return (
+    <div className="border-t border-sand bg-white">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <h3 className="font-display text-lg text-ink">
+          Phụ kiện đi kèm{" "}
+          <span className="text-xs font-sans font-medium text-stone-500">({links.length})</span>
+        </h3>
+        <button
+          type="button"
+          onClick={() => {
+            setEditing(null);
+            setModalOpen(true);
+          }}
+          className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
+        >
+          <span className="material-symbols-outlined text-[16px]">add</span>
+          Gắn phụ kiện
+        </button>
+      </div>
+      <div className="max-h-48 overflow-y-auto px-4 pb-4">
+        {loading ? (
+          <p className="py-3 text-center text-xs text-stone-400">Đang tải...</p>
+        ) : error ? (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+        ) : links.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-sand bg-mist py-4 text-center text-xs text-stone-500">
+            Chưa gắn phụ kiện nào cho mẫu này.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {links.map((l) => (
+              <li
+                key={l.id}
+                className="flex items-center gap-3 rounded-lg border border-sand bg-mist/50 p-2.5"
+              >
+                {l.accessory.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={l.accessory.imageUrl} alt={l.accessory.name} className="h-10 w-10 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white">
+                    <span className="material-symbols-outlined text-lg text-stone-300">diamond</span>
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-ink">{l.accessory.name}</p>
+                  <p className="text-xs text-stone-500">
+                    {l.accessory.code} · SL {l.quantity} ·{" "}
+                    {l.isIncluded ? (
+                      <span className="font-medium text-jade">Đi kèm miễn phí</span>
+                    ) : (
+                      <span className="font-medium text-bronze">Thuê kèm +{formatVND(l.extraPrice)}</span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(l);
+                    setModalOpen(true);
+                  }}
+                  className="rounded-md p-1.5 text-stone-500 transition hover:text-lotus"
+                  aria-label="Sửa"
+                >
+                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRemove(l)}
+                  className="rounded-md p-1.5 text-stone-500 transition hover:text-red-500"
+                  aria-label="Gỡ"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {modalOpen && (
+        <GarmentAccessoryLinkModal
+          garmentId={garmentId}
+          link={editing}
+          saving={saving}
+          onClose={() => {
+            setModalOpen(false);
+            setEditing(null);
+          }}
+          onSubmit={handleSave}
+        />
+      )}
+    </div>
+  );
+}
+
+function GarmentAccessoryLinkModal({
+  link,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  garmentId: string;
+  link: GarmentAccessoryLink | null;
+  saving: boolean;
+  onClose: () => void;
+  onSubmit: (
+    payload: { accessoryId: string; quantity: number; isIncluded: boolean; extraPrice: number; note?: string },
+    link?: GarmentAccessoryLink | null,
+  ) => void;
+}) {
+  const [options, setOptions] = useState<AccessoryItem[]>([]);
+  const [accessoryId, setAccessoryId] = useState(link?.accessory.id ?? "");  const [quantity, setQuantity] = useState(link ? String(link.quantity) : "1");
+  const [isIncluded, setIsIncluded] = useState(link ? link.isIncluded : true);
+  const [extraPrice, setExtraPrice] = useState(link && !link.isIncluded ? String(link.extraPrice) : "");
+  const [note, setNote] = useState(link?.note ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAccessories().then((res) => {
+      if (res.success && res.data) setOptions(res.data);
+    });
+  }, []);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!link && !accessoryId) {
+      setError("Vui lòng chọn phụ kiện.");
+      return;
+    }
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty < 1) {
+      setError("Số lượng phải là số nguyên lớn hơn 0.");
+      return;
+    }
+    const price = extraPrice.trim() ? Number(extraPrice.replace(/\D/g, "")) : 0;
+    if (!Number.isFinite(price) || price < 0) {
+      setError("Phụ phí không hợp lệ.");
+      return;
+    }
+    setError(null);
+    onSubmit(
+      {
+        accessoryId: link ? link.accessory.id : accessoryId,
+        quantity: qty,
+        isIncluded,
+        extraPrice: price,
+        note: note.trim() || undefined,
+      },
+      link,
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md rounded-lg border border-sand bg-white p-6 shadow-2xl"
+      >
+        <div className="mb-6 flex items-center justify-between">
+          <h3 className="font-display text-2xl text-ink">
+            {link ? "Sửa phụ kiện đi kèm" : "Gắn phụ kiện"}
+          </h3>
+          <button type="button" onClick={onClose} className="text-stone-500 hover:text-lotus">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Phụ kiện *
+            </label>
+            {link ? (
+              <p className="rounded-lg border border-sand bg-stone-50 px-3 py-2 text-sm font-semibold text-ink">
+                {link.accessory.name}{" "}
+                <span className="font-normal text-stone-400">({link.accessory.code})</span>
+              </p>
+            ) : (
+              <select
+                value={accessoryId}
+                onChange={(e) => setAccessoryId(e.target.value)}
+                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+              >
+                <option value="">— Chọn phụ kiện —</option>
+                {options.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name} ({o.code}) — kho: {o.assetCount} món
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="mt-1 text-xs text-stone-400">
+              Số lượng gắn không được vượt số tài sản khả dụng của phụ kiện.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Số lượng *
+              </label>
+              <input
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                type="number"
+                min={1}
+                step={1}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Phụ phí thuê kèm (VNĐ)
+              </label>
+              <input
+                value={extraPrice}
+                onChange={(e) => setExtraPrice(e.target.value.replace(/\D/g, ""))}
+                type="text"
+                inputMode="numeric"
+                disabled={isIncluded}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique disabled:bg-stone-50 disabled:text-stone-400"
+                placeholder="0"
+              />
+            </div>
+          </div>
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={isIncluded}
+              onChange={(e) => setIsIncluded(e.target.checked)}
+              className="h-4 w-4 accent-[#8B0000]"
+            />
+            Đi kèm miễn phí (không tính phụ phí)
+          </label>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Ghi chú
+            </label>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: Mấn đi kèm bộ Nhật Bình"
+            />
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-lg bg-lotus px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
+          >
+            {saving ? "Đang lưu..." : link ? "Lưu thay đổi" : "Gắn phụ kiện"}
           </button>
         </div>
       </form>

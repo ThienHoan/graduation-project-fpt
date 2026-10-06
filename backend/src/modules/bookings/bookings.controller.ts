@@ -7,6 +7,7 @@ import type { AuthenticatedUser } from "../auth/auth-user";
 import { BookingsService } from "./bookings.service";
 import { AssignAssetDto } from "./dto/assign-asset.dto";
 import { CheckAvailabilityDto } from "./dto/check-availability.dto";
+import { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { MarkPaidDto } from "./dto/mark-paid.dto";
 import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
@@ -18,6 +19,11 @@ export class BookingsController {
   @Post("check-availability")
   checkAvailability(@Body() body: CheckAvailabilityDto) {
     return this.bookingsService.checkAvailability(body);
+  }
+
+  @Post("availability-calendar")
+  getSizeAvailabilityCalendar(@Body() body: SizeAvailabilityCalendarDto) {
+    return this.bookingsService.getSizeAvailabilityCalendar(body);
   }
 
   @Post()
