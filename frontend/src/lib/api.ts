@@ -85,12 +85,37 @@ export type GarmentSummary = {
   images?: GarmentImage[];
 };
 
+export type GarmentMeasurements = {
+  shoulderCm: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  lengthCm: number | null;
+  sleeveLengthCm: number | null;
+};
+
+export type GroupedGarmentAccessory = {
+  accessoryId: string;
+  code: string;
+  name: string;
+  imageUrl: string | null;
+  quantity: number;
+  isIncluded: boolean;
+  extraPrice: number;
+  replacementValue: number;
+};
+
 export type GarmentGrouped = {
   name: string;
   slug: string;
   garmentId: string;
   categoryName: string | null;
   description: string | null;
+  color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
   imageUrl: string | null;
   images: GarmentImage[];
   sizes: Array<{
@@ -99,7 +124,9 @@ export type GarmentGrouped = {
     sizeLabel: string | null;
     dailyPrice: number;
     depositAmount: number;
+    measurements: GarmentMeasurements | null;
   }>;
+  accessories: GroupedGarmentAccessory[];
 };
 
 export async function getGarmentsGrouped(search?: string, category?: string) {
@@ -263,6 +290,23 @@ export async function checkAvailability(garmentSizeId: string, startDate: string
     method: "POST",
     body: JSON.stringify({ garmentSizeId, startDate, endDate }),
   });
+}
+
+export type AvailabilityCalendarDay = {
+  date: string;
+  available: boolean;
+  availableCount: number;
+  capacity: number;
+};
+
+export async function getSizeAvailabilityCalendar(garmentSizeId: string, fromDate: string, toDate: string) {
+  return apiRequest<{ garmentSizeId: string; capacity: number; days: AvailabilityCalendarDay[] }>(
+    "/bookings/availability-calendar",
+    {
+      method: "POST",
+      body: JSON.stringify({ garmentSizeId, fromDate, toDate }),
+    },
+  );
 }
 
 export async function createBooking(payload: {
@@ -814,6 +858,11 @@ export type GarmentDetail = GarmentSummary & {
   description: string | null;
   categoryId: string | null;
   color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
+  measurements: GarmentMeasurements | null;
   isActive: boolean;
   images: GarmentImage[];
 };
@@ -840,12 +889,30 @@ export async function createGarmentSize(sizeLabel: string) {
   });
 }
 
+export async function getCanonicalOccasions() {
+  return apiRequest<string[]>("/ai/occasions");
+}
+
+export type GarmentMeasurementsInput = {
+  shoulderCm?: number;
+  bustCm?: number;
+  waistCm?: number;
+  hipCm?: number;
+  lengthCm?: number;
+  sleeveLengthCm?: number;
+};
+
 export async function createGarment(payload: {
   name: string;
   categoryId?: string;
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice: number;
   depositAmount: number;
   isActive?: boolean;
@@ -862,6 +929,11 @@ export async function updateGarment(id: string, payload: {
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice?: number;
   depositAmount?: number;
   isActive?: boolean;
@@ -912,6 +984,7 @@ export async function getAllAssets(status?: string) {
 export async function createAsset(payload: {
   garmentId: string;
   assetCode: string;
+  garmentSizeId?: string;
   conditionNote?: string;
   purchaseCost?: number;
 }) {
@@ -919,6 +992,196 @@ export async function createAsset(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export type GarmentSizeOption = {
+  id: string;
+  sizeLabel: string | null;
+};
+
+export async function getGarmentSizesByGarment(garmentId: string) {
+  return apiRequest<GarmentSizeOption[]>(`/garments/${garmentId}/sizes`);
+}
+
+// ---------- Accessory API ----------
+
+export type AccessoryItem = {
+  id: string;
+  code: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  material: string | null;
+  color: string | null;
+  imageUrl: string | null;
+  replacementValue: number;
+  isActive: boolean;
+  assetCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccessoryDetail = Omit<AccessoryItem, "assetCount"> & {
+  assets: AccessoryAsset[];
+};
+
+export type AccessoryAsset = {
+  id: string;
+  accessoryId: string;
+  accessoryName: string | null;
+  assetCode: string;
+  status: string;
+  conditionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccessoryAssetHistory = {
+  id: string;
+  action: string;
+  oldStatus: string | null;
+  newStatus: string | null;
+  note: string | null;
+  createdBy: { email: string; name: string | null } | null;
+  createdAt: string;
+};
+
+export type AccessoryPayload = {
+  code: string;
+  name: string;
+  category?: string;
+  description?: string;
+  material?: string;
+  color?: string;
+  imageUrl?: string | null;
+  replacementValue?: number;
+  isActive?: boolean;
+};
+
+export async function getAccessories(includeInactive = false) {
+  const query = includeInactive ? "?includeInactive=true" : "";
+  return apiRequest<AccessoryItem[]>(`/accessories${query}`);
+}
+
+export async function getAccessoryById(id: string) {
+  return apiRequest<AccessoryDetail>(`/accessories/${id}`);
+}
+
+export async function createAccessory(payload: AccessoryPayload) {
+  return apiRequest<AccessoryDetail>("/accessories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAccessory(id: string, payload: Partial<AccessoryPayload>) {
+  return apiRequest<AccessoryDetail>(`/accessories/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAccessoryAssets(accessoryId: string) {
+  return apiRequest<AccessoryAsset[]>(`/accessories/${accessoryId}/assets`);
+}
+
+export async function createAccessoryAsset(payload: {
+  accessoryId: string;
+  assetCode: string;
+  conditionNote?: string;
+}) {
+  return apiRequest<AccessoryAsset>("/accessories/assets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAccessoryAssetStatus(
+  assetId: string,
+  payload: { status: string; note?: string },
+) {
+  return apiRequest<AccessoryAsset>(`/accessories/assets/${assetId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAccessoryAssetHistory(assetId: string) {
+  return apiRequest<AccessoryAssetHistory[]>(`/accessories/assets/${assetId}/history`);
+}
+
+export type LinkedGarment = {
+  garmentId: string;
+  name: string;
+  isActive: boolean;
+  quantity: number;
+  isIncluded: boolean;
+  sizes: string[];
+};
+
+export async function getAccessoryGarments(accessoryId: string) {
+  return apiRequest<LinkedGarment[]>(`/accessories/${accessoryId}/garments`);
+}
+
+// ---------- Garment <-> Accessory links ----------
+
+export type GarmentAccessoryLink = {
+  id: string;
+  quantity: number;
+  isIncluded: boolean;
+  extraPrice: number;
+  note: string | null;
+  accessory: {
+    id: string;
+    code: string;
+    name: string;
+    category: string | null;
+    color: string | null;
+    imageUrl: string | null;
+  };
+};
+
+export async function getGarmentAccessories(garmentId: string) {
+  return apiRequest<GarmentAccessoryLink[]>(`/garments/${garmentId}/accessories`);
+}
+
+export async function addGarmentAccessory(
+  garmentId: string,
+  payload: {
+    accessoryId: string;
+    quantity?: number;
+    isIncluded?: boolean;
+    extraPrice?: number;
+    note?: string;
+  },
+) {
+  return apiRequest<GarmentAccessoryLink>(`/garments/${garmentId}/accessories`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateGarmentAccessory(
+  garmentId: string,
+  accessoryId: string,
+  payload: {
+    quantity?: number;
+    isIncluded?: boolean;
+    extraPrice?: number;
+    note?: string;
+  },
+) {
+  return apiRequest<GarmentAccessoryLink>(`/garments/${garmentId}/accessories/${accessoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeGarmentAccessory(garmentId: string, accessoryId: string) {
+  return apiRequest<{ garmentId: string; accessoryId: string; removed: boolean }>(
+    `/garments/${garmentId}/accessories/${accessoryId}`,
+    { method: "DELETE" },
+  );
 }
 
 // ---------- Admin API ----------

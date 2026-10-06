@@ -144,10 +144,19 @@ export class PricingService {
     return Math.round(n * 100) / 100;
   }
 
-  private matchesKeywords(description: string | null | undefined, keywords: string[]): boolean {
+  private matchesKeywords(
+    description: string | null | undefined,
+    occasions: string[] | null | undefined,
+    keywords: string[],
+  ): boolean {
     if (!keywords || keywords.length === 0) return false;
     const text = (description ?? "").toLowerCase();
-    return keywords.some((k) => k && text.includes(k.toLowerCase()));
+    const occs = (occasions ?? []).map((o) => o.toLowerCase());
+    return keywords.some((k) => {
+      const needle = k?.toLowerCase().trim();
+      if (!needle) return false;
+      return text.includes(needle) || occs.some((o) => o.includes(needle));
+    });
   }
 
   /**
@@ -170,10 +179,10 @@ export class PricingService {
   private async computeBounds(
     sizeId: string,
     config: PricingConfig,
-  ): Promise<PriceBounds & { name: string; sizeLabel: string | null; description: string | null; garmentId: string }> {
+  ): Promise<PriceBounds & { name: string; sizeLabel: string | null; description: string | null; occasion: string[]; garmentId: string }> {
     const size = await this.prisma.garment_sizes.findUnique({
       where: { id: sizeId },
-      include: { garments: { select: { id: true, name: true, description: true } } },
+      include: { garments: { select: { id: true, name: true, description: true, occasion: true } } },
     });
     if (!size) throw new NotFoundException("Garment size not found.");
 
@@ -194,6 +203,7 @@ export class PricingService {
       maxPrice: this.round2(maxPrice),
       name: size.garments.name,
       description: size.garments.description,
+      occasion: size.garments.occasion,
       garmentId: size.garments.id,
     };
   }
@@ -295,7 +305,7 @@ export class PricingService {
       },
     });
     const holidays = events
-      .filter((e) => this.matchesKeywords(bounds.description, e.garment_keywords))
+      .filter((e) => this.matchesKeywords(bounds.description, bounds.occasion, e.garment_keywords))
       .map((e) => ({
         name: e.name,
         adjustmentPercent: e.adjustment_percent,
@@ -559,10 +569,10 @@ export class PricingService {
 
     const sizes = await this.prisma.garment_sizes.findMany({
       where: { is_active: true },
-      include: { garments: { select: { description: true } } },
+      include: { garments: { select: { description: true, occasion: true } } },
     });
     return sizes
-      .filter((s) => this.matchesKeywords(s.garments.description, calendar.garment_keywords))
+      .filter((s) => this.matchesKeywords(s.garments.description, s.garments.occasion, calendar.garment_keywords))
       .map((s) => s.id);
   }
 

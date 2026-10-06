@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { TryonStatus, type TryonCategory } from "@prisma/client";
+import { TryonStatus, Prisma, type TryonCategory } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PricingService } from "../pricing/pricing.service";
@@ -7,7 +7,7 @@ import type { CreateTryonDto, TryonMode } from "./dto/create-tryon.dto";
 import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
 import type { AdvisorProduct, OpenRouterResponse, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
 import { detectIntent } from "./utils/intent-detector";
-import { extractFilters } from "./utils/filter-extractor";
+import { extractFilters, getCanonicalOccasions } from "./utils/filter-extractor";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 const DEFAULT_FACE_SWAP_MODEL = "cdingram/face-swap";
@@ -515,6 +515,10 @@ export class AiService {
     return ok({ id: result.id, hidden: true });
   }
 
+  getOccasions() {
+    return ok(getCanonicalOccasions());
+  }
+
   async productAdvisor(dto: ProductAdvisorDto, isAutoReply = false) {
     const { intent, confidence } = detectIntent(dto.message);
     this.logger.debug(`productAdvisor intent=${intent} confidence=${confidence}`);
@@ -601,9 +605,24 @@ export class AiService {
     }
 
     if (filters?.occasion?.length) {
-      andConds.push({
-        OR: filters.occasion.map((occ) => ({ description: { contains: occ, mode: "insensitive" } })),
-      });
+      // occasion là TEXT[] → Prisma không hỗ trợ ILIKE trên phần tử mảng.
+      // Chạy raw query để lấy id khớp linh hoạt (không phân biệt hoa/thường, khớp một phần).
+      const matchConds = filters.occasion.map(
+        (occ) => Prisma.sql`occ ILIKE ${"%" + occ + "%"}`,
+      );
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`
+          SELECT g.id AS id
+          FROM public.garments g
+          WHERE g.is_active = true AND g.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+              FROM unnest(g.occasion) AS occ
+              WHERE ${Prisma.join(matchConds, " OR ")}
+            )
+        `,
+      );
+      where.id = { in: rows.map((r) => r.id) };
     }
 
     if (filters?.keyword) {
@@ -700,6 +719,7 @@ export class AiService {
         name: g.name,
         category: g.category?.name ?? "",
         color: g.color ?? "",
+        occasion: (g.occasion ?? []).join(", "),
         imageUrl: g.images[0]?.imageUrl ?? "",
         dailyPrice: minPrice,
         depositAmount: minDeposit,
@@ -714,7 +734,7 @@ export class AiService {
     const MAX_PRODUCTS = 30;
     const limited = catalog.slice(0, MAX_PRODUCTS);
     const productLines = limited.map((p, i) =>
-      `${i + 1}. ID: ${p.garmentId} | Tên: ${p.name} | Loại: ${p.category} | Màu: ${p.color} | Size: ${p.size} | Giá: ${p.dailyPrice.toLocaleString()}đ/ngày | Cọc: ${p.depositAmount.toLocaleString()}đ | Còn hàng: ${p.inStock ? "Có" : "Không"}`,
+      `${i + 1}. ID: ${p.garmentId} | Tên: ${p.name} | Loại: ${p.category} | Màu: ${p.color} | Dịp: ${p.occasion || "—"} | Size: ${p.size} | Giá: ${p.dailyPrice.toLocaleString()}đ/ngày | Cọc: ${p.depositAmount.toLocaleString()}đ | Còn hàng: ${p.inStock ? "Có" : "Không"}`,
     ).join("\n");
 
     const autoReplySection = isAutoReply
@@ -752,6 +772,7 @@ Khi khách yêu cầu sản phẩm theo các tiêu chí, bạn PHẢI lọc từ
 - **recommendedProductIds** phải chứa 3-4 ID sản phẩm. KHÔNG chỉ chọn 1 sản phẩm duy nhất.
 - **Budget (giá)**: So sánh trực tiếp budget với cột "Giá" (VNĐ/ngày). "Dưới X" → dailyPrice <= X. "Trên X" → dailyPrice >= X. "Khoảng X" → dailyPrice gần X nhất.
 - **Màu sắc**: So sánh với cột "Màu". "Áo dài tím" → màu "tím". "Màu đỏ" → màu "đỏ".
+- **Dịp sử dụng**: So sánh với cột "Dịp". "Đi đám cưới" → Dịp chứa "Đám cưới". "Chụp kỷ yếu" → Dịp chứa "Kỷ yếu".
 - **Size**: So sánh với cột "Size". "Size M", "cỡ L" → size_label chứa M hoặc L.
 - **Loại sản phẩm**: So sánh với cột "Loại". "Áo dài" → Loại = "Áo dài".
 - **NẾU có sản phẩm thỏa mãn**: PHẢI đề xuất sản phẩm đó. KHÔNG được nói "không có" rồi lại liệt kê sản phẩm thỏa mãn trong cùng câu trả lời.

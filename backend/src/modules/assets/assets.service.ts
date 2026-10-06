@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CreateAssetDto } from "./dto/create-asset.dto";
@@ -41,25 +42,72 @@ export class AssetsService {
     });
     if (!garment) throw new NotFoundException("Garment not found.");
 
+    // Asset phải gắn vào 1 size cụ thể thì availability mới đếm được.
+    // Không cho garmentSizeId: tự gán nếu garment chỉ có đúng 1 size active,
+    // bắt buộc chọn nếu có nhiều size, báo lỗi nếu garment chưa có size.
+    let garmentSizeId: string | null = null;
+    if (dto.garmentSizeId) {
+      const size = await this.prisma.garment_sizes.findFirst({
+        where: { id: dto.garmentSizeId, garment_id: dto.garmentId, is_active: true },
+      });
+      if (!size) {
+        throw new BadRequestException(
+          "Size không thuộc mẫu trang phục này hoặc đã ngừng sử dụng.",
+        );
+      }
+      garmentSizeId = size.id;
+    } else {
+      const activeSizes = await this.prisma.garment_sizes.findMany({
+        where: { garment_id: dto.garmentId, is_active: true },
+        select: { id: true },
+      });
+      if (activeSizes.length === 0) {
+        throw new BadRequestException(
+          "Mẫu trang phục chưa có size nào đang sử dụng. Hãy thêm size trước khi tạo tài sản.",
+        );
+      }
+      if (activeSizes.length > 1) {
+        throw new BadRequestException(
+          "Mẫu trang phục có nhiều size. Vui lòng chọn size cho tài sản.",
+        );
+      }
+      garmentSizeId = activeSizes[0].id;
+    }
+
     const existing = await this.prisma.garmentAsset.findUnique({
       where: { assetCode: dto.assetCode },
     });
     if (existing) {
       throw new BadRequestException(
-        `Asset code '${dto.assetCode}' already exists.`,
+        `Mã tài sản '${dto.assetCode}' đã tồn tại. Vui lòng chọn mã khác.`,
       );
     }
 
-    const asset = await this.prisma.garmentAsset.create({
-      data: {
-        garmentId: dto.garmentId,
-        assetCode: dto.assetCode,
-        conditionNote: dto.conditionNote ?? null,
-        purchaseCost: dto.purchaseCost ?? null,
-        status: "available",
-      },
-      include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
-    });
+    let asset;
+    try {
+      asset = await this.prisma.garmentAsset.create({
+        data: {
+          garmentId: dto.garmentId,
+          assetCode: dto.assetCode,
+          garment_size_id: garmentSizeId,
+          conditionNote: dto.conditionNote ?? null,
+          purchaseCost: dto.purchaseCost ?? null,
+          status: "available",
+        },
+        include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      });
+    } catch (error) {
+      // Unique constraint violation (P2002) — chặn race condition và trả thông báo mã trùng.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new BadRequestException(
+          `Mã tài sản '${dto.assetCode}' đã tồn tại. Vui lòng chọn mã khác.`,
+        );
+      }
+      throw error;
+    }
 
     return ok({
       id: asset.id,

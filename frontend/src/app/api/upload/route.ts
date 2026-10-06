@@ -46,16 +46,20 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const { url } = await req.json();
+    const { url, bucket } = await req.json();
     if (!url || typeof url !== 'string') {
       return NextResponse.json({ success: false, message: 'No URL provided' }, { status: 400 });
     }
 
-    const bucketName = process.env.SUPABASE_ASSETS_BUCKET || 'products';
-    const prefix = `/storage/v1/object/public/${bucketName}/`;
-    const matchIndex = url.indexOf(prefix);
-    
-    if (matchIndex !== -1) {
+    const defaultBucket = process.env.SUPABASE_ASSETS_BUCKET || 'products';
+    const candidates =
+      typeof bucket === 'string' && bucket
+        ? [bucket, defaultBucket]
+        : [defaultBucket, 'products', 'accessories'];
+    for (const bucketName of new Set(candidates)) {
+      const prefix = `/storage/v1/object/public/${bucketName}/`;
+      const matchIndex = url.indexOf(prefix);
+      if (matchIndex === -1) continue;
       const objectPath = url.substring(matchIndex + prefix.length);
       const { error } = await getSupabaseAdmin().storage.from(bucketName).remove([objectPath]);
       if (error) {

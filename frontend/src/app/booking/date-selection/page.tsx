@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { checkAvailability } from "@/lib/api";
+import { RentalDateCalendar } from "@/components/customer/rental-date-calendar";
 import { getCart, removeFromCart, getCartSummary, type CartItem } from "@/lib/cart";
 
 function formatVND(amount: number) {
@@ -28,6 +29,16 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function addDays(iso: string, n: number) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+// Trang booking không chặn ngày theo tồn kho: khách chọn ngày tự do,
+// món nào hết hàng sẽ báo đỏ từng món để khách loại ra.
+const EMPTY_BOOKED_DATES: Set<string> = new Set();
+
 type ItemAvail = {
   garmentSizeId: string;
   name: string;
@@ -47,6 +58,7 @@ function BookingDateSelectionInner() {
   const [endDate, setEndDate] = useState(searchParams.get("endDate") ?? today);
   const [availMap, setAvailMap] = useState<Record<string, ItemAvail>>({});
   const [allChecked, setAllChecked] = useState(false);
+  const maxDate = useMemo(() => addDays(today, 365), [today]);
 
   // Load cart
   useEffect(() => {
@@ -190,34 +202,27 @@ function BookingDateSelectionInner() {
           <div className="rounded-xl border border-sand bg-white p-6 shadow-md sm:p-8">
             <h2 className="mb-6 font-display text-3xl text-lotus">Chọn khoảng ngày thuê</h2>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Ngày nhận đồ</label>
-                <div className="relative">
-                  <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">calendar_month</span>
-                  <input
-                    type="date" className="w-full rounded-lg border border-sand bg-white py-3 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-antique"
-                    value={startDate} min={today}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Ngày trả đồ</label>
-                <div className="relative">
-                  <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">calendar_month</span>
-                  <input
-                    type="date" className="w-full rounded-lg border border-sand bg-white py-3 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-antique"
-                    value={endDate} min={startDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
+            <div className="rounded-xl border border-sand bg-white p-4 sm:p-5">
+              <RentalDateCalendar
+                startDate={startDate}
+                endDate={endDate}
+                minDate={today}
+                maxDate={maxDate}
+                fullyBookedDates={EMPTY_BOOKED_DATES}
+                onChange={(s, e) => {
+                  setStartDate(s);
+                  setEndDate(e);
+                }}
+              />
+              <p className="mt-3 text-center text-sm text-stone-600">
+                Nhận: <span className="font-semibold text-ink">{formatDate(startDate)}</span>
+                {" → "}
+                Trả: <span className="font-semibold text-ink">{formatDate(endDate)}</span>
+              </p>
+              <p className="mt-1 text-center text-xs text-stone-400">
+                Cứ chọn ngày thuê bạn muốn. Món hết hàng sẽ được đánh dấu đỏ để bạn dễ dàng loại khỏi giỏ.
+              </p>
             </div>
-
-            {endDate < startDate && (
-              <p className="mt-3 text-sm text-red-500">Ngày trả phải sau ngày nhận.</p>
-            )}
 
             {allAvailable && (
               <div className="mt-4 rounded-lg border border-jade/30 bg-jade/5 p-4">

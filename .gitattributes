@@ -1,0 +1,16 @@
+# Chuẩn hoá line ending cho cả team (Windows/macOS/Linux):
+# - Lưu LF trong repo, checkout theo OS của từng máy (Windows = CRLF).
+# - Khử nhiễu diff/status do LF/CRLF.
+* text=auto
+
+# Shell script bắt buộc LF (CRLF làm hỏng script khi chạy trên Linux/CI).
+*.sh text eol=lf
+
+# File nhị phân: git không được convert line ending.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

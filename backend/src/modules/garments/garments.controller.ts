@@ -16,6 +16,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { AddGarmentImageDto } from "./dto/add-image.dto";
 import { CreateGarmentDto } from "./dto/create-garment.dto";
 import { UpdateGarmentDto } from "./dto/update-garment.dto";
+import { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.dto";
+import { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { GarmentsService } from "./garments.service";
 
 @Controller("garments")
@@ -41,6 +43,47 @@ export class GarmentsController {
   @Get("categories")
   findAllCategories() {
     return this.garmentsService.findAllCategories();
+  }
+
+  @Get(":id/sizes")
+  findSizesByGarment(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.findSizesByGarment(id);
+  }
+
+  @Get(":id/accessories")
+  findGarmentAccessories(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.findGarmentAccessories(id);
+  }
+
+  @Post(":id/accessories")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  addGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: CreateGarmentAccessoryDto,
+  ) {
+    return this.garmentsService.addGarmentAccessory(id, dto);
+  }
+
+  @Patch(":id/accessories/:accessoryId")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  updateGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("accessoryId", ParseUUIDPipe) accessoryId: string,
+    @Body() dto: UpdateGarmentAccessoryDto,
+  ) {
+    return this.garmentsService.updateGarmentAccessory(id, accessoryId, dto);
+  }
+
+  @Delete(":id/accessories/:accessoryId")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  removeGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("accessoryId", ParseUUIDPipe) accessoryId: string,
+  ) {
+    return this.garmentsService.removeGarmentAccessory(id, accessoryId);
   }
 
   @Get(":id")
