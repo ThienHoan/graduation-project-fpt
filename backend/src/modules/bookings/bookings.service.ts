@@ -7,6 +7,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { LocationsService } from "../locations/locations.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
+import type { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 import type { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 import type { AssignAssetDto } from "./dto/assign-asset.dto";
@@ -251,6 +252,65 @@ export class BookingsService {
       availableCount: available,
       totalAssets: capacity,
     });
+  }
+
+  /**
+   * Lịch còn hàng theo từng ngày cho 1 size trong [fromDate, toDate].
+   * Dùng 2 query (sức chứa + booking trùng toàn cửa sổ) rồi quét từng ngày
+   * bằng so sánh chuỗi YYYY-MM-DD để tránh lệch múi giờ.
+   * Ngữ nghĩa trùng ngày GIỐNG HỆT computeSizeAvailability để không lệch.
+   */
+  async getSizeAvailabilityCalendar(dto: SizeAvailabilityCalendarDto) {
+    const size = await this.prisma.garment_sizes.findFirst({
+      where: { id: dto.garmentSizeId, is_active: true },
+    });
+    if (!size) throw new NotFoundException("Garment size not found.");
+
+    const { startDay, endDay, days } = this.parseDateRange(dto.fromDate, dto.toDate);
+    const MAX_CALENDAR_DAYS = 366;
+    if (days > MAX_CALENDAR_DAYS) {
+      throw new BadRequestException(
+        `Khoảng ngày tra cứu tối đa ${MAX_CALENDAR_DAYS} ngày.`,
+      );
+    }
+
+    const capacity = await this.prisma.garmentAsset.count({
+      where: {
+        garment_size_id: dto.garmentSizeId,
+        status: { notIn: [AssetStatus.retired, AssetStatus.lost] },
+      },
+    });
+
+    const items = await this.prisma.bookingItem.findMany({
+      where: {
+        garment_size_id: dto.garmentSizeId,
+        booking: {
+          status: { notIn: RELEASED_STATUSES },
+          rentalStartDate: { lte: endDay },
+          rentalEndDate: { gte: startDay },
+        },
+      },
+      select: {
+        booking: { select: { rentalStartDate: true, rentalEndDate: true } },
+      },
+    });
+
+    const spans = items.map((it) => ({
+      from: it.booking.rentalStartDate.toISOString().slice(0, 10),
+      to: it.booking.rentalEndDate.toISOString().slice(0, 10),
+    }));
+
+    const dayList: Array<{ date: string; available: boolean; availableCount: number; capacity: number }> = [];
+    const cursor = new Date(startDay.getTime());
+    for (let i = 0; i < days; i++) {
+      const dateStr = cursor.toISOString().slice(0, 10);
+      const committed = spans.filter((s) => s.from <= dateStr && dateStr <= s.to).length;
+      const availableCount = Math.max(0, capacity - committed);
+      dayList.push({ date: dateStr, available: availableCount > 0, availableCount, capacity });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    return ok({ garmentSizeId: dto.garmentSizeId, capacity, days: dayList });
   }
 
   // ── Create Booking ─────────────────────────────────────────────────────────
