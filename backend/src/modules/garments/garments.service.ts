@@ -40,6 +40,7 @@ export class GarmentsService {
     });
     return ok(garments.map((g) => ({
       id: g.id, name: g.name, categoryName: g.category?.name ?? null,
+      sizeId: g.garment_sizes[0]?.id ?? null,
       sizeLabel: g.garment_sizes[0]?.size_label ?? null,
       color: g.color ?? null,
       dailyPrice: Number(g.garment_sizes[0]?.daily_price ?? 0),
@@ -241,14 +242,25 @@ export class GarmentsService {
 
   // ── Available assets for booking ───────────────────────────────────────────
 
-  async findAvailableAssets(garmentId: string) {
+  async findAvailableAssets(garmentId: string, garmentSizeId?: string) {
     const garment = await this.prisma.garment.findFirst({
       where: { id: garmentId, isActive: true, deletedAt: null },
     });
     if (!garment) throw new NotFoundException("Garment not found.");
 
+    if (garmentSizeId) {
+      const size = await this.prisma.garment_sizes.findFirst({
+        where: { id: garmentSizeId, garment_id: garmentId, is_active: true },
+      });
+      if (!size) throw new NotFoundException("Garment size not found.");
+    }
+
     const assets = await this.prisma.garmentAsset.findMany({
-      where: { garmentId, status: "available" },
+      where: {
+        garmentId,
+        status: "available",
+        ...(garmentSizeId ? { garment_size_id: garmentSizeId } : {}),
+      },
       orderBy: { assetCode: "asc" },
     });
     return ok(assets.map((a) => ({ id: a.id, assetCode: a.assetCode, status: a.status, conditionNote: a.conditionNote })));

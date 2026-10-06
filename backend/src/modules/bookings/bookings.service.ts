@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { AppRole, AssetStatus, BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -9,7 +9,9 @@ import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 import type { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 import type { AssignAssetDto } from "./dto/assign-asset.dto";
+import type { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import type { MarkPaidDto } from "./dto/mark-paid.dto";
+import type { AuthenticatedUser } from "../auth/auth-user";
 
 const BOOKING_STATUS_LABELS: Record<string, string> = {
   draft: "Nháp",
@@ -58,11 +60,54 @@ const RETURN_QUEUE_STATUSES: BookingStatus[] = [
   BookingStatus.overdue,
 ];
 
+// ── Asset Status State Machine ───────────────────────────────────────────────
+// Chỉ cho phép chuyển trạng thái theo luồng quy định. Không chuyển tùy ý.
+const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
+  [AssetStatus.available]:        [AssetStatus.reserved, AssetStatus.retired],
+  [AssetStatus.reserved]:        [AssetStatus.rented, AssetStatus.available],
+  [AssetStatus.rented]:          [AssetStatus.inspection_pending],
+  [AssetStatus.inspection_pending]: [AssetStatus.damaged, AssetStatus.laundry, AssetStatus.cleaned, AssetStatus.maintenance],
+  [AssetStatus.laundry]:          [AssetStatus.cleaned, AssetStatus.damaged],
+  [AssetStatus.maintenance]:     [AssetStatus.damaged, AssetStatus.cleaned],
+  [AssetStatus.cleaned]:         [AssetStatus.available, AssetStatus.retired],
+  [AssetStatus.damaged]:         [AssetStatus.maintenance, AssetStatus.retired],
+  [AssetStatus.retired]:         [],
+  [AssetStatus.lost]:            [],
+};
+
+const ASSET_HOLDING_STATUSES: AssetStatus[] = [
+  AssetStatus.reserved,
+  AssetStatus.rented,
+  AssetStatus.inspection_pending,
+  AssetStatus.maintenance,
+];
+
+const RENTABLE_CAPACITY_STATUSES: AssetStatus[] = [
+  AssetStatus.available,
+  AssetStatus.reserved,
+  AssetStatus.rented,
+];
+
 const ASSET_REQUIRED_STATUSES: BookingStatus[] = [
+  BookingStatus.preparing,
   BookingStatus.ready_for_pickup,
   BookingStatus.delivering,
   BookingStatus.renting,
 ];
+
+const HANDOVER_BOOKING_STATUSES: BookingStatus[] = [
+  BookingStatus.ready_for_pickup,
+  BookingStatus.delivering,
+  BookingStatus.renting,
+];
+
+const OPERATIONAL_ROLES: AppRole[] = [
+  AppRole.staff,
+  AppRole.manager_owner,
+  AppRole.admin,
+];
+
+const MAX_SERIALIZABLE_RETRIES = 3;
 
 const STAFF_ALLOWED_TRANSITIONS: Partial<Record<BookingStatus, BookingStatus[]>> = {
   [BookingStatus.pending_confirmation]: [BookingStatus.awaiting_payment, BookingStatus.confirmed, BookingStatus.rejected],
@@ -104,6 +149,35 @@ export class BookingsService {
     return new Date(Date.now() + VN_UTC_OFFSET_MS).toISOString().slice(0, 10);
   }
 
+  /**
+   * Validate asset status transition theo state machine.
+   * Khi newStatus là 'damaged', chỉ chuyển được sang 'maintenance' hoặc 'retired' — không sang 'available'.
+   */
+  private validateAssetTransition(current: AssetStatus, next: AssetStatus): void {
+    const allowed = ASSET_STATUS_TRANSITIONS[current];
+    if (!allowed.includes(next)) {
+      throw new BadRequestException(
+        `Không thể chuyển asset từ '${current}' sang '${next}'. ` +
+        `Các trạng thái hợp lệ: ${allowed.length ? allowed.join(', ') : 'không có (trạng thái cuối cùng).'}`,
+      );
+    }
+  }
+
+  /**
+   * Validate rằng asset không ở trạng thái 'damaged' hoặc 'retired' khi hiển thị cho thuê.
+   */
+  private assertAssetRentable(status: AssetStatus): void {
+    if (status === AssetStatus.damaged) {
+      throw new BadRequestException("Sản phẩm đang bị hư hỏng, không thể cho thuê.");
+    }
+    if (status === AssetStatus.retired) {
+      throw new BadRequestException("Sản phẩm đã ngừng kinh doanh, không thể cho thuê.");
+    }
+    if (status === AssetStatus.lost) {
+      throw new BadRequestException("Sản phẩm bị mất, không thể cho thuê.");
+    }
+  }
+
   // Số ngày quá hạn so với rentalEndDate (0 nếu chưa quá hạn)
   private overdueDays(rentalEndDate: Date): number {
     const endStr = new Date(rentalEndDate).toISOString().slice(0, 10);
@@ -123,6 +197,26 @@ export class BookingsService {
     return user?.profile?.fullName ?? user?.email ?? null;
   }
 
+  private isSerializationFailure(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+  }
+
+  private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < MAX_SERIALIZABLE_RETRIES; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isSerializationFailure(error) || attempt === MAX_SERIALIZABLE_RETRIES - 1) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      }
+    }
+    throw new Error("Serializable transaction failed unexpectedly.");
+  }
+
   /**
    * Nguồn chân lý duy nhất về tồn kho cho một size trong một khoảng ngày.
    * Đếm theo NHU CẦU (booking item của các đơn còn hiệu lực, trùng ngày — gồm cả
@@ -136,10 +230,11 @@ export class BookingsService {
     startDay: Date,
     endDay: Date,
   ) {
+    // Capacity = số asset KHÔNG ở trạng thái không thể cho thuê (damaged/retired/lost)
     const capacity = await client.garmentAsset.count({
       where: {
         garment_size_id: garmentSizeId,
-        status: { notIn: [AssetStatus.retired, AssetStatus.lost] },
+        status: { in: RENTABLE_CAPACITY_STATUSES },
       },
     });
 
@@ -148,8 +243,10 @@ export class BookingsService {
         garment_size_id: garmentSizeId,
         booking: {
           status: { notIn: RELEASED_STATUSES },
-          rentalStartDate: { lte: endDay },
-          rentalEndDate: { gte: startDay },
+          // Hai khoảng thời gian chỉ trùng khi start mới < end cũ
+          // và end mới > start cũ. Hai booking sát biên được phép nối tiếp.
+          rentalStartDate: { lt: endDay },
+          rentalEndDate: { gt: startDay },
         },
       },
     });
@@ -257,8 +354,7 @@ export class BookingsService {
 
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
-    const booking = await this.prisma.$transaction(
-      async (tx) => {
+    const booking = await this.runSerializable(async (tx) => {
         for (const [sizeId, requestedQty] of requestedQtyBySize) {
           const { capacity, committed } = await this.computeSizeAvailability(
             tx,
@@ -306,9 +402,7 @@ export class BookingsService {
             deliveryAddress: true,
           },
         });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+      });
     await this.notificationsService.sendBookingNotification({
       userId: booking.customerId,
       templateKey: "booking.created",
@@ -378,26 +472,44 @@ export class BookingsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const assignedIds = booking.items
+      const current = await tx.booking.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+      if (!current) throw new NotFoundException("Booking not found.");
+      if (!CANCELLABLE_STATUSES.includes(current.status)) {
+        throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
+      }
+
+      const assignedIds = current.items
         .map((item) => item.garmentAssetId)
-        .filter((id): id is string => Boolean(id));
+        .filter((assetId): assetId is string => Boolean(assetId));
       if (assignedIds.length > 0) {
-        await tx.garmentAsset.updateMany({
-          where: { id: { in: assignedIds } },
+        const released = await tx.garmentAsset.updateMany({
+          where: { id: { in: assignedIds }, status: AssetStatus.reserved },
           data: { status: AssetStatus.available },
         });
+        if (released.count !== assignedIds.length) {
+          throw new ConflictException("Không thể hủy vì một asset đã được chuyển sang trạng thái vận hành khác.");
+        }
+      }
+      const claimed = await tx.booking.updateMany({
+        where: { id, status: current.status },
+        data: { status: BookingStatus.cancelled },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
       }
       await tx.bookingStatusHistory.create({
         data: {
           bookingId: id,
-          fromStatus: booking.status,
+          fromStatus: current.status,
           toStatus: BookingStatus.cancelled,
           note: "Khách hàng tự hủy đơn",
         },
       });
-      return tx.booking.update({
+      return tx.booking.findUniqueOrThrow({
         where: { id },
-        data: { status: BookingStatus.cancelled },
         include: {
           items: {
             include: {
@@ -788,36 +900,93 @@ export class BookingsService {
   }
 
   async assignAsset(bookingId: string, itemId: string, dto: AssignAssetDto, staffId?: string) {
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, include: { items: true } });
-    if (!booking) throw new NotFoundException("Booking not found.");
+    const assignableStatuses: BookingStatus[] = [
+      BookingStatus.confirmed,
+      BookingStatus.awaiting_payment,
+      BookingStatus.paid,
+      BookingStatus.preparing,
+    ];
+    let assignedAssetCode: string | null = null;
 
-    const item = booking.items.find((i) => i.id === itemId);
-    if (!item) throw new NotFoundException("Booking item not found.");
-    if (item.garmentAssetId) throw new BadRequestException("Item already has an assigned asset.");
+    await this.runSerializable(async (tx) => {
+        const booking = await tx.booking.findUnique({
+          where: { id: bookingId },
+          include: { items: true },
+        });
+        if (!booking) throw new NotFoundException("Booking not found.");
+        if (!assignableStatuses.includes(booking.status)) {
+          throw new BadRequestException(
+            `Không thể gán asset khi booking đang ở trạng thái '${booking.status}'.`,
+          );
+        }
 
-    const asset = await this.prisma.garmentAsset.findUnique({
-      where: { id: dto.garmentAssetId },
-      include: { bookingItems: { include: { booking: true } } },
-    });
-    if (!asset) throw new NotFoundException("Garment asset not found.");
+        const item = booking.items.find((candidate) => candidate.id === itemId);
+        if (!item) throw new NotFoundException("Booking item not found.");
+        if (item.garmentAssetId) throw new BadRequestException("Item already has an assigned asset.");
+        if (!item.garment_size_id) {
+          throw new BadRequestException("Booking item chưa có size nên không thể gán asset an toàn.");
+        }
 
-    if (asset.status !== AssetStatus.available)
-      throw new BadRequestException(`Asset '${asset.assetCode}' is not available (current: ${asset.status}).`);
+        const asset = await tx.garmentAsset.findUnique({
+          where: { id: dto.garmentAssetId },
+        });
+        if (!asset) throw new NotFoundException("Garment asset not found.");
 
-    const conflictingItem = asset.bookingItems.find((bi) => {
-      if (bi.bookingId === bookingId) return false;
-      return !RELEASED_STATUSES.includes(bi.booking.status);
-    });
-    if (conflictingItem)
-      throw new BadRequestException(`Asset '${asset.assetCode}' is already assigned to another active booking.`);
+        this.assertAssetRentable(asset.status);
+        if (asset.status !== AssetStatus.available) {
+          throw new BadRequestException(
+            `Asset '${asset.assetCode}' is not available (current: ${asset.status}).`,
+          );
+        }
+        if (asset.garmentId !== item.garmentId) {
+          throw new BadRequestException("Asset không thuộc đúng mẫu trang phục của booking item.");
+        }
+        if (asset.garment_size_id !== item.garment_size_id) {
+          throw new BadRequestException("Asset không đúng size của booking item.");
+        }
 
-    await this.prisma.$transaction([
-      this.prisma.bookingItem.update({ where: { id: itemId }, data: { garmentAssetId: dto.garmentAssetId } }),
-      this.prisma.garmentAsset.update({ where: { id: dto.garmentAssetId }, data: { status: AssetStatus.reserved } }),
-      this.prisma.bookingStatusHistory.create({
-        data: { bookingId, fromStatus: booking.status, toStatus: booking.status, changedBy: staffId ?? null, note: `Gán asset ${asset.assetCode}` },
-      }),
-    ]);
+        const conflictingItem = await tx.bookingItem.findFirst({
+          where: {
+            garmentAssetId: dto.garmentAssetId,
+            id: { not: itemId },
+            booking: {
+              status: { notIn: RELEASED_STATUSES },
+              rentalStartDate: { lt: booking.rentalEndDate },
+              rentalEndDate: { gt: booking.rentalStartDate },
+            },
+          },
+          select: { id: true },
+        });
+        if (conflictingItem) {
+          throw new BadRequestException(
+            `Asset '${asset.assetCode}' is already assigned to another overlapping booking.`,
+          );
+        }
+
+        // Claim the physical asset conditionally so concurrent managers cannot both win.
+        const claimed = await tx.garmentAsset.updateMany({
+          where: { id: dto.garmentAssetId, status: AssetStatus.available },
+          data: { status: AssetStatus.reserved },
+        });
+        if (claimed.count !== 1) {
+          throw new BadRequestException(`Asset '${asset.assetCode}' is no longer available.`);
+        }
+
+        await tx.bookingItem.update({
+          where: { id: itemId },
+          data: { garmentAssetId: dto.garmentAssetId },
+        });
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId,
+            fromStatus: booking.status,
+            toStatus: booking.status,
+            changedBy: staffId ?? null,
+            note: `Gán asset ${asset.assetCode}`,
+          },
+        });
+        assignedAssetCode = asset.assetCode;
+      });
 
     const updated = await this.prisma.booking.findUnique({
       where: { id: bookingId },
@@ -830,15 +999,120 @@ export class BookingsService {
         },
       },
     });
+    if (!updated) throw new NotFoundException("Booking not found.");
 
     await this.notificationsService.notifyStaffBooking({
       templateKey: "booking.staff.asset_assigned",
       bookingId,
-      garmentName: updated?.items.find((i) => i.id === itemId)?.garment_sizes?.garments?.name ?? null,
-      assetCode: asset.assetCode,
+      garmentName: updated.items.find((i) => i.id === itemId)?.garment_sizes?.garments?.name ?? null,
+      assetCode: assignedAssetCode,
     });
 
-    return ok(this.serializeBooking(updated!));
+    return ok(this.serializeBooking(updated));
+  }
+
+  /**
+   * Xác nhận handover - lưu tình trạng sản phẩm tại thời điểm bàn giao.
+   * Gọi khi khách/nhân viên kiểm tra và xác nhận sản phẩm trước khi nhận.
+   */
+  async confirmHandover(
+    bookingId: string,
+    dto: ConfirmHandoverDto,
+    actor: Pick<AuthenticatedUser, "id" | "role">,
+  ) {
+    const updated = await this.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { items: { include: { garmentAsset: true } } },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+
+      if (actor.role === AppRole.customer && booking.customerId !== actor.id) {
+        throw new ForbiddenException("You do not have access to this booking.");
+      }
+      if (actor.role !== AppRole.customer && !OPERATIONAL_ROLES.includes(actor.role)) {
+        throw new ForbiddenException("You do not have permission to confirm handover.");
+      }
+      if (!HANDOVER_BOOKING_STATUSES.includes(booking.status)) {
+        throw new BadRequestException(
+          `Chỉ có thể xác nhận handover khi booking ở trạng thái 'ready_for_pickup', 'delivering' hoặc 'renting' (hiện tại: '${booking.status}').`,
+        );
+      }
+      if (booking.items.length === 0 || booking.items.some((item) => !item.garmentAsset)) {
+        throw new BadRequestException("Tất cả booking item phải được gán asset trước khi handover.");
+      }
+
+      const expectedAssetStatus = booking.status === BookingStatus.renting
+        ? AssetStatus.rented
+        : AssetStatus.reserved;
+      for (const item of booking.items) {
+        const asset = item.garmentAsset!;
+        if (asset.garmentId !== item.garmentId || asset.garment_size_id !== item.garment_size_id) {
+          throw new BadRequestException("Asset được gán không khớp với booking item.");
+        }
+        if (asset.status !== expectedAssetStatus) {
+          throw new BadRequestException(
+            `Asset '${asset.assetCode}' không ở trạng thái hợp lệ cho handover (current: ${asset.status}).`,
+          );
+        }
+      }
+
+      const currentStatus = booking.handoverStatus;
+      const requestedStatus = dto.handoverStatus;
+      const terminal = currentStatus === "CONFIRMED" || currentStatus === "REJECTED";
+      if (terminal) {
+        if (
+          currentStatus !== requestedStatus ||
+          booking.conditionBeforeRental !== dto.conditionBeforeRental ||
+          (dto.conditionImages !== undefined && JSON.stringify(booking.conditionImages) !== JSON.stringify({ images: dto.conditionImages }))
+        ) {
+          throw new ConflictException("Handover đã hoàn tất và không thể ghi đè.");
+        }
+        return booking;
+      }
+      if (currentStatus === "PENDING" && requestedStatus === "PENDING") {
+        return booking;
+      }
+      if (currentStatus === "PENDING" && !["CONFIRMED", "REJECTED"].includes(requestedStatus)) {
+        throw new BadRequestException("Handover PENDING chỉ có thể chuyển sang CONFIRMED hoặc REJECTED.");
+      }
+
+      const isTerminal = requestedStatus === "CONFIRMED" || requestedStatus === "REJECTED";
+      const handoverData = {
+        handoverStatus: requestedStatus,
+        conditionBeforeRental: dto.conditionBeforeRental,
+        ...(dto.conditionImages !== undefined ? { conditionImages: { images: dto.conditionImages } } : {}),
+        ...(isTerminal ? { confirmedAt: new Date(), confirmedBy: actor.id } : {}),
+      };
+      const claimed = await tx.booking.updateMany({
+        where: { id: bookingId, handoverStatus: currentStatus },
+        data: handoverData,
+      });
+      if (claimed.count !== 1) throw new ConflictException("Handover vừa được cập nhật bởi người khác.");
+
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          fromStatus: booking.status,
+          toStatus: booking.status,
+          changedBy: actor.id,
+          note: `Handover ${requestedStatus}${dto.note ? `: ${dto.note}` : ""}`,
+        },
+      });
+
+      const saved = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!saved) throw new NotFoundException("Booking not found.");
+      return saved;
+    });
+
+    return ok({
+      id: updated.id,
+      handoverStatus: updated.handoverStatus,
+      conditionBeforeRental: updated.conditionBeforeRental,
+      conditionImages: updated.conditionImages,
+      confirmedAt: updated.confirmedAt?.toISOString() ?? null,
+      confirmedBy: updated.confirmedBy,
+    });
   }
 
   async markPaid(id: string, dto: MarkPaidDto, staffId?: string) {
@@ -912,20 +1186,35 @@ export class BookingsService {
   async cancelExpiredAwaitingPayments() {
     const now = new Date();
     const expiredBookings = await this.prisma.booking.findMany({
-      where: { status: BookingStatus.awaiting_payment, pickupMethod: "store_pickup", paymentDueAt: { lt: now } },
+      where: { status: BookingStatus.awaiting_payment, paymentDueAt: { lt: now } },
       include: { items: true },
     });
     const results: { bookingId: string; released: number }[] = [];
     for (const booking of expiredBookings) {
-      await this.prisma.$transaction(async (tx) => {
-        const assignedIds = booking.items.map((i) => i.garmentAssetId).filter(Boolean) as string[];
-        if (assignedIds.length > 0)
-          await tx.garmentAsset.updateMany({ where: { id: { in: assignedIds } }, data: { status: AssetStatus.available } });
+      const cancelled = await this.prisma.$transaction(async (tx) => {
+        const current = await tx.booking.findUnique({
+          where: { id: booking.id },
+          include: { items: true },
+        });
+        if (!current || current.status !== BookingStatus.awaiting_payment) return false;
+
+        const assignedIds = current.items.map((i) => i.garmentAssetId).filter(Boolean) as string[];
+        if (assignedIds.length > 0) {
+          await tx.garmentAsset.updateMany({
+            where: { id: { in: assignedIds }, status: AssetStatus.reserved },
+            data: { status: AssetStatus.available },
+          });
+        }
         await tx.bookingStatusHistory.create({
           data: { bookingId: booking.id, fromStatus: BookingStatus.awaiting_payment, toStatus: BookingStatus.cancelled, note: "Tự động hủy — quá hạn thanh toán" },
         });
-        await tx.booking.update({ where: { id: booking.id }, data: { status: BookingStatus.cancelled } });
+        const claimed = await tx.booking.updateMany({
+          where: { id: booking.id, status: BookingStatus.awaiting_payment },
+          data: { status: BookingStatus.cancelled },
+        });
+        return claimed.count === 1;
       });
+      if (!cancelled) continue;
 
       await this.notificationsService.sendBookingNotification({
         userId: booking.customerId,

@@ -1,12 +1,38 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { AssetStatus } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CreateAssetDto } from "./dto/create-asset.dto";
 import type { UpdateAssetStatusDto } from "./dto/update-asset-status.dto";
 
+// ── Asset Status State Machine ───────────────────────────────────────────────
+const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
+  [AssetStatus.available]:        [AssetStatus.reserved, AssetStatus.retired],
+  [AssetStatus.reserved]:         [AssetStatus.rented, AssetStatus.available],
+  [AssetStatus.rented]:           [AssetStatus.inspection_pending],
+  [AssetStatus.inspection_pending]: [AssetStatus.damaged, AssetStatus.laundry, AssetStatus.cleaned, AssetStatus.maintenance],
+  [AssetStatus.laundry]:          [AssetStatus.cleaned, AssetStatus.damaged],
+  [AssetStatus.maintenance]:      [AssetStatus.damaged, AssetStatus.cleaned],
+  [AssetStatus.cleaned]:          [AssetStatus.available, AssetStatus.retired],
+  [AssetStatus.damaged]:          [AssetStatus.maintenance, AssetStatus.retired],
+  [AssetStatus.retired]:          [],
+  [AssetStatus.lost]:              [],
+};
+
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Validate asset status transition theo state machine. */
+  private validateAssetTransition(current: AssetStatus, next: AssetStatus): void {
+    const allowed = ASSET_STATUS_TRANSITIONS[current];
+    if (!allowed.includes(next)) {
+      throw new BadRequestException(
+        `Không thể chuyển asset từ '${current}' sang '${next}'. ` +
+        `Các trạng thái hợp lệ: ${allowed.length ? allowed.join(", ") : "không có (trạng thái cuối cùng)."}`,
+      );
+    }
+  }
 
   // ── List all assets (with optional status filter) ──────────────────────────
 
@@ -41,6 +67,15 @@ export class AssetsService {
     });
     if (!garment) throw new NotFoundException("Garment not found.");
 
+    const size = await this.prisma.garment_sizes.findFirst({
+      where: { id: dto.garmentSizeId, garment_id: dto.garmentId, is_active: true },
+    });
+    if (!size) {
+      throw new BadRequestException(
+        "garmentSizeId must belong to the selected garment and be active.",
+      );
+    }
+
     const existing = await this.prisma.garmentAsset.findUnique({
       where: { assetCode: dto.assetCode },
     });
@@ -53,6 +88,7 @@ export class AssetsService {
     const asset = await this.prisma.garmentAsset.create({
       data: {
         garmentId: dto.garmentId,
+        garment_size_id: dto.garmentSizeId,
         assetCode: dto.assetCode,
         conditionNote: dto.conditionNote ?? null,
         purchaseCost: dto.purchaseCost ?? null,
@@ -166,6 +202,8 @@ export class AssetsService {
   async updateStatus(id: string, dto: UpdateAssetStatusDto) {
     const asset = await this.prisma.garmentAsset.findUnique({ where: { id } });
     if (!asset) throw new NotFoundException("Garment asset not found.");
+
+    this.validateAssetTransition(asset.status, dto.status as AssetStatus);
 
     const updated = await this.prisma.garmentAsset.update({
       where: { id },

@@ -47,8 +47,11 @@ export class GarmentsController {
   findOne(@Param("id") id: string) { return this.garmentsService.findOne(id); }
 
   @Get(":id/assets/available")
-  findAvailableAssets(@Param("id", ParseUUIDPipe) id: string) {
-    return this.garmentsService.findAvailableAssets(id);
+  findAvailableAssets(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("garmentSizeId", new ParseUUIDPipe({ optional: true })) garmentSizeId?: string,
+  ) {
+    return this.garmentsService.findAvailableAssets(id, garmentSizeId);
   }
 
   // ── Manager / Owner: Garment CRUD ──────────────────────────────────────────

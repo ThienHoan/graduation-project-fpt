@@ -7,6 +7,7 @@ import type { AuthenticatedUser } from "../auth/auth-user";
 import { BookingsService } from "./bookings.service";
 import { AssignAssetDto } from "./dto/assign-asset.dto";
 import { CheckAvailabilityDto } from "./dto/check-availability.dto";
+import { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { MarkPaidDto } from "./dto/mark-paid.dto";
 import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
@@ -87,6 +88,21 @@ export class BookingsController {
   @Roles("manager_owner", "admin")
   assignAsset(@CurrentUser() user: AuthenticatedUser, @Param("bookingId", ParseUUIDPipe) bookingId: string, @Param("itemId", ParseUUIDPipe) itemId: string, @Body() dto: AssignAssetDto) {
     return this.bookingsService.assignAsset(bookingId, itemId, dto, user.id);
+  }
+
+  /**
+   * Xác nhận handover - lưu tình trạng sản phẩm tại thời điểm bàn giao.
+   * POST /bookings/:id/confirm-handover
+   */
+  @Post(":id/confirm-handover")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("customer", "staff", "manager_owner", "admin")
+  confirmHandover(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmHandoverDto,
+  ) {
+    return this.bookingsService.confirmHandover(id, dto, user);
   }
 
   @Patch(":id/mark-paid")

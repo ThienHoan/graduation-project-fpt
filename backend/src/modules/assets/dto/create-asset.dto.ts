@@ -13,6 +13,10 @@ export class CreateAssetDto {
   garmentId!: string;
 
   @IsNotEmpty()
+  @Matches(CANONICAL_UUID_REGEX, { message: "garmentSizeId must be a UUID" })
+  garmentSizeId!: string;
+
+  @IsNotEmpty()
   @IsString()
   assetCode!: string;
 

@@ -25,6 +25,13 @@ export class InspectionsService {
     if (asset.status !== AssetStatus.inspection_pending)
       throw new BadRequestException(`Asset '${asset.assetCode}' is not ready for inspection (current: ${asset.status}).`);
 
+    const assignedToBooking = await this.prisma.bookingItem.findFirst({
+      where: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId },
+      select: { id: true },
+    });
+    if (!assignedToBooking) {
+      throw new BadRequestException("Asset is not assigned to this booking.");
+    }
 
     const existing = await this.prisma.inspectionSession.findFirst({
       where: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId, status: { not: InspectionStatus.completed } },
@@ -115,8 +122,23 @@ export class InspectionsService {
     const { bookingId, garmentAssetId } = session;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.garmentAsset.update({
-        where: { id: garmentAssetId },
+      const currentAsset = await tx.garmentAsset.findUnique({ where: { id: garmentAssetId } });
+      if (!currentAsset) throw new NotFoundException("Garment asset not found.");
+      if (currentAsset.status !== AssetStatus.inspection_pending) {
+        throw new BadRequestException(
+          `Asset is no longer awaiting inspection (current: ${currentAsset.status}).`,
+        );
+      }
+      const allowedFinalStatuses: AssetStatus[] = [
+        AssetStatus.laundry,
+        AssetStatus.maintenance,
+        AssetStatus.damaged,
+      ];
+      if (!allowedFinalStatuses.includes(finalAssetStatus)) {
+        throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
+      }
+      await tx.garmentAsset.updateMany({
+        where: { id: garmentAssetId, status: AssetStatus.inspection_pending },
         data: { status: finalAssetStatus },
       });
 
@@ -174,11 +196,6 @@ export class InspectionsService {
             data: { status: BookingStatus.completed },
           });
 
-          await tx.garmentAsset.updateMany({
-            where: { id: { in: assignedAssetIds } },
-            data: { status: AssetStatus.available },
-          });
-
           await tx.bookingStatusHistory.create({
             data: { bookingId, fromStatus: previousStatus, toStatus: BookingStatus.completed, changedBy: staffId, note: "All items inspected" },
           });
@@ -227,10 +244,14 @@ export class InspectionsService {
       if (asset.status === AssetStatus.maintenance && asset.maintenanceJobs[0]) {
         await tx.maintenanceJob.update({ where: { id: asset.maintenanceJobs[0].id }, data: { status: "completed", completedAt: new Date() } });
       }
-      return tx.garmentAsset.update({
-        where: { id: assetId },
-        data: { status: AssetStatus.available, conditionNote: null },
+      const claimed = await tx.garmentAsset.updateMany({
+        where: { id: assetId, status: asset.status },
+        data: { status: AssetStatus.cleaned, conditionNote: null },
       });
+      if (claimed.count !== 1) {
+        throw new BadRequestException("Asset status changed while processing.");
+      }
+      return tx.garmentAsset.findUniqueOrThrow({ where: { id: assetId } });
     });
     return ok({ id: updated.id, assetCode: updated.assetCode, status: updated.status, conditionNote: updated.conditionNote });
   }
@@ -337,10 +358,13 @@ export class InspectionsService {
         },
       });
 
-      await tx.garmentAsset.update({
-        where: { id: ticket.garmentAssetId },
-        data: { status: AssetStatus.available },
+      const claimed = await tx.garmentAsset.updateMany({
+        where: { id: ticket.garmentAssetId, status: AssetStatus.laundry },
+        data: { status: AssetStatus.cleaned },
       });
+      if (claimed.count !== 1) {
+        throw new BadRequestException("Asset is no longer in laundry status.");
+      }
 
       return done;
     });
@@ -396,10 +420,19 @@ export class InspectionsService {
         },
       });
 
-      if (dto.status === "completed" || dto.status === "cannot_repair") {
-        await tx.garmentAsset.update({
-          where: { id: job.garmentAssetId },
-          data: { status: AssetStatus.available },
+      if (dto.status === "completed") {
+        const claimed = await tx.garmentAsset.updateMany({
+          where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
+          data: { status: AssetStatus.cleaned, conditionNote: null },
+        });
+        if (claimed.count !== 1) {
+          throw new BadRequestException("Asset is no longer in maintenance status.");
+        }
+      }
+      if (dto.status === "cannot_repair") {
+        await tx.garmentAsset.updateMany({
+          where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
+          data: { status: AssetStatus.damaged },
         });
       }
 

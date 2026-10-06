@@ -180,6 +180,11 @@ model Booking {
   paymentDueAt          DateTime?              @map("payment_due_at") @db.Timestamptz(6)
   shippingFee           Decimal                @default(0) @map("shipping_fee") @db.Decimal(12, 2)
   paymentMethod         String                 @default("cash") @map("payment_method")
+  handoverStatus        String?                @map("handover_status")
+  confirmedAt           DateTime?              @map("confirmed_at") @db.Timestamptz(6)
+  confirmedBy           String?                @map("confirmed_by") @db.Uuid
+  conditionBeforeRental String?                @map("condition_before_rental")
+  conditionImages       Json?                  @map("condition_images")
   items                 BookingItem[]
   statusHistory         BookingStatusHistory[]
   customer              UserAccount            @relation("BookingCustomer", fields: [customerId], references: [id])
@@ -621,15 +626,16 @@ enum AppRole {
 }
 
 enum AssetStatus {
-  available
-  reserved
-  rented
-  inspection_pending
-  laundry
-  maintenance
-  damaged
-  retired
-  lost
+  available          // sẵn sàng cho thuê
+  reserved           // đã được đặt
+  rented             // đang được thuê
+  inspection_pending // chờ kiểm tra (handover)
+  laundry            // đang giặt/vệ sinh
+  maintenance        // đang sửa chữa
+  cleaned            // đã được vệ sinh/sửa chữa xong, sẵn sàng cho thuê lại
+  damaged            // hư hỏng
+  retired            // ngừng kinh doanh nhưng vẫn lưu dữ liệu
+  lost               // mất
 
   @@map("asset_status")
 }

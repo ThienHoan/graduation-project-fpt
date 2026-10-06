@@ -29,10 +29,8 @@ function formatVND(amount: number) {
 
 const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; style: string }[]>> = {
   pending_confirmation: [
-    // Xác nhận đơn nhảy thẳng sang awaiting_payment (bỏ nấc "confirmed" trung gian),
-    // đồng bộ với màn danh sách staff/page.tsx.
-    { status: "awaiting_payment", label: "Xác nhận", style: "bg-lotus text-white hover:bg-oxblood" },
-    { status: "rejected",         label: "Từ chối",  style: "border border-red-300 text-red-700 hover:bg-red-50" },
+    { status: "confirmed", label: "Xác nhận", style: "bg-lotus text-white hover:bg-oxblood" },
+    { status: "rejected",  label: "Từ chối",  style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   // Giữ lại lối đi cho các đơn cũ lỡ đang ở trạng thái "confirmed".
   confirmed: [

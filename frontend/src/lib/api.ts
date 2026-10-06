@@ -78,6 +78,7 @@ export type GarmentSummary = {
   id: string;
   name: string;
   categoryName: string | null;
+  sizeId?: string | null;
   sizeLabel: string | null;
   color: string | null;
   dailyPrice: number;
@@ -250,7 +251,7 @@ export type BookingResponse = {
 };
 
 export type AvailabilityResponse = {
-  garmentId: string;
+  garmentSizeId: string;
   available: boolean;
   availableCount: number;
   totalAssets: number;
@@ -491,8 +492,9 @@ export type AvailableAsset = {
 
 // ---------- Asset API functions ----------
 
-export async function getAvailableAssets(garmentId: string) {
-  return apiRequest<AvailableAsset[]>(`/garments/${garmentId}/assets/available`);
+export async function getAvailableAssets(garmentId: string, garmentSizeId?: string) {
+  const query = garmentSizeId ? `?garmentSizeId=${encodeURIComponent(garmentSizeId)}` : "";
+  return apiRequest<AvailableAsset[]>(`/garments/${garmentId}/assets/available${query}`);
 }
 
 export async function assignAssetToBookingItem(
@@ -911,6 +913,7 @@ export async function getAllAssets(status?: string) {
 
 export async function createAsset(payload: {
   garmentId: string;
+  garmentSizeId: string;
   assetCode: string;
   conditionNote?: string;
   purchaseCost?: number;

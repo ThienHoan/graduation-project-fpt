@@ -71,6 +71,7 @@ const ASSET_STATUS_META: Record<string, { label: string; color: string }> = {
   reserved:          { label: "Đã giữ chỗ",     color: "bg-amber-100 text-amber-700 border border-amber-200" },
   rented:            { label: "Đang thuê",      color: "bg-state-rented/10 text-state-rented border border-state-rented/20" },
   inspection_pending:{ label: "Chờ kiểm tra",   color: "bg-orange-100 text-orange-700 border border-orange-200" },
+  cleaned:           { label: "Đã làm sạch",     color: "bg-jade/10 text-jade border border-jade/20" },
   laundry:           { label: "Giặt sấy",       color: "bg-state-laundry/10 text-state-laundry border border-state-laundry/20" },
   maintenance:       { label: "Bảo trì",        color: "bg-state-maintenance/10 text-state-maintenance border border-state-maintenance/20" },
   damaged:           { label: "Hư hỏng",        color: "bg-state-damaged/10 text-state-damaged border border-state-damaged/20" },
@@ -79,13 +80,13 @@ const ASSET_STATUS_META: Record<string, { label: string; color: string }> = {
 };
 
 const ASSET_STATUS_ORDER = [
-  "available", "reserved", "rented", "laundry", "maintenance",
-  "damaged", "inspection_pending", "retired", "lost",
+  "available", "reserved", "rented", "inspection_pending", "laundry", "maintenance",
+  "cleaned", "damaged", "retired", "lost",
 ] as const;
 
 const ACTIVE_STATUSES = [
   "confirmed", "awaiting_payment", "paid", "preparing",
-  "ready_for_pickup", "delivering", "renting", "returned", "inspection_pending",
+  "ready_for_pickup", "delivering", "renting", "returned", "inspection_pending", "overdue",
 ];
 
 const REVENUE_STATUSES = ["completed", "renting", "returned", "inspection_pending"];
@@ -471,12 +472,12 @@ export default function ManagerDashboardPage() {
 
   // ── Asset assignment helpers ──
 
-  async function openAssetPicker(itemKey: string, garmentId: string) {
+  async function openAssetPicker(itemKey: string, garmentId: string, garmentSizeId: string) {
     setAssetAssignState((prev) => ({
       ...prev,
       [itemKey]: { assets: [], loading: true, selected: "", open: true },
     }));
-    const res = await getAvailableAssets(garmentId);
+    const res = await getAvailableAssets(garmentId, garmentSizeId);
     if (res.success && res.data) {
       const data = res.data;
       setAssetAssignState((prev) => ({
@@ -505,16 +506,19 @@ export default function ManagerDashboardPage() {
         return next;
       });
       const bookingCode = bookingId.slice(0, 8).toUpperCase();
+      if (res.data) {
+        setBookings((prev) => prev.map((booking) => {
+          if (booking.id !== bookingId) return booking;
+          return {
+            ...booking,
+            ...res.data,
+            customerName: booking.customerName,
+            customerPhone: booking.customerPhone,
+          };
+        }));
+      }
+      await refreshAllAssets();
       showSuccessAssign(bookingId, `Đơn #${bookingCode} đã gắn sản phẩm thành công.`);
-      setTimeout(() => {
-        setBookings((prev) =>
-          prev.map((b) =>
-            b.id === bookingId
-              ? { ...b, items: b.items.map((i) => (i.id === itemId ? { ...i, garmentAssetId: state.selected } : i)) }
-              : b,
-          ),
-        );
-      }, 4500);
     } else {
       setErrorMsg(res.message ?? "Không thể gán tài sản.");
     }
@@ -620,7 +624,10 @@ export default function ManagerDashboardPage() {
     .filter((b) => b.status === "renting")
     .reduce((sum, b) => sum + b.items.filter((i) => i.garmentAssetId).length, 0);
   const totalAvailable = allAssets.filter((a) => a.status === "available").length;
-  const utilizationDenominator = rentedItemCount + totalAvailable;
+  const operationalAssets = allAssets.filter((asset) =>
+    ["available", "reserved", "rented", "inspection_pending", "laundry", "maintenance"].includes(asset.status),
+  );
+  const utilizationDenominator = operationalAssets.length;
   const utilizationPct = utilizationDenominator > 0
     ? Math.round((rentedItemCount / utilizationDenominator) * 100)
     : 0;
@@ -862,7 +869,7 @@ function AssetsAssignTab({
   actioningId: string | null;
   successAssignId: string | null;
   successAssignMsg: string | null;
-  onOpenPicker: (itemKey: string, garmentId: string) => void;
+  onOpenPicker: (itemKey: string, garmentId: string, garmentSizeId: string) => void;
   onAssign: (bookingId: string, itemId: string, itemKey: string) => void;
   onClosePicker: (itemKey: string) => void;
   onSelectChange: (itemKey: string, value: string) => void;
@@ -918,7 +925,7 @@ function AssetsAssignTab({
                         </div>
                       </div>
                       {!state?.open ? (
-                        <button type="button" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100" onClick={() => onOpenPicker(itemKey, item.garmentId)}>
+                        <button type="button" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100" onClick={() => item.garmentSizeId && onOpenPicker(itemKey, item.garmentId, item.garmentSizeId)}>
                           <span className="material-symbols-outlined mr-1 align-middle text-[16px]">add</span>
                           Gán tài sản
                         </button>
@@ -1380,8 +1387,18 @@ function InventoryTab({
                       onChange={(e) => onUpdateAssetStatus(selectedAsset.id, e.target.value)}
                       className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
                     >
-                      {Object.entries(ASSET_STATUS_META).map(([key, meta]) => (
-                        <option key={key} value={key}>{meta.label}</option>
+                      {[
+                        selectedAsset.status,
+                        ...(selectedAsset.status === "available" ? ["reserved", "retired"] : []),
+                        ...(selectedAsset.status === "reserved" ? ["rented", "available"] : []),
+                        ...(selectedAsset.status === "rented" ? ["inspection_pending"] : []),
+                        ...(selectedAsset.status === "inspection_pending" ? ["damaged", "laundry", "cleaned", "maintenance"] : []),
+                        ...(selectedAsset.status === "laundry" ? ["cleaned", "damaged"] : []),
+                        ...(selectedAsset.status === "maintenance" ? ["damaged", "cleaned"] : []),
+                        ...(selectedAsset.status === "cleaned" ? ["available", "retired"] : []),
+                        ...(selectedAsset.status === "damaged" ? ["maintenance", "retired"] : []),
+                      ].filter((key, index, all) => all.indexOf(key) === index).map((key) => (
+                        <option key={key} value={key}>{ASSET_STATUS_META[key]?.label ?? key}</option>
                       ))}
                     </select>
                   </div>
@@ -1458,10 +1475,11 @@ function InventoryTab({
       )}
 
       {/* Asset Create Modal */}
-      {assetModalOpen && selectedGarmentId && (
+      {assetModalOpen && selectedGarmentId && selectedGarment?.sizeId && (
         <AssetFormModal
-          garmentName={garments.find((g) => g.id === selectedGarmentId)?.name ?? "—"}
+          garmentName={selectedGarment.name}
           garmentId={selectedGarmentId}
+          garmentSizeId={selectedGarment.sizeId}
           submitting={submitting}
           onClose={onCloseAssetModal}
           onSubmit={onSubmitAsset}
@@ -1850,9 +1868,10 @@ function DeleteGarmentConfirmModal({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AssetFormModal({
-  garmentId, garmentName, submitting, onClose, onSubmit,
+  garmentId, garmentSizeId, garmentName, submitting, onClose, onSubmit,
 }: {
   garmentId: string;
+  garmentSizeId: string;
   garmentName: string;
   submitting: boolean;
   onClose: () => void;
@@ -1866,6 +1885,7 @@ function AssetFormModal({
     e.preventDefault();
     onSubmit({
       garmentId,
+      garmentSizeId,
       assetCode,
       conditionNote: conditionNote || undefined,
       purchaseCost: purchaseCost ? Number(purchaseCost) : undefined,
