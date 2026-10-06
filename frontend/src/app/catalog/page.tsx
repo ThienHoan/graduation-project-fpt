@@ -166,7 +166,7 @@ export default function CatalogPage() {
 
   return (
     <div className="min-h-screen bg-mist text-ink">
-      <CustomerNavbar active="collection" />
+      <CustomerNavbar active="collection" cartHref="/booking/date-selection" />
 
       {/* Cart icon floating */}
       <div className="fixed right-4 top-24 z-30 sm:right-8">

@@ -150,7 +150,7 @@ async function handleConsult() {
 
   return (
     <div className="min-h-screen bg-mist text-ink">
-      <CustomerNavbar active="collection" />
+      <CustomerNavbar active="collection" cartHref="/booking/date-selection" />
 
       <main className="mx-auto max-w-7xl px-4 pb-24 pt-24 sm:px-6 lg:px-8 lg:pt-28">
         <nav className="mb-8 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">

@@ -7,7 +7,13 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { cartCount } from "@/lib/cart";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 
-export function CustomerNavbar({ active }: { active?: "collection" | "tryon" }) {
+export function CustomerNavbar({
+  active,
+  cartHref = "/booking/review",
+}: {
+  active?: "collection" | "tryon";
+  cartHref?: string;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { session, signOut, status } = useAuth();
@@ -90,7 +96,7 @@ export function CustomerNavbar({ active }: { active?: "collection" | "tryon" }) 
 
             {/* Cart */}
             <Link
-              href="/booking/review"
+              href={cartHref}
               className="relative rounded-full p-2 text-lotus transition hover:bg-lotus/10"
               aria-label="Giỏ thuê đồ"
             >
@@ -137,7 +143,7 @@ export function CustomerNavbar({ active }: { active?: "collection" | "tryon" }) 
                         Hồ sơ
                       </Link>
                       <Link
-                        href="/booking/review"
+                        href={cartHref}
                         onClick={() => setAccountOpen(false)}
                         className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
                       >
@@ -220,7 +226,7 @@ export function CustomerNavbar({ active }: { active?: "collection" | "tryon" }) 
                 );
               })}
               <Link
-                href="/booking/review"
+                href={cartHref}
                 className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
               >
                 <span className="material-symbols-outlined text-[20px]">shopping_bag</span>
