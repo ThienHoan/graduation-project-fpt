@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { StaffPortalShell, ConfirmModal } from "@/components/heritage/ui";
 import {
@@ -11,12 +11,15 @@ import {
   advanceBookingStatus,
   markBookingPaid,
   createRefund,
+  updateRefundDetails,
   closeBookingWithoutRefund,
   type StaffBookingResponse,
+  type StaffRefundSummary,
   type DeliveryPoint,
 } from "@/lib/api";
 import { DeliveryMap } from "@/components/location/delivery-map";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -144,8 +147,9 @@ export default function StaffDashboardPage() {
   // Refund form state
   const [refundDialog, setRefundDialog] = useState<{
     bookingId: string;
+    refundId?: string;
     customerName: string | null;
-    pickupMethod: string;
+    refundMethod: "cash" | "bank_transfer";
     depositTotal: number;
     penaltyTotal: number;
   } | null>(null);
@@ -174,6 +178,23 @@ export default function StaffDashboardPage() {
       })
       .finally(() => setLoading(false));
   }, [tab]);
+
+  const refreshActiveTab = useCallback(() => {
+    if (tab === "map") return;
+    const fetcher = tab === "refunds"
+      ? getStaffCompletedRefundBookings
+      : tab === "pending"
+        ? getStaffPendingBookings
+        : getStaffAllBookings;
+    return fetcher().then((res) => {
+      if (res.success && res.data) setBookings(res.data);
+    });
+  }, [tab]);
+
+  useRealtimeInvalidation({
+    bookings: refreshActiveTab,
+    refunds: refreshActiveTab,
+  }, tab !== "map");
 
   const CONFIRM_REQUIRED = new Set(["cancelled", "rejected", "overdue"]);
 
@@ -251,22 +272,33 @@ export default function StaffDashboardPage() {
     }
   }
 
-  function openRefundDialog(booking: StaffBookingResponse & { refunds?: Array<{ id: string; amount: number; status: string; refundMethod: string; createdAt: string; updatedAt: string }> }) {
-    setRefundBankName("");
-    setRefundBankAccount("");
-    setRefundBankHolder("");
+  function refundMethodForBooking(booking: StaffBookingResponse): "cash" | "bank_transfer" {
+    return booking.paidPaymentMethod === "cash" ? "cash" : "bank_transfer";
+  }
+
+  function openRefundDialog(booking: StaffBookingResponse, refund?: StaffRefundSummary) {
+    setRefundBankName(refund?.bankName ?? "");
+    setRefundBankAccount(refund?.bankAccountNumber ?? "");
+    setRefundBankHolder(refund?.bankAccountHolder ?? "");
     setRefundDialog({
       bookingId: booking.id,
+      refundId: refund?.id,
       customerName: booking.customerName,
-      pickupMethod: booking.pickupMethod,
+      refundMethod: refund?.refundMethod === "cash" ? "cash" : refundMethodForBooking(booking),
       depositTotal: booking.depositTotal,
       penaltyTotal: booking.penaltyTotal ?? 0,
     });
   }
 
-  async function handleCashRefund() {
-    if (!refundDialog) return;
-    const id = refundDialog.bookingId;
+  async function refreshRefundBookings() {
+    const res = await getStaffCompletedRefundBookings();
+    if (res.success && res.data) setBookings(res.data);
+    else setErrorMsg(res.message ?? "Không thể tải lại danh sách hoàn cọc.");
+  }
+
+  async function handleCashRefund(bookingId?: string) {
+    const id = bookingId ?? refundDialog?.bookingId;
+    if (!id) return;
     setActioningId(id);
     setErrorMsg(null);
     setRefundDialog(null);
@@ -277,26 +309,7 @@ export default function StaffDashboardPage() {
     });
     setActioningId(null);
     if (res.success && res.data) {
-      // Tiền mặt cũng phải chờ Quản lý duyệt — giữ đơn lại, gắn refund pending
-      setBookings((prev) =>
-        prev.map((b) =>
-          b.id === id
-            ? {
-                ...b,
-                refunds: [
-                  {
-                    id: res.data!.id,
-                    amount: res.data!.amount,
-                    status: res.data!.status,
-                    refundMethod: res.data!.refundMethod,
-                    createdAt: res.data!.createdAt,
-                    updatedAt: res.data!.updatedAt,
-                  },
-                ],
-              }
-            : b,
-        ),
-      );
+      await refreshRefundBookings();
     } else {
       setErrorMsg(res.message ?? "Không thể hoàn cọc.");
     }
@@ -309,7 +322,7 @@ export default function StaffDashboardPage() {
     const res = await closeBookingWithoutRefund(bookingId);
     setActioningId(null);
     if (res.success && res.data) {
-      setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, status: res.data!.status } : b)));
+      await refreshRefundBookings();
     } else {
       setErrorMsg(res.message ?? "Không thể đóng đơn.");
     }
@@ -321,37 +334,25 @@ export default function StaffDashboardPage() {
     setActioningId(id);
     setErrorMsg(null);
     setRefundDialog(null);
-    const res = await createRefund({
-      bookingId: id,
-      refundMethod: "bank_transfer",
-      reason: "Yêu cầu hoàn cọc chuyển khoản",
-      bankName: refundBankName,
-      bankAccountNumber: refundBankAccount,
-      bankAccountHolder: refundBankHolder,
-    });
+    const res = refundDialog.refundId
+      ? await updateRefundDetails(refundDialog.refundId, {
+          bankName: refundBankName,
+          bankAccountNumber: refundBankAccount,
+          bankAccountHolder: refundBankHolder,
+        })
+      : await createRefund({
+          bookingId: id,
+          refundMethod: "bank_transfer",
+          reason: "Yêu cầu hoàn cọc chuyển khoản",
+          bankName: refundBankName,
+          bankAccountNumber: refundBankAccount,
+          bankAccountHolder: refundBankHolder,
+        });
     setActioningId(null);
     if (res.success) {
-      setBookings((prev) =>
-        prev.map((b) =>
-          b.id === id
-            ? {
-                ...b,
-                refunds: [
-                  {
-                    id: res.data!.id,
-                    amount: res.data!.amount,
-                    status: res.data!.status,
-                    refundMethod: res.data!.refundMethod,
-                    createdAt: res.data!.createdAt,
-                    updatedAt: res.data!.updatedAt,
-                  },
-                ],
-              }
-            : b,
-        ),
-      );
+      await refreshRefundBookings();
     } else {
-      setErrorMsg(res.message ?? "Không thể tạo yêu cầu hoàn cọc.");
+      setErrorMsg(res.message ?? "Không thể cập nhật yêu cầu hoàn cọc.");
     }
   }
 
@@ -430,7 +431,7 @@ export default function StaffDashboardPage() {
               : "border-transparent text-stone-500 hover:text-lotus"
           }`}
         >
-          Hoàn cọc
+          Yêu cầu hoàn cọc
         </button>
         <button
           type="button"
@@ -481,12 +482,14 @@ export default function StaffDashboardPage() {
             const garmentName = booking.items[0]?.garmentName ?? "—";
             const sizeLabel = booking.items[0]?.sizeLabel ?? "—";
             // Refund info for completed bookings
-            const refund = (booking as any).refunds?.[0];
+            const refund = booking.refunds?.[0];
             const isRefunded = refund && (refund.status === "refunded" || refund.status === "partially_refunded");
             const isPendingRefund = refund && (refund.status === "pending" || refund.status === "refunding");
             const paidMethod = booking.paidPaymentMethod
               ? PAYMENT_METHOD_LABELS[booking.paidPaymentMethod] ?? booking.paidPaymentMethod
               : null;
+            const expectedRefundMethod = refundMethodForBooking(booking);
+            const needsBankDetails = isPendingRefund && refund?.refundMethod === "bank_transfer" && !refund.bankDetailsComplete;
 
             return (
               <div key={booking.id}>
@@ -606,11 +609,23 @@ export default function StaffDashboardPage() {
                   {tab === "refunds" ? (
                     !isRefunded && (
                       isPendingRefund ? (
-                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-yellow-700">
+                        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-yellow-700">
                           <span className="material-symbols-outlined text-base mr-1 align-middle">schedule</span>
-                          {refund.refundMethod === "bank_transfer"
-                            ? "Đã gửi yêu cầu hoàn cọc — chờ Quản lý duyệt chuyển khoản"
-                            : "Đã gửi yêu cầu hoàn cọc tiền mặt — chờ Quản lý duyệt"}
+                          {needsBankDetails
+                            ? "Cần bổ sung tài khoản nhận hoàn trước khi Quản lý duyệt"
+                            : refund.refundMethod === "bank_transfer"
+                              ? "Đã gửi yêu cầu hoàn cọc — chờ Quản lý duyệt chuyển khoản"
+                              : "Đã gửi yêu cầu hoàn cọc tiền mặt — chờ Quản lý duyệt"}
+                          {needsBankDetails && (
+                            <button
+                              type="button"
+                              disabled={isActioning}
+                              onClick={() => openRefundDialog(booking, refund)}
+                              className="rounded-md bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
+                            >
+                              Bổ sung tài khoản
+                            </button>
+                          )}
                         </div>
                       ) : booking.depositTotal - (booking.penaltyTotal ?? 0) <= 0 ? (
                         booking.status === "refund_pending" ? (
@@ -629,11 +644,11 @@ export default function StaffDashboardPage() {
                         )
                       ) : (
                         <>
-                          {booking.pickupMethod === "delivery" ? (
+                          {expectedRefundMethod === "bank_transfer" ? (
                             <button
                               type="button"
                               disabled={isActioning}
-                              onClick={() => openRefundDialog(booking as any)}
+                              onClick={() => openRefundDialog(booking)}
                               className="rounded-lg bg-lotus px-4 py-2 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
                             >
                               {isActioning ? "Đang xử lý..." : "Tạo yêu cầu hoàn cọc (chuyển khoản)"}
@@ -646,15 +661,15 @@ export default function StaffDashboardPage() {
                                 setRefundDialog({
                                   bookingId: booking.id,
                                   customerName: booking.customerName,
-                                  pickupMethod: booking.pickupMethod,
+                                  refundMethod: "cash",
                                   depositTotal: booking.depositTotal,
                                   penaltyTotal: booking.penaltyTotal ?? 0,
                                 });
-                                handleCashRefund();
+                                handleCashRefund(booking.id);
                               }}
                               className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
                             >
-                              {isActioning ? "Đang xử lý..." : `Hoàn cọc tiền mặt (${formatVND(Math.max(0, booking.depositTotal - (booking.penaltyTotal ?? 0)))})`}
+                              {isActioning ? "Đang xử lý..." : `Tạo yêu cầu hoàn cọc tiền mặt (${formatVND(Math.max(0, booking.depositTotal - (booking.penaltyTotal ?? 0)))})`}
                             </button>
                           )}
                         </>
@@ -769,12 +784,12 @@ export default function StaffDashboardPage() {
       )}
 
       {/* ── Refund dialog (for bank_transfer) ── */}
-      {refundDialog && refundDialog.pickupMethod === "delivery" && (
+      {refundDialog && refundDialog.refundMethod === "bank_transfer" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
           <div className="mx-4 w-full max-w-md rounded-lg border border-sand bg-white p-8 shadow-2xl">
-            <h3 className="font-display text-2xl text-ink">Yêu cầu hoàn cọc chuyển khoản</h3>
+            <h3 className="font-display text-2xl text-ink">{refundDialog.refundId ? "Bổ sung tài khoản nhận hoàn" : "Tạo yêu cầu hoàn cọc chuyển khoản"}</h3>
             <p className="mt-1 text-sm text-stone-500">
-              Khách: <strong>{refundDialog.customerName ?? "—"}</strong>
+              Khách: <strong>{refundDialog.customerName ?? "—"}</strong>. Sau khi tạo, yêu cầu sẽ chờ Quản lý duyệt.
             </p>
 
             <div className="mt-6 rounded-xl bg-jade/5 border border-jade/30 p-4">
@@ -836,7 +851,7 @@ export default function StaffDashboardPage() {
                 onClick={handleBankTransferRefund}
                 className="rounded-lg bg-lotus px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
               >
-                {actioningId === refundDialog.bookingId ? "Đang xử lý..." : "Gửi yêu cầu hoàn cọc"}
+                {actioningId === refundDialog.bookingId ? "Đang xử lý..." : refundDialog.refundId ? "Lưu thông tin — chờ Quản lý duyệt" : "Tạo yêu cầu — chờ Quản lý duyệt"}
               </button>
             </div>
           </div>

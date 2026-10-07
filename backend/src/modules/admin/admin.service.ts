@@ -14,31 +14,6 @@ import { AdminUserQueryDto } from "./dto/admin-user-query.dto";
 import { UpdateAdminUserDto } from "./dto/update-admin-user.dto";
 import { UpdateSystemSettingDto } from "./dto/update-system-setting.dto";
 
-type AdminSummaryCard = {
-  key: string;
-  label: string;
-  value: number;
-  hint: string;
-  tone: "rose" | "emerald" | "amber" | "slate";
-};
-
-type AdminQueueCard = {
-  key: string;
-  label: string;
-  value: number;
-  hint: string;
-  tone: "rose" | "emerald" | "amber" | "slate";
-};
-
-type AdminOverviewResponse = {
-  summary: AdminSummaryCard[];
-  queues: AdminQueueCard[];
-  assetBreakdown: { status: string; label: string; count: number }[];
-  bookingBreakdown: { status: string; label: string; count: number }[];
-  recentActivity: AdminAuditLogEntry[];
-  settingsSnapshot: AdminSettingEntry[];
-};
-
 type AdminAuditLogEntry = {
   id: string;
   action: string;

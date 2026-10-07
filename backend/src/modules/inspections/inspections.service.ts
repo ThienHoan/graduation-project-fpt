@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { AssetStatus, BookingStatus, InspectionStatus } from "@prisma/client";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { AssetStatus, BookingStatus, InspectionStatus, MaintenanceStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import type { CompleteInspectionDto } from "./dto/complete-inspection.dto";
 import type { CreateFindingDto } from "./dto/create-finding.dto";
 import type { CreateInspectionDto } from "./dto/create-inspection.dto";
@@ -9,71 +10,126 @@ import type { CreatePhotoDto } from "./dto/create-photo.dto";
 import type { CompleteLaundryDto } from "./dto/laundry.dto";
 import type { CompleteMaintenanceDto } from "./dto/maintenance.dto";
 
+const ACTIVE_REFUND_STATUSES: PaymentStatus[] = [
+  PaymentStatus.pending,
+  PaymentStatus.refunding,
+  PaymentStatus.refunded,
+  PaymentStatus.partially_refunded,
+];
+
+const ACTIVE_INSPECTION_STATUSES: InspectionStatus[] = [
+  InspectionStatus.pending,
+  InspectionStatus.in_progress,
+  InspectionStatus.disputed,
+];
+
+const MUTABLE_INSPECTION_STATUSES: InspectionStatus[] = [
+  InspectionStatus.pending,
+  InspectionStatus.in_progress,
+];
+
+const FINAL_ASSET_STATUSES: AssetStatus[] = [
+  AssetStatus.laundry,
+  AssetStatus.maintenance,
+  AssetStatus.damaged,
+];
+
+const ACTIVE_MAINTENANCE_STATUSES: MaintenanceStatus[] = [
+  MaintenanceStatus.open,
+  MaintenanceStatus.in_progress,
+];
+
 @Injectable()
 export class InspectionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   async createOrGet(dto: CreateInspectionDto, staffId: string) {
-    const booking = await this.prisma.booking.findUnique({ where: { id: dto.bookingId } });
-    if (!booking) throw new NotFoundException("Booking not found.");
-
-    const asset = await this.prisma.garmentAsset.findUnique({
-      where: { id: dto.garmentAssetId },
-      include: { garment_sizes: { include: { garments: true } } },
-    });
-    if (!asset) throw new NotFoundException("Garment asset not found.");
-    if (asset.status !== AssetStatus.inspection_pending)
-      throw new BadRequestException(`Asset '${asset.assetCode}' is not ready for inspection (current: ${asset.status}).`);
-
-    const assignedToBooking = await this.prisma.bookingItem.findFirst({
-      where: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId },
-      select: { id: true },
-    });
-    if (!assignedToBooking) {
-      throw new BadRequestException("Asset is not assigned to this booking.");
-    }
-
-    const existing = await this.prisma.inspectionSession.findFirst({
-      where: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId, status: { not: InspectionStatus.completed } },
-      include: {
-        findings: true, photos: true,
-        booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
-        garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
-        inspector: { include: { profile: true } },
-      },
-    });
-    if (existing) return ok(this.serialize(existing));
-
-
-    const session = await this.prisma.$transaction(async (tx) => {
-      if (booking.status === BookingStatus.returned) {
-        await tx.booking.update({ where: { id: dto.bookingId }, data: { status: BookingStatus.inspection_pending } });
-        await tx.bookingStatusHistory.create({
-          data: { bookingId: dto.bookingId, fromStatus: BookingStatus.returned, toStatus: BookingStatus.inspection_pending, changedBy: staffId, note: "Bắt đầu kiểm tra" },
-        });
+    const session = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: dto.bookingId },
+        include: { items: true },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.status !== BookingStatus.returned && booking.status !== BookingStatus.inspection_pending) {
+        throw new BadRequestException("Booking is not ready for inspection.");
       }
-      return tx.inspectionSession.create({
-        data: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId, status: InspectionStatus.in_progress, inspectedBy: staffId, note: dto.note ?? null },
-        include: {
-          findings: true, photos: true,
-          booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
-          garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
-          inspector: { include: { profile: true } },
+
+      const asset = await tx.garmentAsset.findUnique({
+        where: { id: dto.garmentAssetId },
+        include: { garment_sizes: { include: { garments: true } } },
+      });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
+      if (asset.status !== AssetStatus.inspection_pending) {
+        throw new BadRequestException(`Asset '${asset.assetCode}' is not ready for inspection (current: ${asset.status}).`);
+      }
+
+      const assignedToBooking = booking.items.some((item) => item.garmentAssetId === dto.garmentAssetId);
+      if (!assignedToBooking) throw new BadRequestException("Asset is not assigned to this booking.");
+
+      if (booking.status === BookingStatus.returned) {
+        const claimed = await tx.booking.updateMany({
+          where: { id: dto.bookingId, status: BookingStatus.returned },
+          data: { status: BookingStatus.inspection_pending },
+        });
+        if (claimed.count !== 1) throw new ConflictException("Booking status changed while starting inspection.");
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId: dto.bookingId,
+            fromStatus: BookingStatus.returned,
+            toStatus: BookingStatus.inspection_pending,
+            changedBy: staffId,
+            note: "Bắt đầu kiểm tra",
+          },
+        });
+      } else {
+        await tx.booking.update({ where: { id: dto.bookingId }, data: {} });
+      }
+
+      const existing = await tx.inspectionSession.findFirst({
+        where: {
+          bookingId: dto.bookingId,
+          garmentAssetId: dto.garmentAssetId,
+          status: { in: ACTIVE_INSPECTION_STATUSES },
         },
+        include: this.sessionInclude(),
+        orderBy: { createdAt: "asc" },
+      });
+      if (existing) return existing;
+
+      return tx.inspectionSession.create({
+        data: {
+          bookingId: dto.bookingId,
+          garmentAssetId: dto.garmentAssetId,
+          status: InspectionStatus.in_progress,
+          inspectedBy: staffId,
+          note: dto.note ?? null,
+        },
+        include: this.sessionInclude(),
       });
     });
+
+    this.realtime.inspectionChanged({
+      id: session.id,
+      bookingId: session.bookingId,
+      assetId: session.garmentAssetId,
+      status: session.status,
+    });
+    this.realtime.bookingChanged({
+      id: session.bookingId,
+      bookingId: session.bookingId,
+      status: BookingStatus.inspection_pending,
+    });
+
     return ok(this.serialize(session));
   }
 
   async findByBooking(bookingId: string) {
     const sessions = await this.prisma.inspectionSession.findMany({
       where: { bookingId }, orderBy: { createdAt: "desc" },
-      include: {
-        findings: true, photos: true,
-        booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
-        garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
-        inspector: { include: { profile: true } },
-      },
+      include: this.sessionInclude(),
     });
     return ok(sessions.map((s) => this.serialize(s)));
   }
@@ -81,89 +137,120 @@ export class InspectionsService {
   async findOne(id: string) {
     const session = await this.prisma.inspectionSession.findUnique({
       where: { id },
-      include: {
-        findings: true, photos: true,
-        booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
-        garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
-        inspector: { include: { profile: true } },
-      },
+      include: this.sessionInclude(),
     });
     if (!session) throw new NotFoundException("Inspection session not found.");
     return ok(this.serialize(session));
   }
 
   async addFinding(sessionId: string, dto: CreateFindingDto) {
-    const session = await this.prisma.inspectionSession.findUnique({ where: { id: sessionId } });
-    if (!session) throw new NotFoundException("Inspection session not found.");
-    if (session.status === InspectionStatus.completed) throw new BadRequestException("Cannot add finding to a completed inspection.");
-    const finding = await this.prisma.inspectionFinding.create({
-      data: { inspectionSessionId: sessionId, findingType: dto.findingType, severity: dto.severity ?? "low", description: dto.description ?? null, penaltyAmount: dto.penaltyAmount ?? 0 },
+    const finding = await this.prisma.runSerializable(async (tx) => {
+      const session = await tx.inspectionSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException("Inspection session not found.");
+      if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+        throw new BadRequestException("Cannot add finding to a completed inspection.");
+      }
+      return tx.inspectionFinding.create({
+        data: {
+          inspectionSessionId: sessionId,
+          findingType: dto.findingType,
+          severity: dto.severity ?? "low",
+          description: dto.description ?? null,
+          penaltyAmount: dto.penaltyAmount ?? 0,
+        },
+      });
     });
-    return ok({ id: finding.id, findingType: finding.findingType, severity: finding.severity, description: finding.description, penaltyAmount: Number(finding.penaltyAmount), createdAt: finding.createdAt.toISOString() });
+
+    return ok({
+      id: finding.id,
+      findingType: finding.findingType,
+      severity: finding.severity,
+      description: finding.description,
+      penaltyAmount: Number(finding.penaltyAmount),
+      createdAt: finding.createdAt.toISOString(),
+    });
   }
 
   async addPhoto(sessionId: string, dto: CreatePhotoDto) {
-    const session = await this.prisma.inspectionSession.findUnique({ where: { id: sessionId } });
-    if (!session) throw new NotFoundException("Inspection session not found.");
-    if (session.status === InspectionStatus.completed) throw new BadRequestException("Cannot add photo to a completed inspection.");
-    const photo = await this.prisma.inspectionPhoto.create({ data: { inspectionSessionId: sessionId, imageUrl: dto.imageUrl, note: dto.note ?? null } });
+    const photo = await this.prisma.runSerializable(async (tx) => {
+      const session = await tx.inspectionSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException("Inspection session not found.");
+      if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+        throw new BadRequestException("Cannot add photo to a completed inspection.");
+      }
+      return tx.inspectionPhoto.create({
+        data: { inspectionSessionId: sessionId, imageUrl: dto.imageUrl, note: dto.note ?? null },
+      });
+    });
+
     return ok({ id: photo.id, imageUrl: photo.imageUrl, note: photo.note, createdAt: photo.createdAt.toISOString() });
   }
 
   async complete(id: string, dto: CompleteInspectionDto, staffId: string) {
-    const session = await this.prisma.inspectionSession.findUnique({
-      where: { id },
-      include: { findings: true, booking: { include: { items: true } } },
-    });
-    if (!session) throw new NotFoundException("Inspection session not found.");
-    if (session.status === InspectionStatus.completed) throw new BadRequestException("Inspection has already been completed.");
-
-    const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
-    const { bookingId, garmentAssetId } = session;
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const currentAsset = await tx.garmentAsset.findUnique({ where: { id: garmentAssetId } });
-      if (!currentAsset) throw new NotFoundException("Garment asset not found.");
-      if (currentAsset.status !== AssetStatus.inspection_pending) {
-        throw new BadRequestException(
-          `Asset is no longer awaiting inspection (current: ${currentAsset.status}).`,
-        );
-      }
-      const allowedFinalStatuses: AssetStatus[] = [
-        AssetStatus.laundry,
-        AssetStatus.maintenance,
-        AssetStatus.damaged,
-      ];
-      if (!allowedFinalStatuses.includes(finalAssetStatus)) {
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
+      if (!FINAL_ASSET_STATUSES.includes(finalAssetStatus)) {
         throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
       }
-      await tx.garmentAsset.updateMany({
-        where: { id: garmentAssetId, status: AssetStatus.inspection_pending },
+
+      const session = await tx.inspectionSession.findUnique({
+        where: { id },
+        include: { booking: { include: { items: true } } },
+      });
+      if (!session) throw new NotFoundException("Inspection session not found.");
+      if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+        throw new BadRequestException("Inspection has already been completed.");
+      }
+
+      const claimedSession = await tx.inspectionSession.updateMany({
+        where: { id, status: { in: MUTABLE_INSPECTION_STATUSES } },
+        data: {
+          status: InspectionStatus.completed,
+          completedAt: new Date(),
+          ...(dto.note ? { note: dto.note } : {}),
+        },
+      });
+      if (claimedSession.count !== 1) throw new ConflictException("Inspection has already been completed.");
+
+      const currentAsset = await tx.garmentAsset.findUnique({ where: { id: session.garmentAssetId } });
+      if (!currentAsset) throw new NotFoundException("Garment asset not found.");
+      if (currentAsset.status !== AssetStatus.inspection_pending) {
+        throw new BadRequestException(`Asset is no longer awaiting inspection (current: ${currentAsset.status}).`);
+      }
+
+      const claimedAsset = await tx.garmentAsset.updateMany({
+        where: { id: session.garmentAssetId, status: AssetStatus.inspection_pending },
         data: { status: finalAssetStatus },
       });
+      if (claimedAsset.count !== 1) throw new ConflictException("Asset status changed while completing inspection.");
 
       if (finalAssetStatus === AssetStatus.laundry) {
-        await tx.laundryTicket.create({ data: { garmentAssetId, bookingId, status: "open", note: dto.note ?? `Tạo từ inspection ${id}` } });
+        await tx.laundryTicket.create({
+          data: { garmentAssetId: session.garmentAssetId, bookingId: session.bookingId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+        });
       }
       if (finalAssetStatus === AssetStatus.maintenance) {
-        await tx.maintenanceJob.create({ data: { garmentAssetId, status: "open", note: dto.note ?? `Tạo từ inspection ${id}` } });
+        await tx.maintenanceJob.create({
+          data: { garmentAssetId: session.garmentAssetId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+        });
       }
 
-      const totalPenalty = session.findings.reduce(
-        (sum, f) => sum + Number(f.penaltyAmount),
-        0,
-      );
-      if (totalPenalty > 0) {
-        await tx.booking.update({
-          where: { id: bookingId },
-          data: {
-            penaltyTotal: { increment: totalPenalty },
-          },
-        });
+      const penaltyAggregate = await tx.inspectionFinding.aggregate({
+        where: { inspectionSessionId: id },
+        _sum: { penaltyAmount: true },
+      });
+      const totalPenalty = Number(penaltyAggregate._sum.penaltyAmount ?? 0);
 
+      const bookingAfterPenalty = await tx.booking.update({
+        where: { id: session.bookingId },
+        data: { penaltyTotal: { increment: totalPenalty } },
+        select: { id: true, status: true, depositTotal: true, penaltyTotal: true },
+      });
+
+      if (totalPenalty > 0) {
         await tx.penalty.create({
           data: {
-            bookingId,
+            bookingId: session.bookingId,
             reason: dto.note ?? `Inspection findings for session ${id}`,
             amount: totalPenalty,
             createdBy: staffId,
@@ -171,64 +258,56 @@ export class InspectionsService {
         });
       }
 
-      const completedSession = await tx.inspectionSession.update({
-        where: { id },
-        data: { status: InspectionStatus.completed, completedAt: new Date(), ...(dto.note ? { note: dto.note } : {}) },
-        include: {
-          findings: true, photos: true,
-          booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
-          garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
-          inspector: { include: { profile: true } },
-        },
-      });
-
-      const assignedAssetIds = session.booking.items
-        .map((item) => item.garmentAssetId)
-        .filter((assetId): assetId is string => Boolean(assetId));
-
-      if (assignedAssetIds.length > 0) {
-        const pendingCount = await tx.garmentAsset.count({ where: { id: { in: assignedAssetIds }, status: AssetStatus.inspection_pending } });
-        if (pendingCount === 0) {
-          const previousStatus = session.booking.status;
-
-          await tx.booking.update({
-            where: { id: bookingId },
-            data: { status: BookingStatus.completed },
-          });
-
-          await tx.bookingStatusHistory.create({
-            data: { bookingId, fromStatus: previousStatus, toStatus: BookingStatus.completed, changedBy: staffId, note: "All items inspected" },
-          });
-
-          const depositTotal = Number(session.booking.depositTotal);
-          // session.booking.penaltyTotal là giá trị TRƯỚC khi increment ở trên,
-          // nên phải cộng thêm khoản phạt vừa ghi nhận trong lần kiểm tra này.
-          const penaltyTotal = Number(session.booking.penaltyTotal) + totalPenalty;
-          const refundAmount = depositTotal - penaltyTotal;
-
-          // Còn cọc phải hoàn → chuyển sang bước "Hoàn cọc": staff chủ động tạo
-          // yêu cầu hoàn cọc, owner duyệt xong booking mới completed.
-          const nextStatus = refundAmount > 0 ? BookingStatus.refund_pending : BookingStatus.completed;
-
-          await tx.booking.update({
-            where: { id: bookingId },
-            data: { status: nextStatus },
-          });
-
-          await tx.bookingStatusHistory.create({
-            data: {
-              bookingId, fromStatus: previousStatus, toStatus: nextStatus, changedBy: staffId,
-              note: nextStatus === BookingStatus.refund_pending ? "Kiểm tra xong — chờ hoàn cọc" : "All items inspected",
-            },
-          });
-        }
+      if (await this.isBookingFullyInspected(tx, session.bookingId)) {
+        await this.finalizeBookingInspection(tx, {
+          bookingId: session.bookingId,
+          bookingStatus: bookingAfterPenalty.status,
+          depositTotal: Number(bookingAfterPenalty.depositTotal),
+          penaltyTotal: Number(bookingAfterPenalty.penaltyTotal),
+          staffId,
+        });
       }
-      return completedSession;
+
+      return tx.inspectionSession.findUniqueOrThrow({
+        where: { id },
+        include: this.sessionInclude(),
+      });
     });
+
+    this.realtime.inspectionChanged({
+      id: updated.id,
+      bookingId: updated.bookingId,
+      assetId: updated.garmentAssetId,
+      status: updated.status,
+    });
+    this.realtime.assetChanged({
+      id: updated.garmentAssetId,
+      assetId: updated.garmentAssetId,
+      bookingId: updated.bookingId,
+      status: updated.garmentAsset.status,
+    });
+    this.realtime.bookingChanged({
+      id: updated.bookingId,
+      bookingId: updated.bookingId,
+      status: updated.booking.status,
+    });
+    this.realtime.bookingChangedForCustomer(updated.booking.customerId, {
+      id: updated.bookingId,
+      bookingId: updated.bookingId,
+      status: updated.booking.status,
+    });
+    if (dto.finalAssetStatus === AssetStatus.laundry) {
+      this.realtime.laundryChanged({ assetId: updated.garmentAssetId, bookingId: updated.bookingId });
+    }
+    if (dto.finalAssetStatus === AssetStatus.maintenance) {
+      this.realtime.maintenanceChanged({ assetId: updated.garmentAssetId, bookingId: updated.bookingId });
+    }
+
     return ok(this.serialize(updated));
   }
 
   async markAssetReady(assetId: string, staffId: string) {
+    void staffId;
     const asset = await this.prisma.garmentAsset.findUnique({
       where: { id: assetId },
       include: { laundryTickets: { where: { status: "open" }, take: 1 }, maintenanceJobs: { where: { status: "open" }, take: 1 } },
@@ -253,6 +332,15 @@ export class InspectionsService {
       }
       return tx.garmentAsset.findUniqueOrThrow({ where: { id: assetId } });
     });
+
+    this.realtime.assetChanged({ id: updated.id, assetId: updated.id, status: updated.status });
+    if (asset.status === AssetStatus.laundry) {
+      this.realtime.laundryChanged({ assetId: updated.id });
+    }
+    if (asset.status === AssetStatus.maintenance) {
+      this.realtime.maintenanceChanged({ assetId: updated.id });
+    }
+
     return ok({ id: updated.id, assetCode: updated.assetCode, status: updated.status, conditionNote: updated.conditionNote });
   }
 
@@ -369,6 +457,17 @@ export class InspectionsService {
       return done;
     });
 
+    this.realtime.laundryChanged({
+      id: updated.id,
+      assetId: updated.garmentAssetId,
+      status: updated.status,
+    });
+    this.realtime.assetChanged({
+      id: updated.garmentAssetId,
+      assetId: updated.garmentAssetId,
+      status: AssetStatus.cleaned,
+    });
+
     return ok({
       id: updated.id,
       garmentAssetId: updated.garmentAssetId,
@@ -382,6 +481,7 @@ export class InspectionsService {
 
   async findAllMaintenance() {
     const jobs = await this.prisma.maintenanceJob.findMany({
+      where: { status: { in: ACTIVE_MAINTENANCE_STATUSES } },
       orderBy: { createdAt: "asc" },
       include: {
         garmentAsset: {
@@ -405,38 +505,54 @@ export class InspectionsService {
   }
 
   async completeMaintenance(jobId: string, dto: CompleteMaintenanceDto) {
-    const job = await this.prisma.maintenanceJob.findUnique({
-      where: { id: jobId },
-    });
-    if (!job) throw new NotFoundException("Maintenance job not found.");
+    const targetStatus = dto.status as MaintenanceStatus;
+    if (targetStatus !== MaintenanceStatus.completed && targetStatus !== MaintenanceStatus.cannot_repair) {
+      throw new BadRequestException("Maintenance can only be completed or marked cannot_repair.");
+    }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const done = await tx.maintenanceJob.update({
-        where: { id: jobId },
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const job = await tx.maintenanceJob.findUnique({ where: { id: jobId } });
+      if (!job) throw new NotFoundException("Maintenance job not found.");
+      if (!ACTIVE_MAINTENANCE_STATUSES.includes(job.status)) {
+        throw new BadRequestException("Maintenance job already completed.");
+      }
+
+      const claimedJob = await tx.maintenanceJob.updateMany({
+        where: { id: jobId, status: { in: ACTIVE_MAINTENANCE_STATUSES } },
         data: {
-          status: dto.status as any,
-          ...(dto.status === "completed" ? { completedAt: new Date() } : {}),
+          status: targetStatus,
+          completedAt: new Date(),
           ...(dto.note ? { note: dto.note } : {}),
         },
       });
+      if (claimedJob.count !== 1) throw new ConflictException("Maintenance job was already processed.");
 
-      if (dto.status === "completed") {
-        const claimed = await tx.garmentAsset.updateMany({
-          where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
-          data: { status: AssetStatus.cleaned, conditionNote: null },
-        });
-        if (claimed.count !== 1) {
-          throw new BadRequestException("Asset is no longer in maintenance status.");
-        }
-      }
-      if (dto.status === "cannot_repair") {
-        await tx.garmentAsset.updateMany({
-          where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
-          data: { status: AssetStatus.damaged },
-        });
+      const nextAssetStatus = targetStatus === MaintenanceStatus.completed
+        ? AssetStatus.cleaned
+        : AssetStatus.damaged;
+      const claimedAsset = await tx.garmentAsset.updateMany({
+        where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
+        data: {
+          status: nextAssetStatus,
+          ...(nextAssetStatus === AssetStatus.cleaned ? { conditionNote: null } : {}),
+        },
+      });
+      if (claimedAsset.count !== 1) {
+        throw new BadRequestException("Asset is no longer in maintenance status.");
       }
 
-      return done;
+      return tx.maintenanceJob.findUniqueOrThrow({ where: { id: jobId } });
+    });
+
+    this.realtime.maintenanceChanged({
+      id: updated.id,
+      assetId: updated.garmentAssetId,
+      status: updated.status,
+    });
+    this.realtime.assetChanged({
+      id: updated.garmentAssetId,
+      assetId: updated.garmentAssetId,
+      status: targetStatus === MaintenanceStatus.completed ? AssetStatus.cleaned : AssetStatus.damaged,
     });
 
     return ok({
@@ -448,7 +564,141 @@ export class InspectionsService {
     });
   }
 
+  private sessionInclude() {
+    return {
+      findings: true,
+      photos: true,
+      booking: { include: { items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } } } },
+      garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
+      inspector: { include: { profile: true } },
+    } satisfies Prisma.InspectionSessionInclude;
+  }
 
+  private async isBookingFullyInspected(tx: Prisma.TransactionClient, bookingId: string) {
+    const booking = await tx.booking.findUnique({
+      where: { id: bookingId },
+      include: { items: true },
+    });
+    if (!booking || booking.items.length === 0) return false;
+
+    const assetIds = booking.items
+      .map((item) => item.garmentAssetId)
+      .filter((assetId): assetId is string => Boolean(assetId));
+    const distinctAssetIds = new Set(assetIds);
+    if (assetIds.length !== booking.items.length || distinctAssetIds.size !== booking.items.length) {
+      return false;
+    }
+
+    const completedSessions = await tx.inspectionSession.findMany({
+      where: {
+        bookingId,
+        status: InspectionStatus.completed,
+        garmentAssetId: { in: [...distinctAssetIds] },
+      },
+      select: { garmentAssetId: true },
+    });
+    const inspectedAssetIds = new Set(completedSessions.map((session) => session.garmentAssetId));
+    return inspectedAssetIds.size === distinctAssetIds.size;
+  }
+
+  private async finalizeBookingInspection(
+    tx: Prisma.TransactionClient,
+    input: {
+      bookingId: string;
+      bookingStatus: BookingStatus;
+      depositTotal: number;
+      penaltyTotal: number;
+      staffId: string;
+    },
+  ) {
+    const refundAmount = Math.max(0, input.depositTotal - input.penaltyTotal);
+    const existingRefund = await tx.refund.findFirst({
+      where: { bookingId: input.bookingId, status: { in: ACTIVE_REFUND_STATUSES } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    let hasRefundToApprove =
+      existingRefund?.status === PaymentStatus.pending || existingRefund?.status === PaymentStatus.refunding;
+    const hasCompletedRefund =
+      existingRefund?.status === PaymentStatus.refunded || existingRefund?.status === PaymentStatus.partially_refunded;
+
+    if (refundAmount > 0 && !existingRefund) {
+      const payment = await this.findAuthoritativePaidPayment(tx, input.bookingId);
+      if (!payment) {
+        throw new BadRequestException("Không tìm thấy payment đã thanh toán để xác định phương thức hoàn cọc.");
+      }
+      const refundMethod = this.refundMethodForPayment(payment);
+      if (!refundMethod) {
+        throw new BadRequestException(`Không hỗ trợ phương thức thanh toán '${payment.paymentMethod ?? payment.provider}' để tự động hoàn cọc.`);
+      }
+
+      const createdRefund = await tx.refund.create({
+        data: {
+          bookingId: input.bookingId,
+          paymentId: payment.id,
+          amount: refundAmount,
+          status: PaymentStatus.pending,
+          refund_method: refundMethod,
+          reason: "Tự động tạo sau khi kiểm tra toàn bộ trang phục",
+          processed_by: input.staffId,
+        },
+      });
+      await tx.financialTransaction.create({
+        data: {
+          bookingId: input.bookingId,
+          refundId: createdRefund.id,
+          transactionType: refundMethod === "cash" ? "refund_cash_pending" : "refund_bank_transfer_pending",
+          amount: refundAmount,
+          note: `Tạo yêu cầu hoàn cọc tự động sau kiểm tra. Số tiền: ${refundAmount.toLocaleString("vi-VN")}đ`,
+        },
+      });
+      hasRefundToApprove = true;
+    }
+
+    const nextStatus = hasCompletedRefund || (!hasRefundToApprove && refundAmount <= 0)
+      ? BookingStatus.completed
+      : BookingStatus.refund_pending;
+
+    if (input.bookingStatus !== nextStatus) {
+      const claimed = await tx.booking.updateMany({
+        where: { id: input.bookingId, status: input.bookingStatus },
+        data: { status: nextStatus },
+      });
+      if (claimed.count !== 1) throw new ConflictException("Booking status changed while completing inspection.");
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId: input.bookingId,
+          fromStatus: input.bookingStatus,
+          toStatus: nextStatus,
+          changedBy: input.staffId,
+          note: nextStatus === BookingStatus.refund_pending
+            ? "Kiểm tra xong — đã tạo yêu cầu hoàn cọc, chờ quản lý duyệt"
+            : "All items inspected",
+        },
+      });
+    }
+  }
+
+  private async findAuthoritativePaidPayment(tx: Prisma.TransactionClient, bookingId: string) {
+    return tx.payment.findFirst({
+      where: { bookingId, status: PaymentStatus.paid },
+      orderBy: [
+        { depositAmount: "desc" },
+        { paidAt: "desc" },
+        { createdAt: "desc" },
+      ],
+      select: { id: true, paymentMethod: true, provider: true },
+    });
+  }
+
+  private refundMethodForPayment(payment: { paymentMethod: string | null; provider: string }) {
+    const method = payment.paymentMethod?.toLowerCase() ?? "";
+    const provider = payment.provider?.toLowerCase() ?? "";
+    if (method === "cash") return "cash";
+    if (["bank_transfer", "online", "qr", "qr_code", "payos"].includes(method)) return "bank_transfer";
+    if (["online", "payos"].includes(provider)) return "bank_transfer";
+    return null;
+  }
 
   // ── Serialization helpers ──────────────────────────────────────────────────
 

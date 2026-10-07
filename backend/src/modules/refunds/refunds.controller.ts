@@ -17,6 +17,7 @@ import { RefundsService } from "./refunds.service";
 import { CreateRefundDto } from "./dto/create-refund.dto";
 import { UpdateRefundStatusDto } from "./dto/update-refund.dto";
 import { RejectRefundDto } from "./dto/reject-refund.dto";
+import { UpdateRefundDetailsDto } from "./dto/update-refund-details.dto";
 
 @Controller("refunds")
 export class RefundsController {
@@ -47,6 +48,17 @@ export class RefundsController {
     @Param("bookingId", ParseUUIDPipe) bookingId: string,
   ) {
     return this.refundsService.closeWithoutRefund(bookingId, user.id);
+  }
+
+  @Patch(":id/details")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  updateDetails(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: UpdateRefundDetailsDto,
+  ) {
+    return this.refundsService.updateDetails(id, body, user.id);
   }
 
   @Patch(":id/approve")

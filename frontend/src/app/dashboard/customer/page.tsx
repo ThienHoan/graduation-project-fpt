@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getMyBookings, cancelBooking, getCustomerRefund, getDeliveryTrack } from "@/lib/api";
 import type { BookingResponse, CustomerRefundResponse, DeliveryTrackData } from "@/lib/api";
 import { DeliveryTracker } from "@/components/location/delivery-tracker";
@@ -12,6 +12,7 @@ import { STATUS_LABELS, statusBadgeClass, statusOf, ACTIVE_BOOKING_STATUSES, CAN
 import { ReviewModal } from "@/components/customer/review-modal";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { ConfirmModal } from "@/components/heritage/ui";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 
 const HISTORY_PAGE_SIZE = 5;
 
@@ -82,31 +83,37 @@ export default function CustomerDashboardPage() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
+  const refreshBookings = useCallback(async () => {
+    const res = await getMyBookings();
+    if (!res.success || !res.data) return;
+    const data = res.data;
+    setBookings(data);
+    // Fetch refund status for completed bookings (kèm đơn đang chờ hoàn cọc)
+    const completedBookingIds = data
+      .filter((b) => b.status === "completed" || b.status === "refund_pending")
+      .map((b) => b.id);
+    completedBookingIds.forEach((bookingId) => {
+      getCustomerRefund(bookingId).then((refundRes) => {
+        if (refundRes.success && refundRes.data && refundRes.data.length > 0) {
+          setRefundMap((prev) => ({ ...prev, [bookingId]: refundRes.data![0] }));
+        } else {
+          setRefundMap((prev) => ({ ...prev, [bookingId]: null }));
+        }
+      });
+    });
+  }, []);
+
   useEffect(() => {
     const session = readStoredSession();
     if (session?.user?.fullName) setUserName(session.user.fullName);
     else if (session?.user?.email) setUserName(session.user.email.split("@")[0]);
 
-    getMyBookings().then((res) => {
-      if (res.success && res.data) {
-        const data = res.data;
-        setBookings(data);
-        // Fetch refund status for completed bookings (kèm đơn đang chờ hoàn cọc)
-        const completedBookingIds = data
-          .filter((b) => b.status === "completed" || b.status === "refund_pending")
-          .map((b) => b.id);
-        completedBookingIds.forEach((bookingId) => {
-          getCustomerRefund(bookingId).then((refundRes) => {
-            if (refundRes.success && refundRes.data && refundRes.data.length > 0) {
-              setRefundMap((prev) => ({ ...prev, [bookingId]: refundRes.data![0] }));
-            } else {
-              setRefundMap((prev) => ({ ...prev, [bookingId]: null }));
-            }
-          });
-        });
-      }
-    }).finally(() => setLoading(false));
-  }, []);
+    refreshBookings().finally(() => setLoading(false));
+  }, [refreshBookings]);
+
+  // Realtime: đơn của khách đổi trạng thái (duyệt, hoàn cọc, đánh dấu quá hạn) là
+  // dashboard tự cập nhật, không cần reload trang.
+  useRealtimeInvalidation({ bookings: refreshBookings, refunds: refreshBookings });
 
   async function handleCancel(id: string) {
     setCancellingId(id);
@@ -160,6 +167,9 @@ export default function CustomerDashboardPage() {
   );
   const activeBooking = sortedBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
   const history = sortedBookings.filter((b) => !ACTIVE_BOOKING_STATUSES.has(b.status));
+  // Đơn khách còn giữ đồ mà đã quá hạn: vẫn nằm trong history, nhưng phải cảnh báo
+  // riêng ở đầu mục — số ngày trễ và phí phạt tăng mỗi ngày.
+  const overdueBookings = sortedBookings.filter((b) => (b.overdueDays ?? 0) > 0);
 
   // Phân trang lịch sử thuê
   const totalHistoryPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
@@ -364,6 +374,27 @@ export default function CustomerDashboardPage() {
           {/* Lịch sử */}
           <section>
             <h2 className="mb-6 font-display text-4xl text-ink">Lịch sử thuê trang phục</h2>
+            {overdueBookings.length > 0 && (
+              <div role="alert" className="mb-6 space-y-3">
+                {overdueBookings.map((b) => (
+                  <div
+                    key={b.id}
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+                  >
+                    <p className="flex items-center gap-2 font-semibold">
+                      <span className="material-symbols-outlined text-[18px]">warning</span>
+                      Đơn {b.id.slice(0, 8).toUpperCase()} đã quá hạn {b.overdueDays} ngày
+                    </p>
+                    <p className="mt-1 text-red-700">
+                      Ngày trả dự kiến: {formatDate(b.rentalEndDate)} · Phí quá hạn hiện tại:{" "}
+                      <span className="font-semibold">{formatVND(b.overdueAmount ?? 0)}</span> (
+                      {(b.overdueFeePerDay ?? 0).toLocaleString("vi-VN")}đ/ngày). Phí tăng thêm mỗi ngày khách chưa
+                      trả đồ.
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
             {history.length === 0 && !loading ? (
               <p className="text-sm text-stone-400">Chưa có lịch sử thuê.</p>
             ) : (

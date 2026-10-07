@@ -373,6 +373,15 @@ export default function StaffBookingDetailPage() {
               {formatVND(Math.max(0, booking.depositTotal - (booking.penaltyTotal ?? 0)))}
             </p>
           </div>
+          {(booking.overdueDays ?? 0) > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Quá hạn</p>
+              <p className="mt-1 text-lg font-bold text-red-600">{booking.overdueDays} ngày</p>
+              <p className="text-xs text-stone-500">
+                Phí quá hạn {formatVND(booking.overdueAmount ?? 0)} ({booking.overdueFeePerDay?.toLocaleString("vi-VN")}đ/ngày)
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

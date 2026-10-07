@@ -9,6 +9,7 @@ import {
   type NotificationItem,
 } from "@/lib/api";
 import { normalizeStatusInText } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 
 const POLL_INTERVAL_MS = 30_000;
 const FETCH_LIMIT = 20;
@@ -44,6 +45,9 @@ export function NotificationBell({ notificationsHref }: { notificationsHref?: st
     const timer = setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, []);
+
+  // Realtime: có thông báo mới thì lấy lại ngay, không chờ tới lần poll kế tiếp.
+  useRealtimeInvalidation({ notifications: load });
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

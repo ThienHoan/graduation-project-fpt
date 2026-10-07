@@ -7,6 +7,10 @@ vi.mock("nodemailer", () => ({
   })),
 }));
 
+const realtimeMock = {
+  notificationCreated: vi.fn(),
+} as never;
+
 describe("NotificationsService", () => {
   it("sends SMTP emails when a provider is configured", async () => {
     const prisma = {
@@ -58,7 +62,7 @@ describe("NotificationsService", () => {
       }),
     };
 
-    const service = new NotificationsService(prisma as never, configService as never);
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
     const result = await service.sendAuthVerificationEmail({
       email: "customer@example.com",
       code: "123456",
@@ -90,8 +94,8 @@ describe("NotificationsService", () => {
         create: vi.fn().mockResolvedValue({
           id: "notification-1",
           userId: "user-1",
-          title: "Ðon thuê m?i",
-          body: "Ðon thuê BK-1 dã du?c t?o.",
+          title: "ï¿½on thuï¿½ m?i",
+          body: "ï¿½on thuï¿½ BK-1 dï¿½ du?c t?o.",
           readAt: null,
           createdAt: new Date("2026-06-20T00:00:00.000Z"),
         }),
@@ -105,7 +109,7 @@ describe("NotificationsService", () => {
       },
     };
     const configService = { get: vi.fn(() => undefined) };
-    const service = new NotificationsService(prisma as never, configService as never);
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
 
     const result = await service.notifyUser({
       userId: "user-1",
@@ -145,7 +149,7 @@ describe("NotificationsService", () => {
       },
     };
     const configService = { get: vi.fn(() => undefined) };
-    const service = new NotificationsService(prisma as never, configService as never);
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
 
     const result = await service.updatePreferences("user-1", {
       emailEnabled: false,

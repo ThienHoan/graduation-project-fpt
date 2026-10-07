@@ -17,6 +17,7 @@ import { RefundsModule } from "./modules/refunds/refunds.module";
 import { UsersModule } from "./modules/users/users.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { ChatModule } from "./modules/chat/chat.module";
+import { RealtimeModule } from "./modules/realtime/realtime.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 
 @Module({
@@ -39,6 +40,7 @@ import { ReviewsModule } from "./modules/reviews/reviews.module";
     RefundsModule,
     AiModule,
     ChatModule,
+    RealtimeModule,
     ReviewsModule,
   ],
 })

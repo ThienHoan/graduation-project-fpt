@@ -1,10 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { AppRole, AssetStatus, BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
+import { AppRole, AssetStatus, BookingStatus, InspectionStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PricingService } from "../pricing/pricing.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { LocationsService } from "../locations/locations.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 import type { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
@@ -36,6 +37,9 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const VN_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const OVERDUE_FEE_PER_DAY = 10_000;
 const OVERDUE_PENALTY_REASON = "Phí quá hạn trả đồ (10.000đ/ngày)";
+// Trạng thái mà đơn vẫn còn giữ đồ → ngày trễ vẫn có nghĩa và phí vẫn còn chạy.
+// Đã trả / đã hủy / đã hoàn tất thì ngày trễ không còn ý nghĩa nữa.
+const OVERDUE_ELIGIBLE_STATUSES: BookingStatus[] = [BookingStatus.renting, BookingStatus.overdue];
 
 const RELEASED_STATUSES: BookingStatus[] = [
   BookingStatus.cancelled,
@@ -75,13 +79,6 @@ const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
   [AssetStatus.lost]:            [],
 };
 
-const ASSET_HOLDING_STATUSES: AssetStatus[] = [
-  AssetStatus.reserved,
-  AssetStatus.rented,
-  AssetStatus.inspection_pending,
-  AssetStatus.maintenance,
-];
-
 const RENTABLE_CAPACITY_STATUSES: AssetStatus[] = [
   AssetStatus.available,
   AssetStatus.reserved,
@@ -107,8 +104,6 @@ const OPERATIONAL_ROLES: AppRole[] = [
   AppRole.admin,
 ];
 
-const MAX_SERIALIZABLE_RETRIES = 3;
-
 const STAFF_ALLOWED_TRANSITIONS: Partial<Record<BookingStatus, BookingStatus[]>> = {
   [BookingStatus.pending_confirmation]: [BookingStatus.awaiting_payment, BookingStatus.confirmed, BookingStatus.rejected],
   [BookingStatus.confirmed]: [BookingStatus.awaiting_payment, BookingStatus.cancelled],
@@ -129,6 +124,7 @@ export class BookingsService {
     private readonly notificationsService: NotificationsService,
     private readonly locations: LocationsService,
     private readonly pricing: PricingService,
+    private readonly realtime: RealtimeService,
   ) { }
 
   private parseDateRange(startDate: string, endDate: string) {
@@ -195,26 +191,6 @@ export class BookingsService {
       select: { email: true, profile: { select: { fullName: true } } },
     });
     return user?.profile?.fullName ?? user?.email ?? null;
-  }
-
-  private isSerializationFailure(error: unknown): boolean {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
-  }
-
-  private async runSerializable<T>(operation: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    for (let attempt = 0; attempt < MAX_SERIALIZABLE_RETRIES; attempt += 1) {
-      try {
-        return await this.prisma.$transaction(operation, {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        });
-      } catch (error) {
-        if (!this.isSerializationFailure(error) || attempt === MAX_SERIALIZABLE_RETRIES - 1) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
-      }
-    }
-    throw new Error("Serializable transaction failed unexpectedly.");
   }
 
   /**
@@ -354,7 +330,7 @@ export class BookingsService {
 
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
-    const booking = await this.runSerializable(async (tx) => {
+    const booking = await this.prisma.runSerializable(async (tx) => {
         for (const [sizeId, requestedQty] of requestedQtyBySize) {
           const { capacity, committed } = await this.computeSizeAvailability(
             tx,
@@ -539,6 +515,13 @@ export class BookingsService {
       note: "Khách hàng tự hủy đơn.",
     });
 
+    this.realtime.bookingChanged({
+      id: updated.id,
+      bookingId: updated.id,
+      status: BookingStatus.cancelled,
+    });
+    this.realtime.assetChanged({ bookingId: updated.id });
+
     return ok(this.serializeBooking(updated));
   }
 
@@ -657,13 +640,23 @@ export class BookingsService {
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
         refunds: { orderBy: { createdAt: "desc" }, take: 1 },
+        inspections: {
+          where: { status: InspectionStatus.completed },
+          select: { garmentAssetId: true },
+        },
       },
     });
     return ok(bookings.map((b) => ({
       ...this.serializeStaffBooking(b),
+      allAssignedAssetsInspected: this.hasCompletedInspectionForEveryAssignedAsset(b),
       refunds: b.refunds.map((r) => ({
         id: r.id, amount: Number(r.amount), status: r.status,
-        refundMethod: r.refund_method, createdAt: r.createdAt.toISOString(), updatedAt: r.updated_at.toISOString(),
+        refundMethod: r.refund_method,
+        bankName: r.bank_name,
+        bankAccountNumber: r.bank_account_number,
+        bankAccountHolder: r.bank_account_holder,
+        bankDetailsComplete: Boolean(r.bank_name?.trim() && r.bank_account_number?.trim() && r.bank_account_holder?.trim()),
+        createdAt: r.createdAt.toISOString(), updatedAt: r.updated_at.toISOString(),
       })),
     })));
   }
@@ -783,70 +776,105 @@ export class BookingsService {
   }
 
   async advanceStatus(id: string, dto: UpdateBookingStatusDto, changedBy?: string) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id },
-      include: { items: true, payments: true },
-    });
-    if (!booking) throw new NotFoundException("Booking not found.");
+    let notificationCustomerId: string | null = null;
+    let notificationTargetStatus: BookingStatus | null = null;
+    let notifyManagerConfirmed = false;
 
-    const allowed = STAFF_ALLOWED_TRANSITIONS[booking.status];
-    if (!allowed?.includes(dto.status)) {
-      throw new BadRequestException(`Cannot transition from '${booking.status}' to '${dto.status}'.`);
-    }
-
-    if (ASSET_REQUIRED_STATUSES.includes(dto.status)) {
-      const itemCount = booking.items.length;
-      const assignedCount = booking.items.filter((i) => Boolean(i.garmentAssetId)).length;
-      if (itemCount === 0 || assignedCount < itemCount) {
-        throw new BadRequestException(
-          `All booking items must have an assigned asset before transitioning to '${dto.status}'. (${assignedCount}/${itemCount})`,
-        );
-      }
-    }
-
-    if (dto.status === BookingStatus.completed && booking.status === BookingStatus.inspection_pending) {
-      throw new BadRequestException("Cannot directly complete a booking during inspection.");
-    }
-
-    if (dto.status === BookingStatus.paid) {
-      throw new BadRequestException("Cannot manually set booking to 'paid'. Use the mark-paid endpoint.");
-    }
-
-    // Đơn đã có payment thành công (VD: thanh toán QR trước khi xác nhận)
-    // thì bỏ qua bước chờ thanh toán, nhảy thẳng sang 'paid'.
-    // Đơn chưa thanh toán (tiền mặt / QR chưa quét) vẫn phải qua chờ thanh toán.
-    const alreadyPaid = booking.payments.some((p) => p.status === PaymentStatus.paid);
-    const skipAwaitingPayment = dto.status === BookingStatus.awaiting_payment && alreadyPaid;
-    const targetStatus = skipAwaitingPayment ? BookingStatus.paid : dto.status;
-
-    if (targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup") {
-      await this.prisma.booking.update({
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
         where: { id },
-        data: { paymentDueAt: new Date(Date.now() + 2 * 60 * 60 * 1000) },
+        include: {
+          items: true,
+          payments: true,
+          penalties: true,
+        },
       });
-    }
+      if (!booking) throw new NotFoundException("Booking not found.");
 
-    // Chốt phí quá hạn (10.000đ/ngày) tại thời điểm khách trả đồ
-    if (targetStatus === BookingStatus.returned) {
-      await this.applyOverdueFee(id);
-    }
+      const allowed = STAFF_ALLOWED_TRANSITIONS[booking.status];
+      if (!allowed?.includes(dto.status)) {
+        throw new BadRequestException(`Cannot transition from '${booking.status}' to '${dto.status}'.`);
+      }
 
-    const assetIds = booking.items
-      .map((item) => item.garmentAssetId)
-      .filter((assetId): assetId is string => Boolean(assetId));
+      if (ASSET_REQUIRED_STATUSES.includes(dto.status)) {
+        const itemCount = booking.items.length;
+        const assignedCount = booking.items.filter((i) => Boolean(i.garmentAssetId)).length;
+        if (itemCount === 0 || assignedCount < itemCount) {
+          throw new BadRequestException(
+            `All booking items must have an assigned asset before transitioning to '${dto.status}'. (${assignedCount}/${itemCount})`,
+          );
+        }
+      }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+      if (dto.status === BookingStatus.completed && booking.status === BookingStatus.inspection_pending) {
+        throw new BadRequestException("Cannot directly complete a booking during inspection.");
+      }
+
+      if (dto.status === BookingStatus.paid) {
+        throw new BadRequestException("Cannot manually set booking to 'paid'. Use the mark-paid endpoint.");
+      }
+
+      const alreadyPaid = booking.payments.some((p) => p.status === PaymentStatus.paid);
+      const skipAwaitingPayment = dto.status === BookingStatus.awaiting_payment && alreadyPaid;
+      const targetStatus = skipAwaitingPayment ? BookingStatus.paid : dto.status;
+      const assetIds = booking.items
+        .map((item) => item.garmentAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId));
+
+      const claimedBooking = await tx.booking.updateMany({
+        where: { id, status: booking.status },
+        data: {
+          status: targetStatus,
+          ...(targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup"
+            ? { paymentDueAt: new Date(Date.now() + 2 * 60 * 60 * 1000) }
+            : {}),
+          ...(targetStatus === BookingStatus.paid ? { paymentDueAt: null } : {}),
+          ...(dto.note ? { note: dto.note } : {}),
+        },
+      });
+      if (claimedBooking.count !== 1) {
+        throw new ConflictException("Booking status was already changed by another request.");
+      }
+
       if (assetIds.length > 0) {
         if (targetStatus === BookingStatus.renting) {
-          await tx.garmentAsset.updateMany({ where: { id: { in: assetIds } }, data: { status: AssetStatus.rented } });
+          const claimedAssets = await tx.garmentAsset.updateMany({
+            where: { id: { in: assetIds }, status: AssetStatus.reserved },
+            data: { status: AssetStatus.rented },
+          });
+          if (claimedAssets.count !== assetIds.length) {
+            throw new ConflictException("Some assets are no longer reserved for this booking.");
+          }
         }
-        if (targetStatus === BookingStatus.returned || targetStatus === BookingStatus.inspection_pending) {
-          await tx.garmentAsset.updateMany({ where: { id: { in: assetIds } }, data: { status: AssetStatus.inspection_pending } });
+        if (targetStatus === BookingStatus.returned) {
+          const claimedAssets = await tx.garmentAsset.updateMany({
+            where: { id: { in: assetIds }, status: AssetStatus.rented },
+            data: { status: AssetStatus.inspection_pending },
+          });
+          if (claimedAssets.count !== assetIds.length) {
+            throw new ConflictException("Some assets are no longer rented for this booking.");
+          }
+          await this.applyOverdueFeeTx(tx, booking.id);
+        }
+        if (targetStatus === BookingStatus.inspection_pending) {
+          const pendingAssets = await tx.garmentAsset.count({
+            where: { id: { in: assetIds }, status: AssetStatus.inspection_pending },
+          });
+          if (pendingAssets !== assetIds.length) {
+            throw new ConflictException("Some assets are not ready for inspection.");
+          }
         }
         if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
-          await tx.garmentAsset.updateMany({ where: { id: { in: assetIds } }, data: { status: AssetStatus.available } });
+          const claimedAssets = await tx.garmentAsset.updateMany({
+            where: { id: { in: assetIds }, status: AssetStatus.reserved },
+            data: { status: AssetStatus.available },
+          });
+          if (claimedAssets.count !== assetIds.length) {
+            throw new ConflictException("Some assets are no longer reserved for this booking.");
+          }
         }
       }
+
       await tx.bookingStatusHistory.create({
         data: {
           bookingId: id,
@@ -856,13 +884,9 @@ export class BookingsService {
           note: dto.note ?? (skipAwaitingPayment ? "Đã thanh toán online trước — bỏ qua bước chờ thanh toán" : null),
         },
       });
-      return tx.booking.update({
+
+      const saved = await tx.booking.findUnique({
         where: { id },
-        data: {
-          status: targetStatus,
-          ...(targetStatus === BookingStatus.paid ? { paymentDueAt: null } : {}),
-          ...(dto.note ? { note: dto.note } : {}),
-        },
         include: {
           items: {
             include: {
@@ -873,26 +897,48 @@ export class BookingsService {
           payments: true,
         },
       });
+      if (!saved) throw new NotFoundException("Booking not found.");
+
+      notificationCustomerId = booking.customerId;
+      notificationTargetStatus = targetStatus;
+      notifyManagerConfirmed = targetStatus === BookingStatus.confirmed;
+      return saved;
     });
 
-    await this.notificationsService.sendBookingNotification({
-      userId: booking.customerId,
-      templateKey: "booking.status_changed",
-      bookingId: updated.id,
-      garmentName: updated.items[0]?.garment_sizes?.garments?.name ?? null,
-      startDate: updated.rentalStartDate.toISOString().slice(0, 10),
-      endDate: updated.rentalEndDate.toISOString().slice(0, 10),
-      statusLabel: BOOKING_STATUS_LABELS[targetStatus] ?? targetStatus,
-      note: dto.note ?? null,
-    });
+    if (notificationCustomerId && notificationTargetStatus) {
+      await this.notificationsService.sendBookingNotification({
+        userId: notificationCustomerId,
+        templateKey: "booking.status_changed",
+        bookingId: updated.id,
+        garmentName: updated.items[0]?.garment_sizes?.garments?.name ?? null,
+        startDate: updated.rentalStartDate.toISOString().slice(0, 10),
+        endDate: updated.rentalEndDate.toISOString().slice(0, 10),
+        statusLabel: BOOKING_STATUS_LABELS[notificationTargetStatus] ?? notificationTargetStatus,
+        note: dto.note ?? null,
+      });
+    }
 
-    if (targetStatus === BookingStatus.confirmed) {
+    if (notifyManagerConfirmed) {
       await this.notificationsService.notifyStaffBooking({
         templateKey: "booking.staff.confirmed",
         bookingId: updated.id,
         customerName: await this.resolveCustomerName(updated.customerId),
         garmentName: updated.items[0]?.garment_sizes?.garments?.name ?? null,
         roles: [AppRole.manager_owner],
+      });
+    }
+
+    this.realtime.bookingChanged({
+      id: updated.id,
+      bookingId: updated.id,
+      status: updated.status,
+    });
+    this.realtime.assetChanged({ bookingId: updated.id });
+    if (notificationCustomerId) {
+      this.realtime.bookingChangedForCustomer(notificationCustomerId, {
+        id: updated.id,
+        bookingId: updated.id,
+        status: updated.status,
       });
     }
 
@@ -908,7 +954,7 @@ export class BookingsService {
     ];
     let assignedAssetCode: string | null = null;
 
-    await this.runSerializable(async (tx) => {
+    await this.prisma.runSerializable(async (tx) => {
         const booking = await tx.booking.findUnique({
           where: { id: bookingId },
           include: { items: true },
@@ -1020,7 +1066,7 @@ export class BookingsService {
     dto: ConfirmHandoverDto,
     actor: Pick<AuthenticatedUser, "id" | "role">,
   ) {
-    const updated = await this.runSerializable(async (tx) => {
+    const updated = await this.prisma.runSerializable(async (tx) => {
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         include: { items: { include: { garmentAsset: true } } },
@@ -1180,6 +1226,19 @@ export class BookingsService {
       endDate: updated!.rentalEndDate.toISOString().slice(0, 10),
     });
 
+    this.realtime.bookingChanged({
+      id: updated!.id,
+      bookingId: updated!.id,
+      status: BookingStatus.paid,
+    });
+    // Staff ghi nhận thu tiền trên đơn của khách → khách đang mở dashboard
+    // phải thấy trạng thái mới mà không cần reload.
+    this.realtime.bookingChangedForCustomer(updated!.customerId, {
+      id: updated!.id,
+      bookingId: updated!.id,
+      status: BookingStatus.paid,
+    });
+
     return ok(this.serializeBooking(updated!));
   }
 
@@ -1227,6 +1286,12 @@ export class BookingsService {
       });
       results.push({ bookingId: booking.id, released: booking.items.filter((i) => i.garmentAssetId).length });
 
+      this.realtime.bookingChanged({
+        id: booking.id,
+        bookingId: booking.id,
+        status: BookingStatus.cancelled,
+      });
+      this.realtime.assetChanged({ bookingId: booking.id });
     }
     return ok({ expiredCount: results.length, releasedAssets: results.reduce((s, r) => s + r.released, 0), bookings: results.map((r) => r.bookingId) });
   }
@@ -1235,8 +1300,8 @@ export class BookingsService {
 
   // Ghi nhận phí quá hạn 10.000đ/ngày cho một booking (idempotent — gọi lại chỉ
   // cập nhật số tiền theo số ngày quá hạn hiện tại, không tạo bản ghi trùng).
-  async applyOverdueFee(bookingId: string) {
-    const booking = await this.prisma.booking.findUnique({
+  private async applyOverdueFeeTx(tx: Prisma.TransactionClient, bookingId: string) {
+    const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: { penalties: true },
     });
@@ -1248,20 +1313,24 @@ export class BookingsService {
 
     const existing = booking.penalties.find((p) => p.reason === OVERDUE_PENALTY_REASON);
     const previous = existing ? Number(existing.amount) : 0;
-    if (previous !== amount) {
-      await this.prisma.$transaction(async (tx) => {
-        if (existing) {
-          await tx.penalty.update({ where: { id: existing.id }, data: { amount } });
-        } else {
-          await tx.penalty.create({ data: { bookingId, reason: OVERDUE_PENALTY_REASON, amount } });
-        }
-        await tx.booking.update({
-          where: { id: bookingId },
-          data: { penaltyTotal: { increment: amount - previous } },
-        });
+    const delta = amount - previous;
+    if (delta !== 0) {
+      if (existing) {
+        await tx.penalty.update({ where: { id: existing.id }, data: { amount } });
+      } else {
+        await tx.penalty.create({ data: { bookingId, reason: OVERDUE_PENALTY_REASON, amount } });
+      }
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { penaltyTotal: { increment: delta } },
       });
     }
+
     return { bookingId, days, amount };
+  }
+
+  async applyOverdueFee(bookingId: string) {
+    return this.prisma.runSerializable((tx) => this.applyOverdueFeeTx(tx, bookingId));
   }
 
   // Chạy lúc 12h00 ngày cuối của kỳ thuê: nhắc khách trả đồ trước 00h00 hôm sau.
@@ -1292,56 +1361,126 @@ export class BookingsService {
     const today = new Date(this.vnTodayStr());
     const toMark = await this.prisma.booking.findMany({
       where: { status: BookingStatus.renting, rentalEndDate: { lt: today } },
-      include: { items: { include: { garment_sizes: { include: { garments: true } } } } },
+      select: { id: true },
     });
 
-    for (const booking of toMark) {
-      await this.prisma.$transaction([
-        this.prisma.bookingStatusHistory.create({
+    const newlyOverdue: {
+      id: string;
+      customerId: string;
+      rentalStartDate: Date;
+      rentalEndDate: Date;
+      garmentName: string | null;
+    }[] = [];
+    const fees = new Map<string, { days: number; amount: number }>();
+
+    for (const candidate of toMark) {
+      const result = await this.prisma.runSerializable(async (tx) => {
+        const booking = await tx.booking.findUnique({
+          where: { id: candidate.id },
+          include: { items: { include: { garment_sizes: { include: { garments: true } } } } },
+        });
+        if (!booking || booking.status !== BookingStatus.renting) return null;
+
+        const claimed = await tx.booking.updateMany({
+          where: { id: booking.id, status: BookingStatus.renting },
+          data: { status: BookingStatus.overdue },
+        });
+        if (claimed.count !== 1) return null;
+
+        await tx.bookingStatusHistory.create({
           data: {
             bookingId: booking.id,
             fromStatus: BookingStatus.renting,
             toStatus: BookingStatus.overdue,
             note: "Tự động đánh dấu quá hạn — khách chưa trả đồ sau ngày kết thúc thuê",
           },
-        }),
-        this.prisma.booking.update({ where: { id: booking.id }, data: { status: BookingStatus.overdue } }),
-      ]);
+        });
+        const fee = await this.applyOverdueFeeTx(tx, booking.id);
+        return {
+          booking: {
+            id: booking.id,
+            customerId: booking.customerId,
+            rentalStartDate: booking.rentalStartDate,
+            rentalEndDate: booking.rentalEndDate,
+            garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          },
+          fee,
+        };
+      });
+      if (!result) continue;
+      newlyOverdue.push(result.booking);
+      if (result.fee) fees.set(result.booking.id, { days: result.fee.days, amount: result.fee.amount });
     }
 
     // Cộng dồn phí phạt cho tất cả đơn đang quá hạn (kể cả đơn staff đánh dấu tay)
     const overdueBookings = await this.prisma.booking.findMany({
       where: { status: BookingStatus.overdue },
-      select: { id: true },
+      select: { id: true, customerId: true },
     });
-    const fees = new Map<string, { days: number; amount: number }>();
-    for (const { id } of overdueBookings) {
+    for (const { id, customerId } of overdueBookings) {
       const fee = await this.applyOverdueFee(id);
-      if (fee) fees.set(id, { days: fee.days, amount: fee.amount });
+      if (!fee) continue;
+      fees.set(id, { days: fee.days, amount: fee.amount });
+      // Đơn đã quá hạn từ hôm trước vẫn tăng phí mỗi ngày → phải báo chủ đơn
+      // để ô "quá hạn N ngày" và phí phạt trên dashboard khách tự cập nhật.
+      if (!newlyOverdue.some((b) => b.id === id)) {
+        this.realtime.bookingChangedForCustomer(customerId, {
+          id,
+          bookingId: id,
+          status: BookingStatus.overdue,
+        });
+      }
     }
 
     // Chỉ thông báo cho các đơn vừa bị đánh dấu quá hạn
-    for (const booking of toMark) {
+    for (const booking of newlyOverdue) {
       const fee = fees.get(booking.id);
       await this.notificationsService.sendBookingNotification({
         userId: booking.customerId,
         templateKey: "booking.overdue",
         bookingId: booking.id,
-        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+        garmentName: booking.garmentName,
         startDate: booking.rentalStartDate.toISOString().slice(0, 10),
         endDate: booking.rentalEndDate.toISOString().slice(0, 10),
         amount: (fee?.amount ?? OVERDUE_FEE_PER_DAY).toLocaleString("vi-VN") + " đ",
+        overdueDays: fee?.days ?? 1,
+      });
+    }
+
+    for (const booking of newlyOverdue) {
+      this.realtime.bookingChanged({
+        id: booking.id,
+        bookingId: booking.id,
+        status: BookingStatus.overdue,
+      });
+      // Phí quá hạn vừa tăng → khách phải thấy ngay số ngày trễ mà không cần reload.
+      this.realtime.bookingChangedForCustomer(booking.customerId, {
+        id: booking.id,
+        bookingId: booking.id,
+        status: BookingStatus.overdue,
       });
     }
 
     return ok({
-      markedCount: toMark.length,
+      markedCount: newlyOverdue.length,
       accruedCount: fees.size,
-      bookings: toMark.map((b) => b.id),
+      bookings: newlyOverdue.map((b) => b.id),
     });
   }
 
   // ── Serialization ──────────────────────────────────────────────────────────
+
+  private hasCompletedInspectionForEveryAssignedAsset(booking: any) {
+    const assetIds = (booking.items ?? [])
+      .map((item: any) => item.garmentAssetId)
+      .filter((assetId: string | null | undefined): assetId is string => Boolean(assetId));
+    const distinctAssetIds = new Set(assetIds);
+    if (assetIds.length === 0 || assetIds.length !== (booking.items ?? []).length || distinctAssetIds.size !== assetIds.length) {
+      return false;
+    }
+    const inspectedAssetIds = new Set((booking.inspections ?? []).map((session: any) => session.garmentAssetId));
+    return [...distinctAssetIds].every((assetId) => inspectedAssetIds.has(assetId));
+  }
 
   private serializeStaffBooking(booking: any) {
     return {
@@ -1359,6 +1498,10 @@ export class BookingsService {
         Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())) / MS_PER_DAY,
     ) + 1;
 
+    // Chỉ đơn còn giữ đồ mới "quá hạn" — đã trả/đã huỷ thì ngày trễ không còn ý nghĩa.
+    const overdueDays = this.overdueDays(booking.rentalEndDate);
+    const isOverdue = overdueDays > 0 && OVERDUE_ELIGIBLE_STATUSES.includes(booking.status);
+
     return {
       id: booking.id,
       status: booking.status,
@@ -1370,6 +1513,9 @@ export class BookingsService {
       depositTotal: Number(booking.depositTotal),
       shippingFee: Number(booking.shippingFee ?? 0),
       penaltyTotal: Number(booking.penaltyTotal ?? 0),
+      overdueDays: isOverdue ? overdueDays : 0,
+      overdueFeePerDay: OVERDUE_FEE_PER_DAY,
+      overdueAmount: isOverdue ? overdueDays * OVERDUE_FEE_PER_DAY : 0,
       note: booking.note,
       deliveryAddressId: booking.deliveryAddressId ?? null,
       deliveryAddress: booking.deliveryAddress ? {

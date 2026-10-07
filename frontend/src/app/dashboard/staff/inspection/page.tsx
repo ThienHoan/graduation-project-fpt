@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StaffPortalShell } from "@/components/heritage/ui";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import {
   getStaffReturnBookings,
   getBookingInspections,
@@ -27,22 +28,16 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   overdue:            { label: "Quá hạn",        color: "bg-red-200 text-red-800" },
 };
 
-type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "completed" | "processed_without_session";
+type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "completed";
 
 const ITEM_STATE_META: Record<ItemInspectionState, { label: string; color: string; icon: string }> = {
   missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: "warning" },
   not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: "radio_button_unchecked" },
   in_progress: { label: "Đang kiểm tra", color: "bg-lotus/10 text-lotus", icon: "pending" },
   completed: { label: "Đã kiểm tra", color: "bg-jade/10 text-jade", icon: "check_circle" },
-  processed_without_session: { label: "Đã xử lý", color: "bg-stone-100 text-stone-600", icon: "done_all" },
 };
 
 const FINAL_ACTIONS = [
-  {
-    key: "available",
-    label: "Sẵn sàng cho thuê",
-    style: "bg-jade text-white hover:bg-forest border border-jade",
-  },
   {
     key: "laundry",
     label: "Chuyển giặt sấy",
@@ -83,16 +78,18 @@ export default function StaffInspectionPage() {
   const [currentNote, setCurrentNote] = useState("");
 
   // 1. Load return queue
-  useEffect(() => {
-    setLoadingBookings(true);
-    setErrorMsg(null);
-    getStaffReturnBookings()
+  const refreshReturnBookings = useCallback(() => {
+    return getStaffReturnBookings()
       .then((res) => {
         if (res.success && res.data) {
           const data = res.data;
           setBookings(data);
           if (data.length > 0) {
-            setSelectedBookingId((prev) => prev ?? data[0].id);
+            setSelectedBookingId((prev) =>
+              prev && data.some((b) => b.id === prev) ? prev : data[0].id,
+            );
+          } else {
+            setSelectedBookingId(null);
           }
         } else {
           setErrorMsg(res.message ?? "Không thể tải danh sách đơn trả.");
@@ -101,20 +98,41 @@ export default function StaffInspectionPage() {
       .finally(() => setLoadingBookings(false));
   }, []);
 
-  // 2. Load inspection sessions when booking is selected
   useEffect(() => {
-    if (!selectedBookingId) {
+    setLoadingBookings(true);
+    setErrorMsg(null);
+    void refreshReturnBookings();
+  }, [refreshReturnBookings]);
+
+  // 2. Load inspection sessions when booking is selected
+  const refreshSessions = useCallback((bookingId: string | null) => {
+    if (!bookingId) {
       setSessions([]);
-      return;
+      return Promise.resolve();
     }
+    return getBookingInspections(bookingId).then((res) => {
+      if (res.success && res.data) setSessions(res.data);
+      else setSessions([]);
+    });
+  }, []);
+
+  useEffect(() => {
     setLoadingSessions(true);
-    getBookingInspections(selectedBookingId)
-      .then((res) => {
-        if (res.success && res.data) setSessions(res.data);
-        else setSessions([]);
-      })
-      .finally(() => setLoadingSessions(false));
-  }, [selectedBookingId]);
+    void refreshSessions(selectedBookingId).finally(() => setLoadingSessions(false));
+  }, [selectedBookingId, refreshSessions]);
+
+  const refreshAll = useCallback(() => {
+    return refreshReturnBookings().then(() => refreshSessions(selectedBookingId));
+  }, [refreshReturnBookings, refreshSessions, selectedBookingId]);
+
+  useRealtimeInvalidation({
+    bookings: refreshAll,
+    inspections: refreshAll,
+    assets: refreshReturnBookings,
+    refunds: refreshReturnBookings,
+    maintenance: refreshReturnBookings,
+    laundry: refreshReturnBookings,
+  });
 
   function getSessionForItem(item: BookingItem) {
     if (!item.garmentAssetId) return null;
@@ -131,7 +149,6 @@ export default function StaffInspectionPage() {
     const session = getSessionForItem(item);
     if (session?.status === "completed") return "completed";
     if (session) return "in_progress";
-    if (item.assetStatus && item.assetStatus !== "inspection_pending") return "processed_without_session";
     return "not_started";
   }
 
@@ -547,7 +564,7 @@ export default function StaffInspectionPage() {
             {!activeSession && booking ? (
               /* No active session — prompt to start */
               <section className="rounded-xl border border-sand bg-white p-10 text-center shadow-sm">
-                {selectedItemSession?.status === "completed" || selectedItemState === "processed_without_session" ? (
+                {selectedItemSession?.status === "completed" ? (
                   <>
                     <span className="material-symbols-outlined text-5xl text-jade">check_circle</span>
                     <h3 className="mt-4 font-display text-2xl text-ink">Món này đã kiểm tra xong</h3>

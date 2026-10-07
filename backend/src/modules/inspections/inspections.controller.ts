@@ -24,7 +24,7 @@ export class InspectionsController {
   }
 
   @Get("booking/:bookingId")
-  findByBooking(@Param("bookingId") bookingId: string) {
+  findByBooking(@Param("bookingId", ParseUUIDPipe) bookingId: string) {
     return this.inspectionsService.findByBooking(bookingId);
   }
 
@@ -45,7 +45,7 @@ export class InspectionsController {
 
   @Patch("laundry/:ticketId/complete")
   completeLaundry(
-    @Param("ticketId") ticketId: string,
+    @Param("ticketId", ParseUUIDPipe) ticketId: string,
     @Body() body: CompleteLaundryDto,
   ) {
     return this.inspectionsService.completeLaundry(ticketId, body);
@@ -58,34 +58,34 @@ export class InspectionsController {
 
   @Patch("maintenance/:jobId/complete")
   completeMaintenance(
-    @Param("jobId") jobId: string,
+    @Param("jobId", ParseUUIDPipe) jobId: string,
     @Body() body: CompleteMaintenanceDto,
   ) {
     return this.inspectionsService.completeMaintenance(jobId, body);
   }
 
   @Get(":id")
-  findOne(@Param("id") id: string) {
+  findOne(@Param("id", ParseUUIDPipe) id: string) {
     return this.inspectionsService.findOne(id);
   }
 
   @Post(":id/findings")
-  addFinding(@Param("id") id: string, @Body() body: CreateFindingDto) {
+  addFinding(@Param("id", ParseUUIDPipe) id: string, @Body() body: CreateFindingDto) {
     return this.inspectionsService.addFinding(id, body);
   }
 
   @Post(":id/photos")
-  addPhoto(@Param("id") id: string, @Body() body: CreatePhotoDto) {
+  addPhoto(@Param("id", ParseUUIDPipe) id: string, @Body() body: CreatePhotoDto) {
     return this.inspectionsService.addPhoto(id, body);
   }
 
   @Patch(":id/complete")
-  complete(@CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Body() body: CompleteInspectionDto) {
+  complete(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string, @Body() body: CompleteInspectionDto) {
     return this.inspectionsService.complete(id, body, user.id);
   }
 
   @Patch("assets/:assetId/mark-ready")
-  markAssetReady(@CurrentUser() user: AuthenticatedUser, @Param("assetId") assetId: string) {
+  markAssetReady(@CurrentUser() user: AuthenticatedUser, @Param("assetId", ParseUUIDPipe) assetId: string) {
     return this.inspectionsService.markAssetReady(assetId, user.id);
   }
 }

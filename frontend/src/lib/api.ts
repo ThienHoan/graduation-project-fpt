@@ -241,6 +241,11 @@ export type BookingResponse = {
   depositTotal: number;
   shippingFee?: number;
   penaltyTotal?: number;
+  /** Số ngày quá hạn so với rentalEndDate (0 nếu không quá hạn / đã trả đồ). */
+  overdueDays?: number;
+  overdueFeePerDay?: number;
+  /** Phí quá hạn = overdueDays × overdueFeePerDay. */
+  overdueAmount?: number;
   paymentMethod: string;
   paidPaymentMethod?: string | null;
   note: string | null;
@@ -323,9 +328,24 @@ export async function cancelBooking(id: string) {
 
 // ---------- Staff Booking types ----------
 
+export type StaffRefundSummary = {
+  id: string;
+  amount: number;
+  status: string;
+  refundMethod: "cash" | "bank_transfer" | string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+  bankDetailsComplete?: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type StaffBookingResponse = BookingResponse & {
   customerName: string | null;
   customerPhone: string | null;
+  allAssignedAssetsInspected?: boolean;
+  refunds?: StaffRefundSummary[];
 };
 
 // ---------- Staff Booking API functions ----------
@@ -528,6 +548,7 @@ export type RefundResponse = {
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountHolder: string | null;
+  bankDetailsComplete: boolean;
   proofImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -566,6 +587,7 @@ export type CustomerRefundResponse = {
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountHolder: string | null;
+  bankDetailsComplete: boolean;
   proofImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -589,6 +611,20 @@ export async function createRefund(payload: {
 }) {
   return apiRequest<RefundResponse>("/refunds", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRefundDetails(
+  refundId: string,
+  payload: {
+    bankName: string;
+    bankAccountNumber: string;
+    bankAccountHolder: string;
+  },
+) {
+  return apiRequest<RefundResponse>(`/refunds/${refundId}/details`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -758,12 +794,15 @@ export async function completeLaundryTicket(
 
 // ---------- Maintenance types ----------
 
+export type MaintenanceJobStatus = "open" | "in_progress" | "completed" | "cannot_repair";
+export type CompleteMaintenanceStatus = "completed" | "cannot_repair";
+
 export type MaintenanceJobResponse = {
   id: string;
   garmentAssetId: string;
   assetCode: string;
   garmentName: string;
-  status: string;
+  status: MaintenanceJobStatus;
   note: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -775,7 +814,7 @@ export async function getMaintenanceJobs() {
 
 export async function completeMaintenanceJob(
   jobId: string,
-  status: string,
+  status: CompleteMaintenanceStatus,
   note?: string,
 ) {
   return apiRequest<MaintenanceJobResponse>(`/inspections/maintenance/${jobId}/complete`, {

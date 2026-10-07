@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min, ArrayMaxSize } from 'class-validator';
+import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, ArrayMaxSize } from 'class-validator';
 
 export class CreateReviewDto {
   @IsString()

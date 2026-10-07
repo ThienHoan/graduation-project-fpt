@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ManagerPortalShell, ConfirmModal } from "@/components/heritage/ui";
 import { useAuth } from "@/components/auth/auth-provider";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import {
   getStaffAllBookings,
   getStaffCompletedRefundBookings,
@@ -46,6 +47,7 @@ getGarments,
   type InspectionLogEntry,
   type LaundryTicketResponse,
   type MaintenanceJobResponse,
+  type CompleteMaintenanceStatus,
 
 } from "@/lib/api";
 
@@ -435,8 +437,8 @@ export default function ManagerDashboardPage() {
 
   async function handleApproveRefund(refundId: string, proofImageUrl: string, approveNote: string) {
     const refund = pendingRefunds.find((r) => r.id === refundId);
-    // Bill chuyển khoản chỉ bắt buộc với refund bank_transfer; tiền mặt duyệt trực tiếp
-    if (refund?.refundMethod === "bank_transfer" && !proofImageUrl.trim()) return;
+    // Bill chuyển khoản và đủ thông tin ngân hàng là bắt buộc với refund bank_transfer; tiền mặt duyệt trực tiếp.
+    if (refund?.refundMethod === "bank_transfer" && (!refund.bankDetailsComplete || !proofImageUrl.trim())) return;
     setApprovingId(refundId);
     setErrorMsg(null);
     const res = await approveRefund(refundId, {
@@ -585,16 +587,63 @@ export default function ManagerDashboardPage() {
       .finally(() => setLaundryLoading(false));
   }, [tab]);
 
-  // ── Load maintenance ──
+  // ── Load maintenance and direct damaged assets ──
   useEffect(() => {
     if (tab !== "damaged") return;
     setMaintenanceLoading(true);
-    getMaintenanceJobs()
-      .then((res) => {
-        if (res.success && res.data) setMaintenanceJobs(res.data);
+    Promise.all([getMaintenanceJobs(), getAllAssets()])
+      .then(([maintenanceRes, assetsRes]) => {
+        if (maintenanceRes.success && maintenanceRes.data) setMaintenanceJobs(maintenanceRes.data);
+        if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
       })
       .finally(() => setMaintenanceLoading(false));
   }, [tab]);
+
+  // ── Realtime: refetch REST snapshot khi có thay đổi ở server ──
+  const refreshBookings = useCallback(
+    () => getStaffAllBookings().then((res) => { if (res.success && res.data) setBookings(res.data); }),
+    [],
+  );
+  const refreshCompletedRefunds = useCallback(
+    () => getStaffCompletedRefundBookings().then((res) => { if (res.success && res.data) setCompletedRefundBookings(res.data); }),
+    [],
+  );
+  const refreshPendingRefunds = useCallback(() => {
+    if (tab !== "refunds") return Promise.resolve();
+    return getPendingManagerRefunds().then((res) => {
+      if (res.success && res.data) setPendingRefunds(res.data);
+      else setPendingRefunds([]);
+    });
+  }, [tab]);
+  const refreshInspectionLog = useCallback(() => {
+    if (tab !== "inspection-log") return Promise.resolve();
+    return getInspectionLog().then((res) => {
+      if (res.success && res.data) setInspectionLog(res.data);
+    });
+  }, [tab]);
+  const refreshLaundry = useCallback(() => {
+    if (tab !== "laundry") return Promise.resolve();
+    return getLaundryTickets().then((res) => {
+      if (res.success && res.data) setLaundryTickets(res.data);
+    });
+  }, [tab]);
+  const refreshMaintenanceAndAssets = useCallback(() => {
+    if (tab !== "damaged") return Promise.resolve();
+    return Promise.all([getMaintenanceJobs(), getAllAssets()]).then(([maintenanceRes, assetsRes]) => {
+      if (maintenanceRes.success && maintenanceRes.data) setMaintenanceJobs(maintenanceRes.data);
+      if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
+    });
+  }, [tab]);
+
+  useRealtimeInvalidation({
+    bookings: () => { void refreshBookings(); void refreshCompletedRefunds(); void refreshPendingRefunds(); },
+    payments: () => { void refreshBookings(); void refreshCompletedRefunds(); },
+    refunds: () => { void refreshPendingRefunds(); void refreshCompletedRefunds(); void refreshBookings(); },
+    inspections: () => { void refreshInspectionLog(); void refreshMaintenanceAndAssets(); void refreshCompletedRefunds(); },
+    assets: () => { void refreshAllAssets(); void refreshMaintenanceAndAssets(); },
+    maintenance: () => { void refreshMaintenanceAndAssets(); void refreshAllAssets(); },
+    laundry: () => { void refreshLaundry(); void refreshAllAssets(); },
+  });
 
   // ── Derived metrics ──
   const activeBookings = bookings.filter((b) => ACTIVE_STATUSES.includes(b.status));
@@ -750,6 +799,7 @@ export default function ManagerDashboardPage() {
       ) : tab === "damaged" ? (
         <DamagedTab
           jobs={maintenanceJobs}
+          damagedAssets={allAssets.filter((asset) => asset.status === "damaged")}
           loading={maintenanceLoading}
           actioningId={actioningId}
           onComplete={async (id, status) => {
@@ -757,8 +807,12 @@ export default function ManagerDashboardPage() {
             const res = await completeMaintenanceJob(id, status);
             setActioningId(null);
             if (res.success) {
-              const refresh = await getMaintenanceJobs();
-              if (refresh.success && refresh.data) setMaintenanceJobs(refresh.data);
+              const [refreshJobs, refreshAssets] = await Promise.all([
+                getMaintenanceJobs(),
+                getAllAssets(),
+              ]);
+              if (refreshJobs.success && refreshJobs.data) setMaintenanceJobs(refreshJobs.data);
+              if (refreshAssets.success && refreshAssets.data) setAllAssets(refreshAssets.data);
               showToast(
                 "success",
                 status === "completed"
@@ -2104,24 +2158,27 @@ function LaundryTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function DamagedTab({
-  jobs, loading, actioningId, onComplete,
+  jobs, damagedAssets, loading, actioningId, onComplete,
 }: {
   jobs: MaintenanceJobResponse[];
+  damagedAssets: AssetDetail[];
   loading: boolean;
   actioningId: string | null;
-  onComplete: (id: string, status: string) => Promise<void>;
+  onComplete: (id: string, status: CompleteMaintenanceStatus) => Promise<void>;
 }) {
   const [confirmDialog, setConfirmDialog] = useState<{title:string; message:string; danger?:boolean; onConfirm:()=>void} | null>(null);
+  const maintenanceAssetIds = new Set(jobs.map((job) => job.garmentAssetId));
+  const directDamagedAssets = damagedAssets.filter((asset) => !maintenanceAssetIds.has(asset.id));
   return (
     <div className="space-y-4">
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
-      ) : jobs.length === 0 ? (
+      ) : jobs.length === 0 && directDamagedAssets.length === 0 ? (
         <div className="py-20 text-center text-stone-400">Không có tài sản hư hỏng hoặc bảo trì.</div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {jobs.map((j) => (
-            <div key={j.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+            <div key={`job-${j.id}`} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-semibold text-ink">{j.assetCode}</p>
@@ -2168,6 +2225,20 @@ function DamagedTab({
                   </>
                 )}
               </div>
+            </div>
+          ))}
+          {directDamagedAssets.map((asset) => (
+            <div key={`damaged-${asset.id}`} className="rounded-xl border border-red-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-ink">{asset.assetCode}</p>
+                  <p className="text-sm text-stone-500">{asset.garmentName}{asset.sizeLabel ? ` · Size ${asset.sizeLabel}` : ""}</p>
+                </div>
+                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Hư hỏng</span>
+              </div>
+              {asset.conditionNote && <p className="mt-3 text-xs text-stone-600">{asset.conditionNote}</p>}
+              <p className="mt-3 text-xs text-stone-400">Cập nhật {new Date(asset.updatedAt).toLocaleString("vi-VN")}</p>
+              <p className="mt-4 text-xs text-stone-500">Tài sản đã được ghi nhận hư hỏng, không nằm trong hàng chờ bảo trì.</p>
             </div>
           ))}
         </div>
@@ -2643,6 +2714,8 @@ function RefundCard({
   const [proofError, setProofError] = useState<string | null>(null);
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const isBankTransfer = refund.refundMethod === "bank_transfer";
+  const bankDetailsComplete = !isBankTransfer || Boolean(refund.bankDetailsComplete);
+  const canApprove = !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
 
   function formatVND(amount: number) {
     return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -2710,6 +2783,11 @@ function RefundCard({
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 mb-3">
             Thông tin chuyển khoản
           </p>
+          {!bankDetailsComplete && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Chờ nhân viên bổ sung đầy đủ thông tin ngân hàng trước khi Quản lý duyệt hoàn cọc.
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-3 text-sm">
             <div>
               <span className="text-stone-500">Ngân hàng: </span>
@@ -2740,14 +2818,14 @@ function RefundCard({
               Ảnh bill chuyển khoản
             </label>
             <div className="flex flex-wrap items-center gap-4">
-              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof ? "pointer-events-none opacity-50" : ""}`}>
+              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof || !bankDetailsComplete ? "pointer-events-none opacity-50" : ""}`}>
                 <span className="material-symbols-outlined text-[18px]">upload</span>
                 {uploadingProof ? "Đang tải ảnh..." : proofImageUrl ? "Chọn ảnh khác" : "Tải ảnh bill từ máy"}
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  disabled={uploadingProof}
+                  disabled={uploadingProof || !bankDetailsComplete}
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     e.target.value = "";
@@ -2830,11 +2908,15 @@ function RefundCard({
           )}
           <button
             type="button"
-            disabled={approvingId === refund.id || uploadingProof || (isBankTransfer && !proofImageUrl.trim())}
+            disabled={approvingId === refund.id || uploadingProof || !canApprove}
             onClick={() => handleApproveRefund(refund.id, proofImageUrl, approveNote)}
             className="rounded-lg bg-jade px-6 py-3 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
           >
-            {approvingId === refund.id ? "Đang xử lý..." : `Duyệt hoàn cọc ${formatVND(refund.amount)}`}
+            {approvingId === refund.id
+              ? "Đang xử lý..."
+              : !bankDetailsComplete
+                ? "Chờ bổ sung thông tin ngân hàng"
+                : `Duyệt hoàn cọc ${formatVND(refund.amount)}`}
           </button>
         </div>
       </div>
