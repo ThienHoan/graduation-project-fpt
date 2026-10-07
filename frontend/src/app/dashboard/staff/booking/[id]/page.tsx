@@ -4,11 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { StaffPortalShell, ConfirmModal } from "@/components/heritage/ui";
+import { HandoverConfirmationModal } from "@/components/bookings/handover-confirmation-modal";
 import {
   getStaffBooking,
   advanceBookingStatus,
   markBookingPaid,
   createRefund,
+  type BookingResponse,
   type StaffBookingResponse,
 } from "@/lib/api";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
@@ -45,12 +47,9 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
     { status: "ready_for_pickup", label: "Sẵn sàng nhận", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
   ready_for_pickup: [
-    { status: "delivering", label: "Đang giao",      style: "bg-lotus text-white hover:bg-oxblood" },
-    { status: "renting",    label: "Khách đã nhận",  style: "bg-lotus text-white hover:bg-oxblood" },
+    { status: "delivering", label: "Đang giao", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
-  delivering: [
-    { status: "renting", label: "Khách đã nhận", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  delivering: [],
   renting: [
     { status: "returned", label: "Khách đã trả",  style: "bg-lotus text-white hover:bg-oxblood" },
     { status: "overdue",  label: "Đánh dấu quá hạn", style: "border border-red-300 text-red-700 hover:bg-red-50" },
@@ -94,6 +93,7 @@ export default function StaffBookingDetailPage() {
   const [paymentDialog, setPaymentDialog] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cash");
   const [refundDialog, setRefundDialog] = useState(false);
+  const [handoverBooking, setHandoverBooking] = useState<StaffBookingResponse | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{title:string; message:string; danger?:boolean; onConfirm:()=>void} | null>(null);
   const [refundBankName, setRefundBankName] = useState("");
   const [refundBankAccount, setRefundBankAccount] = useState("");
@@ -111,6 +111,12 @@ export default function StaffBookingDetailPage() {
   }, [bookingId]);
 
   const CONFIRM_REQUIRED = new Set(["cancelled", "rejected", "overdue"]);
+
+  function handleHandoverCompleted(updated: BookingResponse, message: string) {
+    setHandoverBooking(null);
+    setBooking((prev) => (prev ? { ...prev, ...updated } : prev));
+    showToast("success", message);
+  }
 
   async function handleAction(status: string) {
     if (!booking) return;
@@ -413,7 +419,7 @@ export default function StaffBookingDetailPage() {
       )}
 
       {/* Actions */}
-      {(actions.length > 0 || booking.status === "awaiting_payment") && (
+      {(actions.length > 0 || booking.status === "awaiting_payment" || booking.status === "ready_for_pickup" || booking.status === "delivering") && (
         <div className="flex flex-wrap justify-end gap-3 border-t border-sand pt-6">
           {booking.status === "awaiting_payment" && (
             booking.pickupMethod === "delivery" ? (
@@ -435,6 +441,16 @@ export default function StaffBookingDetailPage() {
                 {actioning ? "Đang xử lý..." : `Đã thanh toán (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
               </button>
             )
+          )}
+          {(booking.status === "ready_for_pickup" || booking.status === "delivering") && (
+            <button
+              type="button"
+              disabled={actioning}
+              onClick={() => setHandoverBooking(booking)}
+              className="rounded-lg bg-jade px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+            >
+              {actioning ? "Đang xử lý..." : booking.status === "delivering" ? "Xác nhận đã giao" : "Xác nhận bàn giao"}
+            </button>
           )}
           {actions.map((action) => {
             const needsConfirm = CONFIRM_REQUIRED.has(action.status);
@@ -531,6 +547,12 @@ export default function StaffBookingDetailPage() {
       )}
 
       <ConfirmModal open={!!confirmDialog} title={confirmDialog?.title??""} message={confirmDialog?.message??""} danger={confirmDialog?.danger} onConfirm={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} onCancel={() => setConfirmDialog(null)} />
+      <HandoverConfirmationModal
+        booking={handoverBooking}
+        onClose={() => setHandoverBooking(null)}
+        onCompleted={handleHandoverCompleted}
+        onError={(message) => setActionError(message)}
+      />
     </StaffPortalShell>
   );
 }

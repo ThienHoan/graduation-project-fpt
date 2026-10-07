@@ -13,6 +13,7 @@ import { ReviewModal } from "@/components/customer/review-modal";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { HandoverSummary } from "@/components/customer/handover-summary";
 
 const HISTORY_PAGE_SIZE = 5;
 const TEST_ORDER_STATUSES = new Set(["pending_confirmation"]);
@@ -341,6 +342,7 @@ export default function CustomerDashboardPage() {
                   pickupMethod={activeBooking.pickupMethod}
                   className="border-t border-sand pt-6"
                 />
+                <HandoverSummary handover={activeBooking.handover} compact />
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Link
                     href={`/booking/success?bookingId=${activeBooking.id}`}

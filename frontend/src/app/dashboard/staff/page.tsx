@@ -13,6 +13,7 @@ import {
   createRefund,
   updateRefundDetails,
   closeBookingWithoutRefund,
+  type BookingResponse,
   type StaffBookingResponse,
   type StaffRefundSummary,
   type DeliveryPoint,
@@ -20,6 +21,7 @@ import {
 import { DeliveryMap } from "@/components/location/delivery-map";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { HandoverConfirmationModal } from "@/components/bookings/handover-confirmation-modal";
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -49,12 +51,9 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
     { status: "ready_for_pickup", label: "Sẵn sàng nhận", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
   ready_for_pickup: [
-    { status: "delivering", label: "Đang giao",      style: "bg-lotus text-white hover:bg-oxblood" },
-    { status: "renting",    label: "Khách đã nhận",  style: "bg-lotus text-white hover:bg-oxblood" },
+    { status: "delivering", label: "Đang giao", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
-  delivering: [
-    { status: "renting", label: "Khách đã nhận", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  delivering: [],
   renting: [
     { status: "returned", label: "Khách đã trả",  style: "bg-lotus text-white hover:bg-oxblood" },
     { status: "overdue",  label: "Đánh dấu quá hạn", style: "border border-red-300 text-red-700 hover:bg-red-50" },
@@ -142,6 +141,7 @@ export default function StaffDashboardPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [paymentDialog, setPaymentDialog] = useState<PaymentDialog>(null);
+  const [handoverBooking, setHandoverBooking] = useState<StaffBookingResponse | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cash");
 
   // Refund form state
@@ -197,6 +197,21 @@ export default function StaffDashboardPage() {
   }, tab !== "map");
 
   const CONFIRM_REQUIRED = new Set(["cancelled", "rejected", "overdue"]);
+
+  function openHandover(booking: StaffBookingResponse) {
+    setHandoverBooking(booking);
+  }
+
+  function handleHandoverCompleted(updated: BookingResponse, message: string) {
+    setHandoverBooking(null);
+    setBookings((prev) => prev.map((booking) => (
+      booking.id === updated.id ? { ...booking, ...updated } : booking
+    )));
+    showSuccess(updated.id, message);
+    if (tab === "pending" && updated.status !== "pending_confirmation") {
+      setTimeout(() => setBookings((prev) => prev.filter((booking) => booking.id !== updated.id)), 4500);
+    }
+  }
 
   async function handleAction(id: string, status: string) {
     setActioningId(id);
@@ -676,7 +691,7 @@ export default function StaffDashboardPage() {
                       )
                     )
                   ) : (
-                    (actions.length > 0 || booking.status === "awaiting_payment") && (
+                    (actions.length > 0 || booking.status === "awaiting_payment" || booking.status === "ready_for_pickup" || booking.status === "delivering") && (
                       <>
                         {booking.status === "awaiting_payment" && (
                           booking.pickupMethod === "delivery" ? (
@@ -698,6 +713,16 @@ export default function StaffDashboardPage() {
                               {isActioning ? "Đang xử lý..." : `Đã thanh toán (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
                             </button>
                           )
+                        )}
+                        {(booking.status === "ready_for_pickup" || booking.status === "delivering") && (
+                          <button
+                            type="button"
+                            disabled={isActioning}
+                            onClick={() => openHandover(booking)}
+                            className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                          >
+                            {isActioning ? "Đang xử lý..." : booking.status === "delivering" ? "Xác nhận đã giao" : "Xác nhận bàn giao"}
+                          </button>
                         )}
                         {actions.map((action) => {
                           const needsConfirm = CONFIRM_REQUIRED.has(action.status);
@@ -969,6 +994,12 @@ export default function StaffDashboardPage() {
       )}
 
       <ConfirmModal open={!!confirmDialog} title={confirmDialog?.title??""} message={confirmDialog?.message??""} danger={confirmDialog?.danger} onConfirm={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} onCancel={() => setConfirmDialog(null)} />
+      <HandoverConfirmationModal
+        booking={handoverBooking}
+        onClose={() => setHandoverBooking(null)}
+        onCompleted={handleHandoverCompleted}
+        onError={(message) => setErrorMsg(message)}
+      />
     </StaffPortalShell>
   );
 }

@@ -257,6 +257,38 @@ export type BookingItem = {
   conditionNote?: string | null;
 };
 
+export type HandoverStatus = "PENDING" | "CONFIRMED" | "REJECTED";
+export type ConditionBeforeRental = "GOOD" | "MINOR_DAMAGE" | "MAJOR_DAMAGE";
+
+export type BookingHandover = {
+  status: HandoverStatus | null;
+  conditionBeforeRental: ConditionBeforeRental | null;
+  images: string[];
+  note: string | null;
+  receiverName: string | null;
+  deliveryPersonName: string | null;
+  receiverPhone: string | null;
+  correctProduct: boolean | null;
+  noVisibleDefect: boolean | null;
+  customerAgreed: boolean | null;
+  decidedAt: string | null;
+  receivedAt: string | null;
+  confirmedBy: string | null;
+};
+
+export type ConfirmHandoverPayload = {
+  handoverStatus: HandoverStatus;
+  conditionBeforeRental: ConditionBeforeRental;
+  conditionImages?: string[];
+  note?: string;
+  correctProductConfirmed?: boolean;
+  noDefectConfirmed?: boolean;
+  customerAgreed?: boolean;
+  deliveredBy?: string;
+  receivedBy?: string;
+  receiverPhone?: string;
+};
+
 export type BookingResponse = {
   id: string;
   status: string;
@@ -280,6 +312,7 @@ export type BookingResponse = {
   deliveryAddress?: Omit<CustomerAddress, "isDefault" | "createdAt"> | null;
   createdAt: string;
   items: BookingItem[];
+  handover?: BookingHandover | null;
 };
 
 export type AvailabilityResponse = {
@@ -368,6 +401,13 @@ export async function getBooking(id: string) {
 
 export async function cancelBooking(id: string) {
   return apiRequest<BookingResponse>(`/bookings/${id}/cancel`, { method: "PATCH" });
+}
+
+export async function confirmBookingHandover(id: string, payload: ConfirmHandoverPayload) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/confirm-handover`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // ---------- Staff Booking types ----------

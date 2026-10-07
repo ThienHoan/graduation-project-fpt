@@ -851,6 +851,15 @@ export class BookingsService {
       });
       if (!booking) throw new NotFoundException("Booking not found.");
 
+      if (
+        dto.status === BookingStatus.renting &&
+        booking.handoverStatus !== "CONFIRMED"
+      ) {
+        throw new BadRequestException(
+          "Vui lòng xác nhận bàn giao trước khi chuyển đơn sang trạng thái đang thuê.",
+        );
+      }
+
       const allowed = STAFF_ALLOWED_TRANSITIONS[booking.status];
       if (!allowed?.includes(dto.status)) {
         throw new BadRequestException(`Cannot transition from '${booking.status}' to '${dto.status}'.`);
@@ -1126,6 +1135,9 @@ export class BookingsService {
     dto: ConfirmHandoverDto,
     actor: Pick<AuthenticatedUser, "id" | "role">,
   ) {
+    let customerId: string | null = null;
+    let statusChanged = false;
+
     const updated = await this.prisma.runSerializable(async (tx) => {
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
@@ -1141,11 +1153,43 @@ export class BookingsService {
       }
       if (!HANDOVER_BOOKING_STATUSES.includes(booking.status)) {
         throw new BadRequestException(
-          `Chỉ có thể xác nhận handover khi booking ở trạng thái 'ready_for_pickup', 'delivering' hoặc 'renting' (hiện tại: '${booking.status}').`,
+          `Chỉ có thể xác nhận bàn giao khi booking ở trạng thái 'ready_for_pickup', 'delivering' hoặc 'renting' (hiện tại: '${booking.status}').`,
         );
       }
       if (booking.items.length === 0 || booking.items.some((item) => !item.garmentAsset)) {
-        throw new BadRequestException("Tất cả booking item phải được gán asset trước khi handover.");
+        throw new BadRequestException("Tất cả booking item phải được gán asset trước khi bàn giao.");
+      }
+
+      const requestedStatus = dto.handoverStatus;
+      const currentHandoverStatus = booking.handoverStatus;
+      if (currentHandoverStatus === "CONFIRMED" || currentHandoverStatus === "REJECTED") {
+        if (currentHandoverStatus !== requestedStatus) {
+          throw new ConflictException("Biên bản bàn giao đã hoàn tất và không thể ghi đè.");
+        }
+        return tx.booking.findUniqueOrThrow({
+          where: { id: bookingId },
+          include: {
+            items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
+            payments: true,
+            deliveryAddress: true,
+          },
+        });
+      }
+      if (requestedStatus === "PENDING") {
+        return booking;
+      }
+      if (requestedStatus === "CONFIRMED") {
+        if (dto.correctProductConfirmed !== true || dto.customerAgreed !== true) {
+          throw new BadRequestException("Cần xác nhận đúng sản phẩm và người nhận đồng ý trước khi bàn giao.");
+        }
+        if (dto.conditionBeforeRental === "MAJOR_DAMAGE") {
+          throw new BadRequestException("Không thể xác nhận nhận hàng khi sản phẩm có lỗi nặng.");
+        }
+        if (dto.conditionBeforeRental === "GOOD" && dto.noDefectConfirmed !== true) {
+          throw new BadRequestException("Cần xác nhận sản phẩm không có lỗi trước khi nhận.");
+        }
+      } else if (!dto.note?.trim()) {
+        throw new BadRequestException("Cần ghi rõ lý do từ chối bàn giao.");
       }
 
       const expectedAssetStatus = booking.status === BookingStatus.renting
@@ -1158,67 +1202,86 @@ export class BookingsService {
         }
         if (asset.status !== expectedAssetStatus) {
           throw new BadRequestException(
-            `Asset '${asset.assetCode}' không ở trạng thái hợp lệ cho handover (current: ${asset.status}).`,
+            `Asset '${asset.assetCode}' không ở trạng thái hợp lệ cho bàn giao (current: ${asset.status}).`,
           );
         }
       }
 
-      const currentStatus = booking.handoverStatus;
-      const requestedStatus = dto.handoverStatus;
-      const terminal = currentStatus === "CONFIRMED" || currentStatus === "REJECTED";
-      if (terminal) {
-        if (
-          currentStatus !== requestedStatus ||
-          booking.conditionBeforeRental !== dto.conditionBeforeRental ||
-          (dto.conditionImages !== undefined && JSON.stringify(booking.conditionImages) !== JSON.stringify({ images: dto.conditionImages }))
-        ) {
-          throw new ConflictException("Handover đã hoàn tất và không thể ghi đè.");
-        }
-        return booking;
-      }
-      if (currentStatus === "PENDING" && requestedStatus === "PENDING") {
-        return booking;
-      }
-      if (currentStatus === "PENDING" && !["CONFIRMED", "REJECTED"].includes(requestedStatus)) {
-        throw new BadRequestException("Handover PENDING chỉ có thể chuyển sang CONFIRMED hoặc REJECTED.");
-      }
-
-      const isTerminal = requestedStatus === "CONFIRMED" || requestedStatus === "REJECTED";
-      const handoverData = {
-        handoverStatus: requestedStatus,
-        conditionBeforeRental: dto.conditionBeforeRental,
-        ...(dto.conditionImages !== undefined ? { conditionImages: { images: dto.conditionImages } } : {}),
-        ...(isTerminal ? { confirmedAt: new Date(), confirmedBy: actor.id } : {}),
+      const evidence = {
+        images: dto.conditionImages ?? [],
+        checklist: {
+          correctProduct: dto.correctProductConfirmed ?? false,
+          noDefectBeforeRental: dto.noDefectConfirmed ?? false,
+          customerAgreed: dto.customerAgreed ?? false,
+        },
+        deliveredBy: dto.deliveredBy?.trim() || null,
+        receivedBy: dto.receivedBy?.trim() || null,
+        receiverPhone: dto.receiverPhone?.trim() || null,
+        note: dto.note?.trim() || null,
       };
+      const isConfirmed = requestedStatus === "CONFIRMED";
+      const nextBookingStatus = isConfirmed && booking.status !== BookingStatus.renting
+        ? BookingStatus.renting
+        : booking.status;
+      const now = new Date();
+
       const claimed = await tx.booking.updateMany({
-        where: { id: bookingId, handoverStatus: currentStatus },
-        data: handoverData,
+        where: { id: bookingId, status: booking.status, handoverStatus: currentHandoverStatus },
+        data: {
+          status: nextBookingStatus,
+          handoverStatus: requestedStatus,
+          conditionBeforeRental: dto.conditionBeforeRental,
+          conditionImages: evidence,
+          ...(isConfirmed || requestedStatus === "REJECTED"
+            ? { confirmedAt: now, confirmedBy: actor.id }
+            : {}),
+        },
       });
-      if (claimed.count !== 1) throw new ConflictException("Handover vừa được cập nhật bởi người khác.");
+      if (claimed.count !== 1) throw new ConflictException("Bàn giao vừa được cập nhật bởi người khác.");
+
+      if (isConfirmed && booking.status !== BookingStatus.renting) {
+        const claimedAssets = await tx.garmentAsset.updateMany({
+          where: { id: { in: booking.items.map((item) => item.garmentAsset!.id) }, status: AssetStatus.reserved },
+          data: { status: AssetStatus.rented },
+        });
+        if (claimedAssets.count !== booking.items.length) {
+          throw new ConflictException("Một asset không còn ở trạng thái đã giữ.");
+        }
+        statusChanged = true;
+      }
 
       await tx.bookingStatusHistory.create({
         data: {
           bookingId,
           fromStatus: booking.status,
-          toStatus: booking.status,
+          toStatus: nextBookingStatus,
           changedBy: actor.id,
-          note: `Handover ${requestedStatus}${dto.note ? `: ${dto.note}` : ""}`,
+          note: `Bàn giao ${requestedStatus}${dto.note ? `: ${dto.note}` : ""}`,
         },
       });
 
-      const saved = await tx.booking.findUnique({ where: { id: bookingId } });
-      if (!saved) throw new NotFoundException("Booking not found.");
-      return saved;
+      customerId = booking.customerId;
+      return tx.booking.findUniqueOrThrow({
+        where: { id: bookingId },
+        include: {
+          items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
+          payments: true,
+          deliveryAddress: true,
+        },
+      });
     });
 
-    return ok({
-      id: updated.id,
-      handoverStatus: updated.handoverStatus,
-      conditionBeforeRental: updated.conditionBeforeRental,
-      conditionImages: updated.conditionImages,
-      confirmedAt: updated.confirmedAt?.toISOString() ?? null,
-      confirmedBy: updated.confirmedBy,
-    });
+    this.realtime.bookingChanged({ id: updated.id, bookingId: updated.id, status: updated.status });
+    if (statusChanged) this.realtime.assetChanged({ bookingId: updated.id });
+    if (customerId) {
+      this.realtime.bookingChangedForCustomer(customerId, {
+        id: updated.id,
+        bookingId: updated.id,
+        status: updated.status,
+      });
+    }
+
+    return ok(this.serializeBooking(updated));
   }
 
   async markPaid(id: string, dto: MarkPaidDto, staffId?: string) {
@@ -1550,6 +1613,36 @@ export class BookingsService {
     };
   }
 
+  private serializeHandover(booking: any) {
+    const raw = booking.conditionImages;
+    const evidence = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const images = Array.isArray(evidence.images)
+      ? evidence.images.filter((image: unknown): image is string => typeof image === "string")
+      : Array.isArray(raw)
+        ? raw.filter((image: unknown): image is string => typeof image === "string")
+        : [];
+    const checklist = evidence.checklist && typeof evidence.checklist === "object"
+      ? evidence.checklist
+      : {};
+    const confirmed = booking.handoverStatus === "CONFIRMED";
+
+    return {
+      status: booking.handoverStatus ?? null,
+      conditionBeforeRental: booking.conditionBeforeRental ?? null,
+      images,
+      note: typeof evidence.note === "string" ? evidence.note : null,
+      receiverName: typeof evidence.receivedBy === "string" ? evidence.receivedBy : null,
+      deliveryPersonName: typeof evidence.deliveredBy === "string" ? evidence.deliveredBy : null,
+      receiverPhone: typeof evidence.receiverPhone === "string" ? evidence.receiverPhone : null,
+      correctProduct: typeof checklist.correctProduct === "boolean" ? checklist.correctProduct : null,
+      noVisibleDefect: typeof checklist.noDefectBeforeRental === "boolean" ? checklist.noDefectBeforeRental : null,
+      customerAgreed: typeof checklist.customerAgreed === "boolean" ? checklist.customerAgreed : null,
+      decidedAt: booking.confirmedAt?.toISOString?.() ?? null,
+      receivedAt: confirmed ? booking.confirmedAt?.toISOString?.() ?? null : null,
+      confirmedBy: booking.confirmedBy ?? null,
+    };
+  }
+
   private serializeBooking(booking: any, days?: number) {
     const start = new Date(booking.rentalStartDate);
     const end = new Date(booking.rentalEndDate);
@@ -1591,6 +1684,7 @@ export class BookingsService {
       paidPaymentMethod:
         (booking.payments ?? []).find((p: any) => p.status === PaymentStatus.paid)?.paymentMethod ?? null,
       createdAt: booking.createdAt.toISOString(),
+      handover: this.serializeHandover(booking),
       items: (booking.items ?? []).map((item: any) => ({
         id: item.id,
         garmentSizeId: item.garment_size_id,

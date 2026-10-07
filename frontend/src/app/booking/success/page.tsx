@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { getBooking } from "@/lib/api";
 import type { BookingResponse } from "@/lib/api";
 import { statusBadgeClass, statusOf } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { HandoverSummary } from "@/components/customer/handover-summary";
 
 function formatVND(n: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(n);
@@ -33,19 +35,28 @@ function BookingSuccessInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshBooking = useCallback(async () => {
+    if (!bookingId) return;
+    const res = await getBooking(bookingId);
+    if (res.success && res.data) {
+      setBooking(res.data);
+      setError(null);
+    } else {
+      setError(res.message ?? "Không tải được thông tin đơn.");
+    }
+  }, [bookingId]);
+
   useEffect(() => {
     if (!bookingId) {
       setLoading(false);
       return;
     }
-    getBooking(bookingId)
-      .then((res) => {
-        if (res.success && res.data) setBooking(res.data);
-        else setError(res.message ?? "Không tải được thông tin đơn.");
-      })
+    refreshBooking()
       .catch(() => setError("Không tải được thông tin đơn."))
       .finally(() => setLoading(false));
-  }, [bookingId]);
+  }, [bookingId, refreshBooking]);
+
+  useRealtimeInvalidation(bookingId ? { bookings: refreshBooking } : {}, Boolean(bookingId));
 
   return (
     <div className="flex min-h-screen flex-col bg-mist text-ink">
@@ -85,11 +96,16 @@ function BookingSuccessInner() {
               {loading ? (
                 <div className="mt-6 h-16 animate-pulse rounded-lg bg-stone-100" />
               ) : booking ? (
-                <BookingStatusStepper
-                  status={booking.status}
-                  pickupMethod={booking.pickupMethod}
-                  className="mt-6"
-                />
+                <div>
+                  <BookingStatusStepper
+                    status={booking.status}
+                    pickupMethod={booking.pickupMethod}
+                    className="mt-6"
+                  />
+                  <div className="mt-6">
+                    <HandoverSummary handover={booking.handover} />
+                  </div>
+                </div>
               ) : (
                 <p className="mt-4 text-sm text-stone-500">
                   {error ?? "Không có thông tin tiến trình cho đơn này."}

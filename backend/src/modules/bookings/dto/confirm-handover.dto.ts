@@ -1,4 +1,12 @@
-import { IsArray, IsEnum, IsOptional, IsString, IsUrl, MaxLength } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+} from "class-validator";
 
 export enum HandoverStatus {
   PENDING = "PENDING",
@@ -23,6 +31,33 @@ export class ConfirmHandoverDto {
   @IsArray()
   @IsUrl({}, { each: true })
   conditionImages?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  correctProductConfirmed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  noDefectConfirmed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  customerAgreed?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  deliveredBy?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  receivedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  receiverPhone?: string;
 
   @IsOptional()
   @IsString()

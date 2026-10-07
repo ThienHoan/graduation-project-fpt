@@ -102,7 +102,7 @@ export class BookingsController {
    */
   @Post(":id/confirm-handover")
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("customer", "staff", "manager_owner", "admin")
+  @Roles("staff", "manager_owner", "admin")
   confirmHandover(
     @CurrentUser() user: AuthenticatedUser,
     @Param("id", ParseUUIDPipe) id: string,
