@@ -1219,7 +1219,6 @@ export async function getAllAssets(status?: string) {
 
 export async function createAsset(payload: {
   garmentId: string;
-  garmentSizeId: string;
   assetCode: string;
   garmentSizeId?: string;
   conditionNote?: string;

@@ -1557,11 +1557,10 @@ function InventoryTab({
       )}
 
       {/* Asset Create Modal */}
-      {assetModalOpen && selectedGarmentId && selectedGarment?.sizeId && (
+      {assetModalOpen && selectedGarmentId && selectedGarment && (
         <AssetFormModal
           garmentName={selectedGarment.name}
           garmentId={selectedGarmentId}
-          garmentSizeId={selectedGarment.sizeId}
           submitting={submitting}
           onClose={onCloseAssetModal}
           onSubmit={onSubmitAsset}
@@ -2401,10 +2400,9 @@ function DeleteGarmentConfirmModal({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AssetFormModal({
-  garmentId, garmentSizeId, garmentName, submitting, onClose, onSubmit,
+  garmentId, garmentName, submitting, onClose, onSubmit,
 }: {
   garmentId: string;
-  garmentSizeId: string;
   garmentName: string;
   submitting: boolean;
   onClose: () => void;
@@ -2414,7 +2412,7 @@ function AssetFormModal({
   const [conditionNote, setConditionNote] = useState("");
   const [purchaseCost, setPurchaseCost] = useState("");
   const [sizeOptions, setSizeOptions] = useState<GarmentSizeOption[]>([]);
-  const [garmentSizeId, setGarmentSizeId] = useState("");
+  const [selectedSizeId, setSelectedSizeId] = useState("");
   const [sizesLoading, setSizesLoading] = useState(true);
 
   useEffect(() => {
@@ -2422,7 +2420,7 @@ function AssetFormModal({
     getGarmentSizesByGarment(garmentId).then((res) => {
       if (res.success && res.data) {
         setSizeOptions(res.data);
-        if (res.data.length === 1) setGarmentSizeId(res.data[0].id);
+        if (res.data.length === 1) setSelectedSizeId(res.data[0].id);
       }
       setSizesLoading(false);
     });
@@ -2430,12 +2428,11 @@ function AssetFormModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (sizeOptions.length > 1 && !garmentSizeId) return;
+    if (sizeOptions.length > 1 && !selectedSizeId) return;
     onSubmit({
       garmentId,
-      garmentSizeId,
       assetCode,
-      garmentSizeId: garmentSizeId || undefined,
+      garmentSizeId: selectedSizeId || undefined,
       conditionNote: conditionNote || undefined,
       purchaseCost: purchaseCost ? Number(purchaseCost) : undefined,
     });
@@ -2466,7 +2463,7 @@ function AssetFormModal({
                 {sizeOptions[0].sizeLabel ?? "—"} <span className="font-normal text-stone-400">(size duy nhất, tự động gán)</span>
               </p>
             ) : (
-              <select value={garmentSizeId} onChange={(e) => setGarmentSizeId(e.target.value)} required className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique">
+              <select value={selectedSizeId} onChange={(e) => setSelectedSizeId(e.target.value)} required className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique">
                 <option value="">— Chọn size —</option>
                 {sizeOptions.map((s) => <option key={s.id} value={s.id}>{s.sizeLabel ?? "—"}</option>)}
               </select>

@@ -15,6 +15,7 @@ import { ConfirmModal } from "@/components/heritage/ui";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 
 const HISTORY_PAGE_SIZE = 5;
+const TEST_ORDER_STATUSES = new Set(["pending_confirmation"]);
 
 function formatVND(n: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(n);
@@ -68,6 +69,7 @@ export default function CustomerDashboardPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [sendingBookingId, setSendingBookingId] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
+  const [showPendingTestOrders, setShowPendingTestOrders] = useState(false);
   const [reviewingItem, setReviewingItem] = useState<{ bookingId: string; garmentId: string; garmentName: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{title:string; message:string; danger?:boolean; onConfirm:()=>void} | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -165,8 +167,12 @@ export default function CustomerDashboardPage() {
   const sortedBookings = [...bookings].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
-  const activeBooking = sortedBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
-  const history = sortedBookings.filter((b) => !ACTIVE_BOOKING_STATUSES.has(b.status));
+  const visibleBookings = showPendingTestOrders
+    ? sortedBookings
+    : sortedBookings.filter((b) => !TEST_ORDER_STATUSES.has(b.status));
+  const hiddenPendingTestCount = sortedBookings.length - visibleBookings.length;
+  const activeBooking = visibleBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
+  const history = visibleBookings.filter((b) => !ACTIVE_BOOKING_STATUSES.has(b.status));
   // Đơn khách còn giữ đồ mà đã quá hạn: vẫn nằm trong history, nhưng phải cảnh báo
   // riêng ở đầu mục — số ngày trễ và phí phạt tăng mỗi ngày.
   const overdueBookings = sortedBookings.filter((b) => (b.overdueDays ?? 0) > 0);
@@ -261,6 +267,37 @@ export default function CustomerDashboardPage() {
 
       <div className="grid gap-8 lg:grid-cols-12">
         <div className="space-y-8 lg:col-span-8">
+
+          {hiddenPendingTestCount > 0 && (
+            <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-[20px]">visibility_off</span>
+                <p>
+                  Đang ẩn {hiddenPendingTestCount} đơn chờ xác nhận để dashboard gọn hơn.
+                  Bạn vẫn có thể bật lại để xem hoặc vào staff dashboard để xác nhận/hủy các đơn test này.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPendingTestOrders(true)}
+                className="shrink-0 rounded-lg border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+              >
+                Hiện đơn chờ xác nhận
+              </button>
+            </div>
+          )}
+
+          {showPendingTestOrders && sortedBookings.some((b) => TEST_ORDER_STATUSES.has(b.status)) && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPendingTestOrders(false)}
+                className="rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-600 transition hover:bg-stone-50"
+              >
+                Ẩn đơn chờ xác nhận
+              </button>
+            </div>
+          )}
 
           {/* Đơn đang active */}
           {loading ? (

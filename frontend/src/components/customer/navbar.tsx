@@ -9,7 +9,7 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 
 export function CustomerNavbar({
   active,
-  cartHref = "/booking/review",
+  cartHref = "/booking/date-selection",
 }: {
   active?: "collection" | "tryon";
   cartHref?: string;

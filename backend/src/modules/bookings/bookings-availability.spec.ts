@@ -26,7 +26,13 @@ describe("BookingsService.getSizeAvailabilityCalendar", () => {
 
   beforeEach(() => {
     prisma = createMockPrisma();
-    service = new BookingsService(prisma as never, {} as never, {} as never, {} as never);
+    service = new BookingsService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
   });
 
   it("sweeps each day with the same overlap rule as checkAvailability", async () => {
