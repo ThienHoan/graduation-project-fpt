@@ -9,6 +9,8 @@ import {
   getStaffCompletedRefundBookings,
   getDeliveryMap,
   advanceBookingStatus,
+  markBookingDelivered,
+  markBookingReturned,
   markBookingPaid,
   createRefund,
   updateRefundDetails,
@@ -50,12 +52,9 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
   preparing: [
     { status: "ready_for_pickup", label: "Sẵn sàng nhận", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
-  ready_for_pickup: [
-    { status: "delivering", label: "Đang giao", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  ready_for_pickup: [],
   delivering: [],
   renting: [
-    { status: "returned", label: "Khách đã trả",  style: "bg-lotus text-white hover:bg-oxblood" },
     { status: "overdue",  label: "Đánh dấu quá hạn", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   returned: [
@@ -63,9 +62,7 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
   ],
   // inspection_pending → completed: bị cấm ở staff overview.
   // Việc hoàn tất chỉ được thực hiện qua màn Kiểm tra (/dashboard/staff/inspection).
-  overdue: [
-    { status: "returned", label: "Khách đã trả", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  overdue: [],
 };
 
 type Tab = "pending" | "all" | "refunds" | "map";
@@ -210,6 +207,19 @@ export default function StaffDashboardPage() {
     showSuccess(updated.id, message);
     if (tab === "pending" && updated.status !== "pending_confirmation") {
       setTimeout(() => setBookings((prev) => prev.filter((booking) => booking.id !== updated.id)), 4500);
+    }
+  }
+
+  async function handleOperationalTransition(id: string, action: "delivered" | "returned") {
+    setActioningId(id);
+    setErrorMsg(null);
+    const res = action === "delivered" ? await markBookingDelivered(id) : await markBookingReturned(id);
+    setActioningId(null);
+    if (res.success && res.data) {
+      setBookings((prev) => prev.map((booking) => booking.id === id ? { ...booking, ...res.data } : booking));
+      showSuccess(id, action === "delivered" ? "Đã ghi nhận bàn giao cho đơn vị vận chuyển." : "Đã ghi nhận khách trả trang phục.");
+    } else {
+      setErrorMsg(res.message ?? "Thao tác thất bại.");
     }
   }
 
@@ -693,17 +703,7 @@ export default function StaffDashboardPage() {
                   ) : (
                     (actions.length > 0 || booking.status === "awaiting_payment" || booking.status === "ready_for_pickup" || booking.status === "delivering") && (
                       <>
-                        {booking.status === "awaiting_payment" && (
-                          booking.pickupMethod === "delivery" ? (
-                            <button
-                              type="button"
-                              disabled={isActioning}
-                              onClick={() => handleMarkDeliveryPaid(booking.id)}
-                              className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
-                            >
-                              {isActioning ? "Đang xử lý..." : `Xác nhận đã nhận tiền QR (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
-                            </button>
-                          ) : (
+                        {booking.status === "awaiting_payment" && booking.pickupMethod !== "delivery" && (
                             <button
                               type="button"
                               disabled={isActioning}
@@ -712,16 +712,35 @@ export default function StaffDashboardPage() {
                             >
                               {isActioning ? "Đang xử lý..." : `Đã thanh toán (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
                             </button>
-                          )
                         )}
-                        {(booking.status === "ready_for_pickup" || booking.status === "delivering") && (
+                        {booking.status === "ready_for_pickup" && booking.pickupMethod === "delivery" && booking.handover?.status !== "REJECTED" && (
+                          <button
+                            type="button"
+                            disabled={isActioning}
+                            onClick={() => void handleOperationalTransition(booking.id, "delivered")}
+                            className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                          >
+                            {isActioning ? "Đang xử lý..." : "Đã bàn giao cho đơn vị vận chuyển"}
+                          </button>
+                        )}
+                        {(booking.status === "ready_for_pickup" && booking.pickupMethod === "store_pickup" || booking.status === "delivering" || booking.status === "renting") && booking.handover?.status !== "REJECTED" && (
                           <button
                             type="button"
                             disabled={isActioning}
                             onClick={() => openHandover(booking)}
                             className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
                           >
-                            {isActioning ? "Đang xử lý..." : booking.status === "delivering" ? "Xác nhận đã giao" : "Xác nhận bàn giao"}
+                            {isActioning ? "Đang xử lý..." : "Xác nhận bàn giao"}
+                          </button>
+                        )}
+                        {(booking.status === "renting" || booking.status === "overdue") && (
+                          <button
+                            type="button"
+                            disabled={isActioning}
+                            onClick={() => void handleOperationalTransition(booking.id, "returned")}
+                            className="rounded-lg bg-lotus px-4 py-2 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
+                          >
+                            {isActioning ? "Đang xử lý..." : "Ghi nhận đã trả đồ"}
                           </button>
                         )}
                         {actions.map((action) => {

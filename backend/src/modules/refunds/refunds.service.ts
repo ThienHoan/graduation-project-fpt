@@ -7,6 +7,7 @@ import { RealtimeService } from "../realtime/realtime.service";
 import type { CreateRefundDto } from "./dto/create-refund.dto";
 import type { UpdateRefundDetailsDto } from "./dto/update-refund-details.dto";
 import type { UpdateRefundStatusDto } from "./dto/update-refund.dto";
+import { assertOwnedEvidenceUrl } from "../../common/validation/evidence-url";
 
 const MUTABLE_REFUND_STATUSES: PaymentStatus[] = [PaymentStatus.pending, PaymentStatus.refunding];
 
@@ -249,17 +250,31 @@ export class RefundsService {
       }
       const isBankTransfer = refund.refund_method === "bank_transfer";
       if (isBankTransfer) {
+        if (!dto.proofImageUrl?.trim()) throw new BadRequestException("Cần cung cấp ảnh bill chuyển khoản.");
+        assertOwnedEvidenceUrl(dto.proofImageUrl, { purpose: "refund-proof", ownerId: managerId });
         this.assertBankDetails({
           bankName: refund.bank_name,
           bankAccountNumber: refund.bank_account_number,
           bankAccountHolder: refund.bank_account_holder,
         });
-        if (!dto.proofImageUrl?.trim()) throw new BadRequestException("Cần cung cấp ảnh bill chuyển khoản.");
+      }
+      if (dto.proofImageUrl?.trim() && !isBankTransfer) {
+        assertOwnedEvidenceUrl(dto.proofImageUrl, { purpose: "refund-proof", ownerId: managerId });
       }
 
-      const liveDeposit = Number(refund.booking.depositTotal);
-      const livePenalty = Number(refund.booking.penaltyTotal);
-      const liveRefundAmount = Math.max(0, liveDeposit - livePenalty);
+      const cancellationMarker = await tx.financialTransaction.findFirst({
+        where: { refundId: id, transactionType: "refund_cancellation_intent", note: "booking_cancellation_full_collected" },
+        select: { id: true },
+      });
+      const isCancellationRefund = Boolean(cancellationMarker) ||
+        refund.booking.status === BookingStatus.cancelled || refund.booking.status === BookingStatus.rejected;
+
+      // Cancellation/rejection refunds are based on actual paid money, never
+      // on the deposit-minus-penalty formula used after a completed rental.
+      const liveRefundAmount = isCancellationRefund
+        ? Number((await tx.payment.aggregate({ where: { bookingId: refund.bookingId, status: PaymentStatus.paid }, _sum: { amount: true } }))._sum.amount ?? 0) -
+          Number((await tx.refund.aggregate({ where: { bookingId: refund.bookingId, id: { not: id }, status: { in: [PaymentStatus.pending, PaymentStatus.refunding, PaymentStatus.refunded, PaymentStatus.partially_refunded] } }, _sum: { amount: true } }))._sum.amount ?? 0)
+        : Math.max(0, Number(refund.booking.depositTotal) - Number(refund.booking.penaltyTotal));
       const frozenAmount = Number(refund.amount);
 
       if (liveRefundAmount <= 0) {
@@ -283,7 +298,7 @@ export class RefundsService {
         );
       }
 
-      if (Math.round(liveRefundAmount) !== Math.round(frozenAmount)) {
+      if (!isCancellationRefund && Math.round(liveRefundAmount) !== Math.round(frozenAmount)) {
         throw new BadRequestException(
           `Số tiền hoàn đã thay đổi kể từ lúc tạo yêu cầu (lúc tạo: ${frozenAmount.toLocaleString("vi-VN")}đ, hiện tại: ${liveRefundAmount.toLocaleString("vi-VN")}đ) ` +
           `do tiền phạt của đơn đã cập nhật. Vui lòng từ chối yêu cầu này rồi tạo lại yêu cầu hoàn cọc mới để lấy đúng số tiền.`,
@@ -305,13 +320,16 @@ export class RefundsService {
         data: {
           bookingId: refund.bookingId,
           refundId: id,
-          transactionType: isBankTransfer ? "refund_bank_transfer_approved" : "refund_cash",
+          transactionType: isCancellationRefund
+            ? (isBankTransfer ? "refund_cancellation_bank_transfer" : "refund_cancellation_cash")
+            : (isBankTransfer ? "refund_bank_transfer_approved" : "refund_cash"),
           amount: Number(refund.amount),
-          note: dto.note ?? `Đã duyệt hoàn cọc ${isBankTransfer ? "chuyển khoản" : "tiền mặt"}.`,
+          note: dto.note ?? `Đã duyệt hoàn ${isCancellationRefund ? "tiền thực thu do hủy đơn" : "cọc"} ${isBankTransfer ? "chuyển khoản" : "tiền mặt"}.`,
         },
       });
 
       if (
+        !isCancellationRefund &&
         (dto.status === PaymentStatus.refunded || dto.status === PaymentStatus.partially_refunded) &&
         refund.booking.status === BookingStatus.refund_pending
       ) {
@@ -361,11 +379,16 @@ export class RefundsService {
       bookingId: updated!.bookingId,
       status: updated!.status,
     });
-    this.realtime.bookingChanged({
-      id: updated!.bookingId,
-      bookingId: updated!.bookingId,
-      status: BookingStatus.completed,
-    });
+    // A cancellation/rejection refund must not make a cancelled booking look
+    // completed to staff or the customer. Only the ordinary deposit workflow
+    // transitions refund_pending to completed above.
+    if (!notifyData || ![BookingStatus.cancelled, BookingStatus.rejected].includes((updated as any).booking?.status)) {
+      this.realtime.bookingChanged({
+        id: updated!.bookingId,
+        bookingId: updated!.bookingId,
+        status: BookingStatus.completed,
+      });
+    }
     if (notifyData) {
       this.realtime.refundChangedForCustomer(notifyData.customerId, {
         id: updated!.id,
@@ -375,7 +398,11 @@ export class RefundsService {
       this.realtime.bookingChangedForCustomer(notifyData.customerId, {
         id: updated!.bookingId,
         bookingId: updated!.bookingId,
-        status: BookingStatus.completed,
+        status: [BookingStatus.cancelled, BookingStatus.rejected].includes(
+          (updated as any).booking?.status,
+        )
+          ? (updated as any).booking.status
+          : BookingStatus.completed,
       });
     }
 
@@ -441,6 +468,7 @@ export class RefundsService {
       booking: {
         select: {
           id: true,
+          status: true,
           customerId: true,
           depositTotal: true,
           penaltyTotal: true,

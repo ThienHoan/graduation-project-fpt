@@ -29,6 +29,7 @@ export function HandoverSummary({ handover, compact = false }: Props) {
   const isConfirmed = handover.status === "CONFIRMED";
   const statusLabel = isConfirmed ? "Đã xác nhận" : handover.status === "REJECTED" ? "Bị từ chối" : "Đang chờ xác nhận";
   const statusClass = isConfirmed ? "bg-jade/10 text-jade" : handover.status === "REJECTED" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700";
+  const receivedAt = handover.receivedAt ? new Date(handover.receivedAt).toLocaleString("vi-VN") : null;
   const decidedAt = handover.decidedAt ? new Date(handover.decidedAt).toLocaleString("vi-VN") : null;
 
   return (
@@ -49,9 +50,15 @@ export function HandoverSummary({ handover, compact = false }: Props) {
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">Tình trạng sản phẩm</p>
           <p className="mt-1 font-medium text-ink">{handover.conditionBeforeRental ? conditionLabels[handover.conditionBeforeRental] : "—"}</p>
         </div>
-        {decidedAt && (
+        {isConfirmed && receivedAt && (
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">Thời gian nhận</p>
+            <p className="mt-1 font-medium text-ink">{receivedAt}</p>
+          </div>
+        )}
+        {decidedAt && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">{handover.status === "REJECTED" ? "Thời gian từ chối" : "Thời gian quyết định"}</p>
             <p className="mt-1 font-medium text-ink">{decidedAt}</p>
           </div>
         )}

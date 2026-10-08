@@ -82,15 +82,8 @@ export class FinancialService {
       }),
       this.prisma.booking.aggregate({
         where: {
-          status: {
-            notIn: [
-              BookingStatus.draft,
-              BookingStatus.pending_confirmation,
-              BookingStatus.cancelled,
-              BookingStatus.rejected,
-              BookingStatus.awaiting_payment,
-            ],
-          },
+          status: { in: DEPOSIT_HOLDING_STATUSES },
+          payments: { some: { status: PaymentStatus.paid } },
           ...bookingDateFilter,
           ...paymentMethodFilter,
         },

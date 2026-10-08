@@ -174,7 +174,7 @@ async function handleConsult() {
     const s = selectedSize;
     addToCart({
       garmentSizeId: s.garmentSizeId,
-      garmentId: s.garmentSizeId || "",
+      garmentId: group.garmentId,
       name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
       sizeLabel: s.sizeLabel,
       dailyPrice: s.dailyPrice,
@@ -190,7 +190,7 @@ async function handleConsult() {
     const s = selectedSize;
     addToCart({
       garmentSizeId: s.garmentSizeId,
-      garmentId: s.garmentSizeId || "",
+      garmentId: group.garmentId,
       name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
       sizeLabel: s.sizeLabel,
       dailyPrice: s.dailyPrice,

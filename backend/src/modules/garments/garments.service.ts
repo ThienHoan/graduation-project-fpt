@@ -1,12 +1,14 @@
 import {
   BadRequestException,
   Injectable,
+  ConflictException,
   NotFoundException,
 } from "@nestjs/common";
 import { AssetStatus, Prisma } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { assertAssetScheduleAvailable } from "../bookings/booking-reservations";
 import type { CreateGarmentDto } from "./dto/create-garment.dto";
 import type { UpdateGarmentDto } from "./dto/update-garment.dto";
 import type { AddGarmentImageDto } from "./dto/add-image.dto";
@@ -260,7 +262,7 @@ export class GarmentsService {
 
   // ── Available assets for booking ───────────────────────────────────────────
 
-  async findAvailableAssets(garmentId: string, garmentSizeId?: string) {
+  async findAvailableAssets(garmentId: string, garmentSizeId?: string, bookingId?: string) {
     const garment = await this.prisma.garment.findFirst({
       where: { id: garmentId, isActive: true, deletedAt: null },
     });
@@ -273,15 +275,32 @@ export class GarmentsService {
       if (!size) throw new NotFoundException("Garment size not found.");
     }
 
+    const booking = bookingId ? await this.prisma.booking.findUnique({ where: { id: bookingId } }) : null;
+    if (bookingId && !booking) throw new NotFoundException("Booking not found.");
     const assets = await this.prisma.garmentAsset.findMany({
       where: {
         garmentId,
-        status: "available",
+        status: booking ? { in: [AssetStatus.available, AssetStatus.reserved, AssetStatus.rented] } : AssetStatus.available,
         ...(garmentSizeId ? { garment_size_id: garmentSizeId } : {}),
       },
       orderBy: { assetCode: "asc" },
     });
-    return ok(assets.map((a) => ({ id: a.id, assetCode: a.assetCode, status: a.status, conditionNote: a.conditionNote })));
+    const available = [];
+    for (const asset of assets) {
+      if (booking) {
+        try {
+          await assertAssetScheduleAvailable(this.prisma, {
+            assetId: asset.id, bookingId: booking.id, garmentId, garmentSizeId,
+            startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+          });
+        } catch (error) {
+          if (error instanceof ConflictException || error instanceof BadRequestException) continue;
+          throw error;
+        }
+      }
+      available.push({ id: asset.id, assetCode: asset.assetCode, status: asset.status, conditionNote: asset.conditionNote });
+    }
+    return ok(available);
   }
 
   async findAllGrouped(search?: string, category?: string) {

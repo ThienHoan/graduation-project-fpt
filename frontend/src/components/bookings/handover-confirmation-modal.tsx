@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { readStoredSession } from "@/lib/auth";
+import { uploadFile } from "@/lib/upload";
 import {
   confirmBookingHandover,
   type BookingResponse,
@@ -30,7 +31,8 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
   const [deliveredBy, setDeliveredBy] = useState("");
   const [receivedBy, setReceivedBy] = useState("");
   const [receiverPhone, setReceiverPhone] = useState("");
-  const [imageUrls, setImageUrls] = useState<string[]>([""]);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState<"CONFIRMED" | "REJECTED" | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -43,9 +45,10 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
     setNoVisibleDefect(false);
     setCustomerAgreed(false);
     setDeliveredBy(session?.user.fullName ?? session?.user.email ?? "");
-    setReceivedBy(booking.deliveryAddress?.receiverName ?? booking.customerName ?? "");
-    setReceiverPhone(booking.deliveryAddress?.phone ?? booking.customerPhone ?? "");
-    setImageUrls([""]);
+    setReceivedBy(booking.deliverySnapshot?.receiverName ?? booking.deliveryAddress?.receiverName ?? booking.customerName ?? "");
+    setReceiverPhone(booking.deliverySnapshot?.phone ?? booking.deliveryAddress?.phone ?? booking.customerPhone ?? "");
+    setImageUrls([]);
+    setUploadingImage(false);
     setNote("");
     setSubmitting(null);
     setFormError(null);
@@ -58,19 +61,25 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
 
   if (!booking) return null;
 
-  function updateImage(index: number, value: string) {
-    setImageUrls((current) => current.map((url, candidate) => (candidate === index ? value : url)));
-  }
-
-  function validateImageUrls() {
-    return normalizedImages.every((value) => {
-      try {
-        const url = new URL(value);
-        return url.protocol === "http:" || url.protocol === "https:";
-      } catch {
-        return false;
-      }
-    });
+  async function handleImageSelect(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) return;
+    if (imageUrls.length + files.length > 20) {
+      setFormError("Chỉ được tải tối đa 20 ảnh bàn giao.");
+      return;
+    }
+    setUploadingImage(true);
+    setFormError(null);
+    try {
+      const uploaded: string[] = [];
+      for (const file of files) uploaded.push(await uploadFile(file, "handover"));
+      setImageUrls((current) => [...current, ...uploaded]);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Tải ảnh bàn giao thất bại.");
+    } finally {
+      setUploadingImage(false);
+    }
   }
 
   async function submit(handoverStatus: "CONFIRMED" | "REJECTED") {
@@ -78,10 +87,6 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
     const bookingId = booking.id;
     setFormError(null);
 
-    if (!validateImageUrls()) {
-      setFormError("Ảnh bàn giao phải là URL http/https hợp lệ.");
-      return;
-    }
     if (handoverStatus === "CONFIRMED") {
       if (!correctProduct || !customerAgreed) {
         setFormError("Cần xác nhận đúng sản phẩm và người nhận đồng ý.");
@@ -113,33 +118,40 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
     }
 
     setSubmitting(handoverStatus);
-    const response = await confirmBookingHandover(bookingId, {
-      handoverStatus,
-      conditionBeforeRental: condition,
-      conditionImages: normalizedImages,
-      correctProductConfirmed: correctProduct,
-      noDefectConfirmed: noVisibleDefect,
-      customerAgreed,
-      deliveredBy: deliveredBy.trim() || undefined,
-      receivedBy: receivedBy.trim() || undefined,
-      receiverPhone: receiverPhone.trim() || undefined,
-      note: note.trim() || undefined,
-    });
-    setSubmitting(null);
+    try {
+      const response = await confirmBookingHandover(bookingId, {
+        handoverStatus,
+        conditionBeforeRental: condition,
+        conditionImages: normalizedImages,
+        correctProductConfirmed: correctProduct,
+        noDefectConfirmed: noVisibleDefect,
+        customerAgreed,
+        deliveredBy: deliveredBy.trim() || undefined,
+        receivedBy: receivedBy.trim() || undefined,
+        receiverPhone: receiverPhone.trim() || undefined,
+        note: note.trim() || undefined,
+      });
 
-    if (!response.success || !response.data) {
-      const message = response.message ?? "Không thể cập nhật biên bản bàn giao.";
+      if (!response.success || !response.data) {
+        const message = response.message ?? "Không thể cập nhật biên bản bàn giao.";
+        setFormError(message);
+        onError(message);
+        return;
+      }
+
+      onCompleted(
+        response.data,
+        handoverStatus === "CONFIRMED"
+          ? "Đã xác nhận bàn giao và chuyển đơn sang trạng thái đang thuê."
+          : "Đã ghi nhận từ chối bàn giao. Trạng thái đơn được giữ nguyên.",
+      );
+    } catch {
+      const message = "Không thể kết nối đến máy chủ. Vui lòng thử lại.";
       setFormError(message);
       onError(message);
-      return;
+    } finally {
+      setSubmitting(null);
     }
-
-    onCompleted(
-      response.data,
-      handoverStatus === "CONFIRMED"
-        ? "Đã xác nhận bàn giao và chuyển đơn sang trạng thái đang thuê."
-        : "Đã ghi nhận từ chối bàn giao. Trạng thái đơn được giữ nguyên.",
-    );
   }
 
   const busy = submitting !== null;
@@ -242,19 +254,20 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-ink">Ảnh tại thời điểm bàn giao</h3>
-                <p className="mt-1 text-xs text-stone-500">Nhập URL ảnh đã tải lên kho lưu trữ.</p>
+                <p className="mt-1 text-xs text-stone-500">Tải ảnh sản phẩm tại thời điểm bàn giao.</p>
               </div>
-              <button type="button" onClick={() => setImageUrls((current) => [...current, ""])} className="rounded-lg border border-sand px-3 py-2 text-xs font-semibold text-lotus transition hover:bg-parchment">+ Thêm ảnh</button>
+              <label className="cursor-pointer rounded-lg border border-sand px-3 py-2 text-xs font-semibold text-lotus transition hover:bg-parchment">
+                {uploadingImage ? "Đang tải..." : "+ Tải ảnh"}
+                <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(event) => void handleImageSelect(event)} disabled={busy || uploadingImage} />
+              </label>
             </div>
-            <div className="mt-3 space-y-2">
+            <p className="mt-1 text-xs text-stone-500">Ảnh được tải qua kho bằng chứng dành riêng cho bàn giao.</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {imageUrls.map((url, index) => (
-                <div key={index} className="flex gap-2">
-                  <input value={url} onChange={(event) => updateImage(index, event.target.value)} className="min-w-0 flex-1 rounded-lg border border-sand px-3 py-2.5 text-sm outline-none focus:border-lotus" placeholder="https://..." />
-                  {imageUrls.length > 1 && (
-                    <button type="button" onClick={() => setImageUrls((current) => current.filter((_, candidate) => candidate !== index))} className="rounded-lg border border-red-200 px-3 text-red-600 transition hover:bg-red-50" aria-label={`Xóa ảnh ${index + 1}`}>
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
-                  )}
+                <div key={url} className="relative overflow-hidden rounded-lg border border-sand">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`Ảnh bàn giao ${index + 1}`} className="h-24 w-full object-cover" />
+                  <button type="button" onClick={() => setImageUrls((current) => current.filter((_, candidate) => candidate !== index))} className="absolute right-1 top-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white" aria-label={`Xóa ảnh ${index + 1}`}>×</button>
                 </div>
               ))}
             </div>

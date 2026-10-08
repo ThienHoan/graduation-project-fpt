@@ -6,7 +6,7 @@ import { Suspense, useEffect, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { createBooking, createPaymentLink, getMyAddresses, type CustomerAddress } from "@/lib/api";
+import { createBooking, createPaymentLink, getMyAddresses, normalizePickupMethod, type CustomerAddress, type PickupMethod } from "@/lib/api";
 import { getCart, clearCart, type CartItem } from "@/lib/cart";
 
 function formatVND(amount: number) {
@@ -38,7 +38,8 @@ function BookingReviewInner() {
 
   const startDate = searchParams.get("startDate") ?? "";
   const endDate = searchParams.get("endDate") ?? "";
-  const pickupMethod = searchParams.get("pickupMethod") ?? "store_pickup";
+  const pickupMethod: PickupMethod | null = normalizePickupMethod(searchParams.get("pickupMethod")) ??
+    (searchParams.has("pickupMethod") ? null : "store_pickup");
   const deliveryAddressId = searchParams.get("deliveryAddressId") ?? "";
   const shippingFeeParam = searchParams.get("shippingFee") ?? "0";
   const shippingFee = parseInt(shippingFeeParam, 10) || 0;
@@ -49,6 +50,7 @@ function BookingReviewInner() {
   const [deliveryAddress, setDeliveryAddress] = useState<CustomerAddress | null>(null);
   const [addressLoading, setAddressLoading] = useState(false);
   const isDelivery = pickupMethod === "delivery";
+  const invalidPickupMethod = pickupMethod === null;
   // Đơn giao tận nơi bắt buộc thanh toán QR trước khi giao
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "qr_code">(isDelivery ? "qr_code" : "cash");
 
@@ -83,7 +85,10 @@ function BookingReviewInner() {
   }, [deliveryAddressId, pickupMethod]);
 
   async function handleConfirm() {
-    if (cartItems.length === 0 || !startDate || !endDate) return;
+    if (cartItems.length === 0 || !startDate || !endDate || invalidPickupMethod || !pickupMethod) {
+      setErrorMsg("Phương thức nhận đồ không hợp lệ. Vui lòng quay lại bước vận chuyển.");
+      return;
+    }
     if (pickupMethod === "delivery" && !deliveryAddressId) {
       setErrorMsg("Vui lòng chọn địa chỉ giao nhận.");
       return;
@@ -128,9 +133,22 @@ function BookingReviewInner() {
     }
   }
 
-  const backParams = new URLSearchParams({ startDate, endDate, pickupMethod });
+  const backParams = new URLSearchParams({ startDate, endDate, pickupMethod: pickupMethod ?? "store_pickup" });
   if (deliveryAddressId) backParams.set("deliveryAddressId", deliveryAddressId);
   if (shippingFee > 0) backParams.set("shippingFee", String(shippingFee));
+
+  if (invalidPickupMethod) {
+    return (
+      <BookingFlowShell currentStep="review" title="Phương thức nhận đồ không hợp lệ" description="">
+        <div className="py-20 text-center text-stone-500">
+          <p>Vui lòng quay lại bước vận chuyển để chọn lại phương thức nhận đồ.</p>
+          <Link href={`/booking/logistics?${new URLSearchParams({ startDate, endDate }).toString()}`} className="mt-6 inline-flex rounded-lg bg-lotus px-6 py-3 text-sm font-semibold text-white">
+            Quay lại vận chuyển
+          </Link>
+        </div>
+      </BookingFlowShell>
+    );
+  }
 
   if (cartItems.length === 0) {
     return (

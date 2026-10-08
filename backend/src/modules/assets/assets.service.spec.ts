@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssetsService } from "./assets.service";
 
@@ -7,19 +7,15 @@ const SIZE_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_SIZE_ID = "33333333-3333-4333-8333-333333333333";
 
 function createMockPrisma() {
-  return {
-    garment: {
-      findUnique: vi.fn(),
-    },
-    garment_sizes: {
-      findFirst: vi.fn(),
-      findMany: vi.fn(),
-    },
-    garmentAsset: {
-      findUnique: vi.fn(),
-      create: vi.fn(),
-    },
+  const prisma = {
+    garment: { findUnique: vi.fn() },
+    garment_sizes: { findFirst: vi.fn(), findMany: vi.fn() },
+    garmentAsset: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+    bookingItem: { findFirst: vi.fn() },
+    runSerializable: vi.fn(),
   };
+  prisma.runSerializable.mockImplementation(async (operation: (tx: any) => Promise<unknown>) => operation(prisma as any));
+  return prisma;
 }
 
 type MockPrisma = ReturnType<typeof createMockPrisma>;
@@ -122,5 +118,40 @@ describe("AssetsService.create", () => {
     await expect(
       service.create({ garmentId: GARMENT_ID, assetCode: "A-006" }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe("AssetsService.updateStatus", () => {
+  let prisma: MockPrisma;
+  let service: AssetsService;
+
+  beforeEach(() => {
+    prisma = createMockPrisma();
+    service = new AssetsService(prisma as never);
+  });
+
+  it("rejects direct reserved and rented mutations", async () => {
+    prisma.garmentAsset.findUnique.mockResolvedValue({ id: "asset-1", status: "available" });
+    await expect(service.updateStatus("asset-1", { status: "reserved" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.updateStatus("asset-1", { status: "rented" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.garmentAsset.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct lifecycle changes while an active booking assignment owns the asset", async () => {
+    prisma.garmentAsset.findUnique.mockResolvedValue({ id: "asset-1", status: "available" });
+    prisma.bookingItem.findFirst.mockResolvedValue({ bookingId: "booking-1" });
+    await expect(service.updateStatus("asset-1", { status: "retired" })).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.garmentAsset.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("uses serializable CAS for an unassigned maintenance transition", async () => {
+    prisma.garmentAsset.findUnique
+      .mockResolvedValueOnce({ id: "asset-1", status: "available" })
+      .mockResolvedValueOnce({ id: "asset-1", assetCode: "A-1", status: "retired", conditionNote: "note", garment: { name: "Ao dai" }, garment_sizes: { size_label: "M" }, updatedAt: new Date("2026-01-01") });
+    prisma.bookingItem.findFirst.mockResolvedValue(null);
+    prisma.garmentAsset.updateMany.mockResolvedValue({ count: 1 });
+    await expect(service.updateStatus("asset-1", { status: "retired", note: "note" })).resolves.toMatchObject({ data: { status: "retired" } });
+    expect(prisma.runSerializable).toHaveBeenCalledTimes(1);
+    expect(prisma.garmentAsset.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "asset-1", status: "available" } }));
   });
 });

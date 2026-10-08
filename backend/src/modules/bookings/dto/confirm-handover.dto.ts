@@ -1,5 +1,6 @@
 import {
   IsArray,
+  ArrayMaxSize,
   IsBoolean,
   IsEnum,
   IsOptional,
@@ -29,7 +30,9 @@ export class ConfirmHandoverDto {
 
   @IsOptional()
   @IsArray()
-  @IsUrl({}, { each: true })
+  @ArrayMaxSize(20)
+  @MaxLength(2048, { each: true })
+  @IsUrl({ protocols: ["http", "https"], require_protocol: true }, { each: true })
   conditionImages?: string[];
 
   @IsOptional()

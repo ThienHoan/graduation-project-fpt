@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { uploadFile, deleteUploadedFile } from "@/lib/upload";
 import { useRouter } from "next/navigation";
 import { ManagerPortalShell, ConfirmModal } from "@/components/heritage/ui";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -15,7 +16,7 @@ import {
   approveRefund,
   rejectRefund,
   type RefundResponse,
-getGarments,
+  getGarments,
   getGarmentById,
   getAssetsByGarment,
   getAssetById,
@@ -66,6 +67,8 @@ getGarments,
   type FinancialQueryParams,
   type FinancialTransactionItem,
   type ReconciliationResponse,
+  recoverBookingHandover,
+  type HandoverRecoveryPayload,
 } from "@/lib/api";
 
 function formatDate(iso: string) {
@@ -74,7 +77,10 @@ function formatDate(iso: string) {
 }
 
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+  }).format(amount);
 }
 
 function formatCompactVND(amount: number) {
@@ -86,33 +92,107 @@ function formatCompactVND(amount: number) {
 }
 
 const ASSET_STATUS_META: Record<string, { label: string; color: string }> = {
-  available:         { label: "Sẵn sàng",       color: "bg-state-available/10 text-state-available border border-state-available/20" },
-  reserved:          { label: "Đã giữ chỗ",     color: "bg-amber-100 text-amber-700 border border-amber-200" },
-  rented:            { label: "Đang thuê",      color: "bg-state-rented/10 text-state-rented border border-state-rented/20" },
-  inspection_pending:{ label: "Chờ kiểm tra",   color: "bg-orange-100 text-orange-700 border border-orange-200" },
-  cleaned:           { label: "Đã làm sạch",     color: "bg-jade/10 text-jade border border-jade/20" },
-  laundry:           { label: "Giặt sấy",       color: "bg-state-laundry/10 text-state-laundry border border-state-laundry/20" },
-  maintenance:       { label: "Bảo trì",        color: "bg-state-maintenance/10 text-state-maintenance border border-state-maintenance/20" },
-  damaged:           { label: "Hư hỏng",        color: "bg-state-damaged/10 text-state-damaged border border-state-damaged/20" },
-  retired:           { label: "Đã thanh lý",    color: "bg-stone-100 text-stone-500 border border-stone-200" },
-  lost:              { label: "Mất",            color: "bg-red-100 text-red-700 border border-red-200" },
+  available: {
+    label: "Sẵn sàng",
+    color:
+      "bg-state-available/10 text-state-available border border-state-available/20",
+  },
+  reserved: {
+    label: "Đã giữ chỗ",
+    color: "bg-amber-100 text-amber-700 border border-amber-200",
+  },
+  rented: {
+    label: "Đang thuê",
+    color: "bg-state-rented/10 text-state-rented border border-state-rented/20",
+  },
+  inspection_pending: {
+    label: "Chờ kiểm tra",
+    color: "bg-orange-100 text-orange-700 border border-orange-200",
+  },
+  cleaned: {
+    label: "Đã làm sạch",
+    color: "bg-jade/10 text-jade border border-jade/20",
+  },
+  laundry: {
+    label: "Giặt sấy",
+    color:
+      "bg-state-laundry/10 text-state-laundry border border-state-laundry/20",
+  },
+  maintenance: {
+    label: "Bảo trì",
+    color:
+      "bg-state-maintenance/10 text-state-maintenance border border-state-maintenance/20",
+  },
+  damaged: {
+    label: "Hư hỏng",
+    color:
+      "bg-state-damaged/10 text-state-damaged border border-state-damaged/20",
+  },
+  retired: {
+    label: "Đã thanh lý",
+    color: "bg-stone-100 text-stone-500 border border-stone-200",
+  },
+  lost: {
+    label: "Mất",
+    color: "bg-red-100 text-red-700 border border-red-200",
+  },
 };
 
 const ASSET_STATUS_ORDER = [
-  "available", "reserved", "rented", "inspection_pending", "laundry", "maintenance",
-  "cleaned", "damaged", "retired", "lost",
+  "available",
+  "reserved",
+  "rented",
+  "inspection_pending",
+  "laundry",
+  "maintenance",
+  "cleaned",
+  "damaged",
+  "retired",
+  "lost",
 ] as const;
 
 const ACTIVE_STATUSES = [
-  "confirmed", "awaiting_payment", "paid", "preparing",
-  "ready_for_pickup", "delivering", "renting", "returned", "inspection_pending", "overdue",
+  "confirmed",
+  "awaiting_payment",
+  "paid",
+  "preparing",
+  "ready_for_pickup",
+  "delivering",
+  "renting",
+  "returned",
+  "inspection_pending",
+  "overdue",
 ];
 
-const REVENUE_STATUSES = ["completed", "renting", "returned", "inspection_pending"];
+const REVENUE_STATUSES = [
+  "completed",
+  "renting",
+  "returned",
+  "inspection_pending",
+];
 
-type Tab = "overview" | "assets" | "inventory" | "inspection-log" | "laundry" | "damaged" | "finance" | "refunds";
+type Tab =
+  | "overview"
+  | "assets"
+  | "inventory"
+  | "inspection-log"
+  | "laundry"
+  | "damaged"
+  | "finance"
+  | "refunds"
+  | "rejected-handovers";
 
-const VALID_TABS: Tab[] = ["overview", "assets", "inventory", "inspection-log", "laundry", "damaged", "finance", "refunds"];
+const VALID_TABS: Tab[] = [
+  "overview",
+  "assets",
+  "inventory",
+  "inspection-log",
+  "laundry",
+  "damaged",
+  "finance",
+  "refunds",
+  "rejected-handovers",
+];
 
 function tabFromHash(): Tab {
   const hash = window.location.hash.replace("#", "");
@@ -120,14 +200,43 @@ function tabFromHash(): Tab {
 }
 
 const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
-  overview:      { title: "Tổng Quan Vận Hành",        subtitle: "Theo dõi doanh thu, đơn thuê và tình trạng kho theo thời gian thực." },
-  assets:        { title: "Gán Tài Sản",             subtitle: "Gán tài sản vật lý cho các đơn đặt chỗ." },
-  inventory:     { title: "Quản Lý Kho Trang Phục",          subtitle: "Quản lý mẫu trang phục, ảnh catalog và tài sản vật lý." },
-  "inspection-log": { title: "Nhật Ký Kiểm Tra",     subtitle: "Lịch sử kiểm tra tình trạng trang phục sau khi trả." },
-  laundry:       { title: "Giặt Sấy",                subtitle: "Quản lý hàng chờ giặt sấy và điều phối." },
-  damaged:       { title: "Hư Hỏng & Mất",           subtitle: "Báo cáo tài sản hư hỏng, mất và bảo trì." },
-  finance:       { title: "Đối Soát Tài Chính",                subtitle: "Theo dõi doanh thu, tiền cọc và phí phạt phát sinh." },
-  refunds:       { title: "Duyệt Hoàn Cọc",                subtitle: "Kiểm duyệt yêu cầu hoàn tiền cọc cho khách." },
+  overview: {
+    title: "Tổng Quan Vận Hành",
+    subtitle:
+      "Theo dõi doanh thu, đơn thuê và tình trạng kho theo thời gian thực.",
+  },
+  assets: {
+    title: "Gán Tài Sản",
+    subtitle: "Gán tài sản vật lý cho các đơn đặt chỗ.",
+  },
+  inventory: {
+    title: "Quản Lý Kho Trang Phục",
+    subtitle: "Quản lý mẫu trang phục, ảnh catalog và tài sản vật lý.",
+  },
+  "inspection-log": {
+    title: "Nhật Ký Kiểm Tra",
+    subtitle: "Lịch sử kiểm tra tình trạng trang phục sau khi trả.",
+  },
+  laundry: {
+    title: "Giặt Sấy",
+    subtitle: "Quản lý hàng chờ giặt sấy và điều phối.",
+  },
+  damaged: {
+    title: "Hư Hỏng & Mất",
+    subtitle: "Báo cáo tài sản hư hỏng, mất và bảo trì.",
+  },
+  "rejected-handovers": {
+    title: "Từ Chối Bàn Giao",
+    subtitle: "Xử lý các biên bản bàn giao bị khách từ chối.",
+  },
+  finance: {
+    title: "Đối Soát Tài Chính",
+    subtitle: "Theo dõi doanh thu, tiền cọc và phí phạt phát sinh.",
+  },
+  refunds: {
+    title: "Duyệt Hoàn Cọc",
+    subtitle: "Kiểm duyệt yêu cầu hoàn tiền cọc cho khách.",
+  },
 };
 
 export default function ManagerDashboardPage() {
@@ -138,13 +247,20 @@ export default function ManagerDashboardPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [bookings, setBookings] = useState<StaffBookingResponse[]>([]);
   // Đơn completed còn cọc (kèm trạng thái refund) — dùng để tính "tiền cọc đang giữ"
-  const [completedRefundBookings, setCompletedRefundBookings] = useState<StaffBookingResponse[]>([]);
+  const [completedRefundBookings, setCompletedRefundBookings] = useState<
+    StaffBookingResponse[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successAssignId, setSuccessAssignId] = useState<string | null>(null);
   const [successAssignMsg, setSuccessAssignMsg] = useState<string | null>(null);
-  const successAssignTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const successAssignTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const [toast, setToast] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function showToast(type: "success" | "error", message: string) {
@@ -156,14 +272,22 @@ export default function ManagerDashboardPage() {
   function showSuccessAssign(id: string, message: string) {
     setSuccessAssignId(id);
     setSuccessAssignMsg(message);
-    if (successAssignTimerRef.current) clearTimeout(successAssignTimerRef.current);
-    successAssignTimerRef.current = setTimeout(() => { setSuccessAssignId(null); setSuccessAssignMsg(null); }, 4000);
+    if (successAssignTimerRef.current)
+      clearTimeout(successAssignTimerRef.current);
+    successAssignTimerRef.current = setTimeout(() => {
+      setSuccessAssignId(null);
+      setSuccessAssignMsg(null);
+    }, 4000);
   }
 
-  useEffect(() => () => {
-    if (successAssignTimerRef.current) clearTimeout(successAssignTimerRef.current);
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (successAssignTimerRef.current)
+        clearTimeout(successAssignTimerRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
 
   // Refund approval state
   const [pendingRefunds, setPendingRefunds] = useState<RefundResponse[]>([]);
@@ -172,23 +296,32 @@ export default function ManagerDashboardPage() {
 
   // Inventory state
   const [garments, setGarments] = useState<GarmentSummary[]>([]);
-  const [selectedGarmentId, setSelectedGarmentId] = useState<string | null>(null);
+  const [selectedGarmentId, setSelectedGarmentId] = useState<string | null>(
+    null,
+  );
   const [assets, setAssets] = useState<AssetDetail[]>([]);
   const [allAssets, setAllAssets] = useState<AssetDetail[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
 
   // Asset assignment state (gán tài sản)
-  type AssetAssignState = Record<string, {
-    assets: AvailableAsset[];
-    loading: boolean;
-    selected: string;
-    open: boolean;
-  }>;
-  const [assetAssignState, setAssetAssignState] = useState<AssetAssignState>({});
+  type AssetAssignState = Record<
+    string,
+    {
+      assets: AvailableAsset[];
+      loading: boolean;
+      selected: string;
+      open: boolean;
+    }
+  >;
+  const [assetAssignState, setAssetAssignState] = useState<AssetAssignState>(
+    {},
+  );
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetDetail | null>(null);
-  const [assetHistory, setAssetHistory] = useState<AssetInspectionHistory[]>([]);
+  const [assetHistory, setAssetHistory] = useState<AssetInspectionHistory[]>(
+    [],
+  );
   const [assetHistoryLoading, setAssetHistoryLoading] = useState(false);
 
   // Inspection log state
@@ -196,30 +329,40 @@ export default function ManagerDashboardPage() {
   const [inspectionLogLoading, setInspectionLogLoading] = useState(false);
 
   // Laundry state
-  const [laundryTickets, setLaundryTickets] = useState<LaundryTicketResponse[]>([]);
+  const [laundryTickets, setLaundryTickets] = useState<LaundryTicketResponse[]>(
+    [],
+  );
   const [laundryLoading, setLaundryLoading] = useState(false);
 
   // Maintenance state
-  const [maintenanceJobs, setMaintenanceJobs] = useState<MaintenanceJobResponse[]>([]);
+  const [maintenanceJobs, setMaintenanceJobs] = useState<
+    MaintenanceJobResponse[]
+  >([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
 
   // Garment management state
   const [categories, setCategories] = useState<GarmentCategory[]>([]);
   const [sizes, setSizes] = useState<string[]>([]);
   const [garmentModalOpen, setGarmentModalOpen] = useState(false);
-  const [editingGarment, setEditingGarment] = useState<GarmentDetail | null>(null);
-  const [garmentToDeleteId, setGarmentToDeleteId] = useState<string | null>(null);
+  const [editingGarment, setEditingGarment] = useState<GarmentDetail | null>(
+    null,
+  );
+  const [garmentToDeleteId, setGarmentToDeleteId] = useState<string | null>(
+    null,
+  );
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     setHasMounted(true);
-    setCurrentDateLabel(new Intl.DateTimeFormat("vi-VN", {
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }).format(new Date()));
+    setCurrentDateLabel(
+      new Intl.DateTimeFormat("vi-VN", {
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }).format(new Date()),
+    );
   }, []);
 
   // ── Sync tab with URL hash ──
@@ -245,15 +388,29 @@ export default function ManagerDashboardPage() {
     setLoading(true);
     setErrorMsg(null);
     Promise.all([
-      getStaffAllBookings().then(res => { if (res.success && res.data) setBookings(res.data); }),
-      getStaffCompletedRefundBookings().then(res => { if (res.success && res.data) setCompletedRefundBookings(res.data); }),
-      getGarments().then(res => { if (res.success && res.data) setGarments(res.data); }),
-      getAllAssets().then(res => { if (res.success && res.data) setAllAssets(res.data); }),
-      getGarmentCategories().then(res => { if (res.success && res.data) setCategories(res.data); }),
-      getGarmentSizes().then(res => { if (res.success && res.data) setSizes(res.data); })
-    ]).catch(() => {
-      setErrorMsg("Có lỗi xảy ra khi tải dữ liệu.");
-    }).finally(() => setLoading(false));
+      getStaffAllBookings().then((res) => {
+        if (res.success && res.data) setBookings(res.data);
+      }),
+      getStaffCompletedRefundBookings().then((res) => {
+        if (res.success && res.data) setCompletedRefundBookings(res.data);
+      }),
+      getGarments().then((res) => {
+        if (res.success && res.data) setGarments(res.data);
+      }),
+      getAllAssets().then((res) => {
+        if (res.success && res.data) setAllAssets(res.data);
+      }),
+      getGarmentCategories().then((res) => {
+        if (res.success && res.data) setCategories(res.data);
+      }),
+      getGarmentSizes().then((res) => {
+        if (res.success && res.data) setSizes(res.data);
+      }),
+    ])
+      .catch(() => {
+        setErrorMsg("Có lỗi xảy ra khi tải dữ liệu.");
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   function refreshGarments() {
@@ -310,7 +467,7 @@ export default function ManagerDashboardPage() {
     } else {
       setErrorMsg(res.message ?? "Không thể tạo trang phục.");
       for (const url of imagesToAdd) {
-        await fetch("/api/upload", { method: "DELETE", body: JSON.stringify({ url }) }).catch(() => {});
+        await deleteUploadedFile(url, "products").catch(() => false);
       }
     }
     setSubmitting(false);
@@ -338,7 +495,7 @@ export default function ManagerDashboardPage() {
         }
       } else {
         for (const url of imagesToAdd) {
-          await fetch("/api/upload", { method: "DELETE", body: JSON.stringify({ url }) }).catch(() => {});
+          await deleteUploadedFile(url, "products").catch(() => false);
         }
       }
       // Re-fetch the updated garment to get its current images[]
@@ -358,7 +515,7 @@ export default function ManagerDashboardPage() {
     } else {
       setErrorMsg(res.message ?? "Không thể cập nhật trang phục.");
       for (const url of imagesToAdd) {
-        await fetch("/api/upload", { method: "DELETE", body: JSON.stringify({ url }) }).catch(() => {});
+        await deleteUploadedFile(url, "products").catch(() => false);
       }
     }
     setSubmitting(false);
@@ -460,10 +617,18 @@ export default function ManagerDashboardPage() {
       .finally(() => setLoadingRefunds(false));
   }, [tab]);
 
-  async function handleApproveRefund(refundId: string, proofImageUrl: string, approveNote: string) {
+  async function handleApproveRefund(
+    refundId: string,
+    proofImageUrl: string,
+    approveNote: string,
+  ) {
     const refund = pendingRefunds.find((r) => r.id === refundId);
     // Bill chuyển khoản và đủ thông tin ngân hàng là bắt buộc với refund bank_transfer; tiền mặt duyệt trực tiếp.
-    if (refund?.refundMethod === "bank_transfer" && (!refund.bankDetailsComplete || !proofImageUrl.trim())) return;
+    if (
+      refund?.refundMethod === "bank_transfer" &&
+      (!refund.bankDetailsComplete || !proofImageUrl.trim())
+    )
+      return;
     setApprovingId(refundId);
     setErrorMsg(null);
     const res = await approveRefund(refundId, {
@@ -476,12 +641,14 @@ export default function ManagerDashboardPage() {
       setPendingRefunds((prev) => prev.filter((r) => r.id !== refundId));
       // Tải lại danh sách đơn completed để "tiền cọc đang giữ" trừ ngay cọc vừa hoàn
       const refreshed = await getStaffCompletedRefundBookings();
-      if (refreshed.success && refreshed.data) setCompletedRefundBookings(refreshed.data);
+      if (refreshed.success && refreshed.data)
+        setCompletedRefundBookings(refreshed.data);
     } else {
       setErrorMsg(res.message ?? "Không thể duyệt hoàn cọc.");
       // Số tiền lệch có thể khiến backend tự huỷ yêu cầu này — đồng bộ lại danh sách.
       const refreshedPending = await getPendingManagerRefunds();
-      if (refreshedPending.success && refreshedPending.data) setPendingRefunds(refreshedPending.data);
+      if (refreshedPending.success && refreshedPending.data)
+        setPendingRefunds(refreshedPending.data);
     }
   }
 
@@ -499,17 +666,27 @@ export default function ManagerDashboardPage() {
 
   // ── Asset assignment helpers ──
 
-  async function openAssetPicker(itemKey: string, garmentId: string, garmentSizeId: string) {
+  async function openAssetPicker(
+    itemKey: string,
+    bookingId: string,
+    garmentId: string,
+    garmentSizeId: string,
+  ) {
     setAssetAssignState((prev) => ({
       ...prev,
       [itemKey]: { assets: [], loading: true, selected: "", open: true },
     }));
-    const res = await getAvailableAssets(garmentId, garmentSizeId);
+    const res = await getAvailableAssets(garmentId, garmentSizeId, bookingId);
     if (res.success && res.data) {
       const data = res.data;
       setAssetAssignState((prev) => ({
         ...prev,
-        [itemKey]: { assets: data, loading: false, selected: data.length > 0 ? data[0].id : "", open: true },
+        [itemKey]: {
+          assets: data,
+          loading: false,
+          selected: data.length > 0 ? data[0].id : "",
+          open: true,
+        },
       }));
     } else {
       setAssetAssignState((prev) => ({
@@ -519,12 +696,20 @@ export default function ManagerDashboardPage() {
     }
   }
 
-  async function handleAssignAsset(bookingId: string, itemId: string, itemKey: string) {
+  async function handleAssignAsset(
+    bookingId: string,
+    itemId: string,
+    itemKey: string,
+  ) {
     const state = assetAssignState[itemKey];
     if (!state?.selected) return;
     setActioningId(bookingId);
     setErrorMsg(null);
-    const res = await assignAssetToBookingItem(bookingId, itemId, state.selected);
+    const res = await assignAssetToBookingItem(
+      bookingId,
+      itemId,
+      state.selected,
+    );
     setActioningId(null);
     if (res.success) {
       setAssetAssignState((prev) => {
@@ -534,18 +719,23 @@ export default function ManagerDashboardPage() {
       });
       const bookingCode = bookingId.slice(0, 8).toUpperCase();
       if (res.data) {
-        setBookings((prev) => prev.map((booking) => {
-          if (booking.id !== bookingId) return booking;
-          return {
-            ...booking,
-            ...res.data,
-            customerName: booking.customerName,
-            customerPhone: booking.customerPhone,
-          };
-        }));
+        setBookings((prev) =>
+          prev.map((booking) => {
+            if (booking.id !== bookingId) return booking;
+            return {
+              ...booking,
+              ...res.data,
+              customerName: booking.customerName,
+              customerPhone: booking.customerPhone,
+            };
+          }),
+        );
       }
       await refreshAllAssets();
-      showSuccessAssign(bookingId, `Đơn #${bookingCode} đã gắn sản phẩm thành công.`);
+      showSuccessAssign(
+        bookingId,
+        `Đơn #${bookingCode} đã gắn sản phẩm thành công.`,
+      );
     } else {
       setErrorMsg(res.message ?? "Không thể gán tài sản.");
     }
@@ -618,7 +808,8 @@ export default function ManagerDashboardPage() {
     setMaintenanceLoading(true);
     Promise.all([getMaintenanceJobs(), getAllAssets()])
       .then(([maintenanceRes, assetsRes]) => {
-        if (maintenanceRes.success && maintenanceRes.data) setMaintenanceJobs(maintenanceRes.data);
+        if (maintenanceRes.success && maintenanceRes.data)
+          setMaintenanceJobs(maintenanceRes.data);
         if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
       })
       .finally(() => setMaintenanceLoading(false));
@@ -626,11 +817,17 @@ export default function ManagerDashboardPage() {
 
   // ── Realtime: refetch REST snapshot khi có thay đổi ở server ──
   const refreshBookings = useCallback(
-    () => getStaffAllBookings().then((res) => { if (res.success && res.data) setBookings(res.data); }),
+    () =>
+      getStaffAllBookings().then((res) => {
+        if (res.success && res.data) setBookings(res.data);
+      }),
     [],
   );
   const refreshCompletedRefunds = useCallback(
-    () => getStaffCompletedRefundBookings().then((res) => { if (res.success && res.data) setCompletedRefundBookings(res.data); }),
+    () =>
+      getStaffCompletedRefundBookings().then((res) => {
+        if (res.success && res.data) setCompletedRefundBookings(res.data);
+      }),
     [],
   );
   const refreshPendingRefunds = useCallback(() => {
@@ -654,27 +851,58 @@ export default function ManagerDashboardPage() {
   }, [tab]);
   const refreshMaintenanceAndAssets = useCallback(() => {
     if (tab !== "damaged") return Promise.resolve();
-    return Promise.all([getMaintenanceJobs(), getAllAssets()]).then(([maintenanceRes, assetsRes]) => {
-      if (maintenanceRes.success && maintenanceRes.data) setMaintenanceJobs(maintenanceRes.data);
-      if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
-    });
+    return Promise.all([getMaintenanceJobs(), getAllAssets()]).then(
+      ([maintenanceRes, assetsRes]) => {
+        if (maintenanceRes.success && maintenanceRes.data)
+          setMaintenanceJobs(maintenanceRes.data);
+        if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
+      },
+    );
   }, [tab]);
 
   useRealtimeInvalidation({
-    bookings: () => { void refreshBookings(); void refreshCompletedRefunds(); void refreshPendingRefunds(); },
-    payments: () => { void refreshBookings(); void refreshCompletedRefunds(); },
-    refunds: () => { void refreshPendingRefunds(); void refreshCompletedRefunds(); void refreshBookings(); },
-    inspections: () => { void refreshInspectionLog(); void refreshMaintenanceAndAssets(); void refreshCompletedRefunds(); },
-    assets: () => { void refreshAllAssets(); void refreshMaintenanceAndAssets(); },
-    maintenance: () => { void refreshMaintenanceAndAssets(); void refreshAllAssets(); },
-    laundry: () => { void refreshLaundry(); void refreshAllAssets(); },
+    bookings: () => {
+      void refreshBookings();
+      void refreshCompletedRefunds();
+      void refreshPendingRefunds();
+    },
+    payments: () => {
+      void refreshBookings();
+      void refreshCompletedRefunds();
+    },
+    refunds: () => {
+      void refreshPendingRefunds();
+      void refreshCompletedRefunds();
+      void refreshBookings();
+    },
+    inspections: () => {
+      void refreshInspectionLog();
+      void refreshMaintenanceAndAssets();
+      void refreshCompletedRefunds();
+    },
+    assets: () => {
+      void refreshAllAssets();
+      void refreshMaintenanceAndAssets();
+    },
+    maintenance: () => {
+      void refreshMaintenanceAndAssets();
+      void refreshAllAssets();
+    },
+    laundry: () => {
+      void refreshLaundry();
+      void refreshAllAssets();
+    },
   });
 
   // ── Derived metrics ──
-  const activeBookings = bookings.filter((b) => ACTIVE_STATUSES.includes(b.status));
-  const bookingsNeedingAssets = activeBookings.filter((b) =>
-    ["confirmed", "awaiting_payment", "paid", "preparing"].includes(b.status) &&
-    b.items.some((item) => !item.garmentAssetId),
+  const activeBookings = bookings.filter((b) =>
+    ACTIVE_STATUSES.includes(b.status),
+  );
+  const bookingsNeedingAssets = activeBookings.filter(
+    (b) =>
+      ["confirmed", "awaiting_payment", "paid", "preparing"].includes(
+        b.status,
+      ) && b.items.some((item) => !item.garmentAssetId),
   );
   const totalRentalRevenue = bookings
     .filter((b) => REVENUE_STATUSES.includes(b.status))
@@ -683,28 +911,61 @@ export default function ManagerDashboardPage() {
   // - Đơn từ lúc thanh toán (paid) đến khi kiểm tra xong: đang giữ cọc.
   // - Đơn completed: vẫn giữ cọc cho đến khi yêu cầu hoàn cọc được DUYỆT.
   // - Khi duyệt hoàn: trừ TRỌN tiền cọc của đơn (tiền phạt hạch toán riêng, không liên quan).
-  const DEPOSIT_HOLDING_STATUSES = ["paid", "preparing", "ready_for_pickup", "delivering", "renting", "returned", "inspection_pending", "overdue"];
-  const depositHoldingActive = bookings.filter((b) => DEPOSIT_HOLDING_STATUSES.includes(b.status));
+  const DEPOSIT_HOLDING_STATUSES = [
+    "paid",
+    "preparing",
+    "ready_for_pickup",
+    "delivering",
+    "renting",
+    "returned",
+    "inspection_pending",
+    "overdue",
+  ];
+  const depositHoldingActive = bookings.filter((b) =>
+    DEPOSIT_HOLDING_STATUSES.includes(b.status),
+  );
   const depositHoldingCompleted = completedRefundBookings.filter((b) => {
-    const refund = (b as StaffBookingResponse & { refunds?: Array<{ status: string }> }).refunds?.[0];
-    return !(refund && (refund.status === "refunded" || refund.status === "partially_refunded"));
+    const refund = (
+      b as StaffBookingResponse & { refunds?: Array<{ status: string }> }
+    ).refunds?.[0];
+    return !(
+      refund &&
+      (refund.status === "refunded" || refund.status === "partially_refunded")
+    );
   });
-  const depositHoldingCount = depositHoldingActive.length + depositHoldingCompleted.length;
+  const depositHoldingCount =
+    depositHoldingActive.length + depositHoldingCompleted.length;
   const totalDepositHeld =
     depositHoldingActive.reduce((sum, b) => sum + b.depositTotal, 0) +
     depositHoldingCompleted.reduce((sum, b) => sum + b.depositTotal, 0);
-  const totalPenalties = bookings.reduce((sum, b) => sum + (b.penaltyTotal ?? 0), 0);
+  const totalPenalties = bookings.reduce(
+    (sum, b) => sum + (b.penaltyTotal ?? 0),
+    0,
+  );
   const rentedItemCount = bookings
     .filter((b) => b.status === "renting")
-    .reduce((sum, b) => sum + b.items.filter((i) => i.garmentAssetId).length, 0);
-  const totalAvailable = allAssets.filter((a) => a.status === "available").length;
+    .reduce(
+      (sum, b) => sum + b.items.filter((i) => i.garmentAssetId).length,
+      0,
+    );
+  const totalAvailable = allAssets.filter(
+    (a) => a.status === "available",
+  ).length;
   const operationalAssets = allAssets.filter((asset) =>
-    ["available", "reserved", "rented", "inspection_pending", "laundry", "maintenance"].includes(asset.status),
+    [
+      "available",
+      "reserved",
+      "rented",
+      "inspection_pending",
+      "laundry",
+      "maintenance",
+    ].includes(asset.status),
   );
   const utilizationDenominator = operationalAssets.length;
-  const utilizationPct = utilizationDenominator > 0
-    ? Math.round((rentedItemCount / utilizationDenominator) * 100)
-    : 0;
+  const utilizationPct =
+    utilizationDenominator > 0
+      ? Math.round((rentedItemCount / utilizationDenominator) * 100)
+      : 0;
 
   const countBy = (statuses: string[]) =>
     bookings.filter((b) => statuses.includes(b.status)).length;
@@ -716,12 +977,27 @@ export default function ManagerDashboardPage() {
       active={tab as any}
       title={meta.title}
       subtitle={meta.subtitle}
-      onTabChange={(key) => { if (key !== "reviews" && key !== "chat" && key !== "pricing" && key !== "accessories") goToTab(key); }}
-      managerName={hasMounted ? (user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng") : "Quản lý cửa hàng"}
+      onTabChange={(key) => {
+        if (
+          key !== "reviews" &&
+          key !== "chat" &&
+          key !== "pricing" &&
+          key !== "accessories"
+        )
+          goToTab(key);
+      }}
+      managerName={
+        hasMounted
+          ? (user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng")
+          : "Quản lý cửa hàng"
+      }
       managerEmail={hasMounted ? (user?.email ?? null) : null}
       currentDateLabel={hasMounted ? currentDateLabel : ""}
       onProfile={() => router.push("/dashboard/manager/profile")}
-      onSignOut={() => { signOut(); router.replace("/login"); }}
+      onSignOut={() => {
+        signOut();
+        router.replace("/login");
+      }}
     >
       {errorMsg && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -729,7 +1005,9 @@ export default function ManagerDashboardPage() {
         </div>
       )}
       {loading ? (
-        <div className="py-20 text-center text-stone-400">Đang tải dữ liệu...</div>
+        <div className="py-20 text-center text-stone-400">
+          Đang tải dữ liệu...
+        </div>
       ) : tab === "overview" ? (
         <OverviewTab
           totalRentalRevenue={totalRentalRevenue}
@@ -786,23 +1064,29 @@ export default function ManagerDashboardPage() {
           onUpdateAssetStatus={handleUpdateAssetStatus}
           garmentModalOpen={garmentModalOpen}
           editingGarment={editingGarment}
-          onCloseGarmentModal={() => { setGarmentModalOpen(false); setEditingGarment(null); }}
-          onSubmitGarment={(id, p, images, imageIdsToRemove) => id
-            ? handleUpdateGarment(id, p, images, imageIdsToRemove)
-            : handleCreateGarment(p, images)}
+          onCloseGarmentModal={() => {
+            setGarmentModalOpen(false);
+            setEditingGarment(null);
+          }}
+          onSubmitGarment={(id, p, images, imageIdsToRemove) =>
+            id
+              ? handleUpdateGarment(id, p, images, imageIdsToRemove)
+              : handleCreateGarment(p, images)
+          }
           submitting={submitting}
           assetModalOpen={assetModalOpen}
           onCloseAssetModal={() => setAssetModalOpen(false)}
           onSubmitAsset={handleCreateAsset}
           onDeleteGarment={setGarmentToDeleteId}
           onCategoryCreated={(cat) => setCategories((prev) => [...prev, cat])}
-          onSizeCreated={(label) => setSizes((prev) => [...prev.filter((s) => s !== label), label].sort())}
+          onSizeCreated={(label) =>
+            setSizes((prev) =>
+              [...prev.filter((s) => s !== label), label].sort(),
+            )
+          }
         />
       ) : tab === "inspection-log" ? (
-        <InspectionLogTab
-          log={inspectionLog}
-          loading={inspectionLogLoading}
-        />
+        <InspectionLogTab log={inspectionLog} loading={inspectionLogLoading} />
       ) : tab === "laundry" ? (
         <LaundryTab
           tickets={laundryTickets}
@@ -814,17 +1098,26 @@ export default function ManagerDashboardPage() {
             setActioningId(null);
             if (res.success) {
               const refresh = await getLaundryTickets();
-              if (refresh.success && refresh.data) setLaundryTickets(refresh.data);
-              showToast("success", "Đã hoàn tất giặt sấy. Trang phục đã sẵn sàng cho khách hàng thuê.");
+              if (refresh.success && refresh.data)
+                setLaundryTickets(refresh.data);
+              showToast(
+                "success",
+                "Đã hoàn tất giặt sấy. Trang phục đã sẵn sàng cho khách hàng thuê.",
+              );
             } else {
-              showToast("error", res.message ?? "Không thể hoàn tất giặt sấy. Vui lòng thử lại.");
+              showToast(
+                "error",
+                res.message ?? "Không thể hoàn tất giặt sấy. Vui lòng thử lại.",
+              );
             }
           }}
         />
       ) : tab === "damaged" ? (
         <DamagedTab
           jobs={maintenanceJobs}
-          damagedAssets={allAssets.filter((asset) => asset.status === "damaged")}
+          damagedAssets={allAssets.filter(
+            (asset) => asset.status === "damaged",
+          )}
           loading={maintenanceLoading}
           actioningId={actioningId}
           onComplete={async (id, status) => {
@@ -836,8 +1129,10 @@ export default function ManagerDashboardPage() {
                 getMaintenanceJobs(),
                 getAllAssets(),
               ]);
-              if (refreshJobs.success && refreshJobs.data) setMaintenanceJobs(refreshJobs.data);
-              if (refreshAssets.success && refreshAssets.data) setAllAssets(refreshAssets.data);
+              if (refreshJobs.success && refreshJobs.data)
+                setMaintenanceJobs(refreshJobs.data);
+              if (refreshAssets.success && refreshAssets.data)
+                setAllAssets(refreshAssets.data);
               showToast(
                 "success",
                 status === "completed"
@@ -845,7 +1140,10 @@ export default function ManagerDashboardPage() {
                   : "Đã ghi nhận trang phục không thể sửa chữa.",
               );
             } else {
-              showToast("error", res.message ?? "Không thể cập nhật bảo trì. Vui lòng thử lại.");
+              showToast(
+                "error",
+                res.message ?? "Không thể cập nhật bảo trì. Vui lòng thử lại.",
+              );
             }
           }}
         />
@@ -856,6 +1154,25 @@ export default function ManagerDashboardPage() {
           handleApproveRefund={handleApproveRefund}
           handleRejectRefund={handleRejectRefund}
           approvingId={approvingId}
+        />
+      ) : tab === "rejected-handovers" ? (
+        <RejectedHandoversTab
+          bookings={bookings.filter((b) => b.handover?.status === "REJECTED")}
+          allAssets={allAssets}
+          showToast={showToast}
+          onRecover={async (id, payload) => {
+            const res = await recoverBookingHandover(id, payload);
+            if (res.success) {
+              showToast("success", "Đã xử lý từ chối bàn giao thành công.");
+              void refreshBookings();
+              void refreshAllAssets();
+            } else {
+              showToast(
+                "error",
+                res.message ?? "Lỗi khi xử lý từ chối bàn giao.",
+              );
+            }
+          }}
         />
       ) : (
         <FinanceTab
@@ -873,13 +1190,26 @@ export default function ManagerDashboardPage() {
           categories={categories}
           sizes={sizes}
           submitting={submitting}
-          onClose={() => { setGarmentModalOpen(false); setEditingGarment(null); }}
+          onClose={() => {
+            setGarmentModalOpen(false);
+            setEditingGarment(null);
+          }}
           onSubmit={(payload, images, removedImageIds) => {
-            if (editingGarment) handleUpdateGarment(editingGarment.id, payload, images, removedImageIds);
+            if (editingGarment)
+              handleUpdateGarment(
+                editingGarment.id,
+                payload,
+                images,
+                removedImageIds,
+              );
             else handleCreateGarment(payload, images);
           }}
           onCategoryCreated={(cat) => setCategories((prev) => [...prev, cat])}
-          onSizeCreated={(label) => setSizes((prev) => [...prev.filter((s) => s !== label), label].sort())}
+          onSizeCreated={(label) =>
+            setSizes((prev) =>
+              [...prev.filter((s) => s !== label), label].sort(),
+            )
+          }
         />
       )}
 
@@ -914,7 +1244,9 @@ export default function ManagerDashboardPage() {
               className="text-stone-400 transition hover:text-stone-600"
               aria-label="Đóng thông báo"
             >
-              <span className="material-symbols-outlined text-[18px]">close</span>
+              <span className="material-symbols-outlined text-[18px]">
+                close
+              </span>
             </button>
           </div>
         </div>
@@ -939,16 +1271,24 @@ function AssetsAssignTab({
   onSelectChange,
 }: {
   bookingsNeedingAssets: StaffBookingResponse[];
-  assetAssignState: Record<string, {
-    assets: AvailableAsset[];
-    loading: boolean;
-    selected: string;
-    open: boolean;
-  }>;
+  assetAssignState: Record<
+    string,
+    {
+      assets: AvailableAsset[];
+      loading: boolean;
+      selected: string;
+      open: boolean;
+    }
+  >;
   actioningId: string | null;
   successAssignId: string | null;
   successAssignMsg: string | null;
-  onOpenPicker: (itemKey: string, garmentId: string, garmentSizeId: string) => void;
+  onOpenPicker: (
+    itemKey: string,
+    bookingId: string,
+    garmentId: string,
+    garmentSizeId: string,
+  ) => void;
   onAssign: (bookingId: string, itemId: string, itemKey: string) => void;
   onClosePicker: (itemKey: string) => void;
   onSelectChange: (itemKey: string, value: string) => void;
@@ -957,82 +1297,158 @@ function AssetsAssignTab({
     <div className="space-y-6">
       {bookingsNeedingAssets.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined mb-4 block text-5xl text-stone-200">check_circle</span>
+          <span className="material-symbols-outlined mb-4 block text-5xl text-stone-200">
+            check_circle
+          </span>
           Tất cả đơn đều đã được gán tài sản. Không có gì cần xử lý.
         </div>
       ) : (
         bookingsNeedingAssets.map((booking) => {
-          const s = STATUS_LABELS[booking.status] ?? { label: booking.status, color: "bg-stone-100 text-stone-600" };
-          const unassignedItems = booking.items.filter((item) => !item.garmentAssetId);
+          const s = STATUS_LABELS[booking.status] ?? {
+            label: booking.status,
+            color: "bg-stone-100 text-stone-600",
+          };
+          const unassignedItems = booking.items.filter(
+            (item) => !item.garmentAssetId,
+          );
           return (
             <div key={booking.id}>
               {successAssignId === booking.id && (
                 <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
-                  <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                  <span className="material-symbols-outlined text-[18px]">
+                    check_circle
+                  </span>
                   <span>{successAssignMsg}</span>
                 </div>
               )}
               <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold text-ink">#{booking.id.slice(0, 8).toUpperCase()}</span>
-                  <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}>{s.label}</span>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-ink">
+                      #{booking.id.slice(0, 8).toUpperCase()}
+                    </span>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                  <span className="text-xs text-stone-400">
+                    {booking.customerName ?? "—"} ·{" "}
+                    {formatDate(booking.rentalStartDate)} –{" "}
+                    {formatDate(booking.rentalEndDate)}
+                  </span>
                 </div>
-                <span className="text-xs text-stone-400">
-                  {booking.customerName ?? "—"} · {formatDate(booking.rentalStartDate)} – {formatDate(booking.rentalEndDate)}
-
-                </span>
-              </div>
-              <div className="space-y-3 px-6 py-4">
-                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                  <span className="material-symbols-outlined text-[16px]">warning</span>
-                  {unassignedItems.length} item chưa gán tài sản
-                </p>
-                {unassignedItems.map((item) => {
-                  const itemKey = `${booking.id}-${item.id}`;
-                  const state = assetAssignState[itemKey];
-                  return (
-                    <div key={itemKey} className="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-ink">
-                          {item.garmentName ?? "Trang phục"}
-                          {item.sizeLabel && <span className="ml-1 text-stone-500">({item.sizeLabel})</span>}
-                        </p>
-                        <div className="mt-1 flex gap-4 text-xs text-stone-500">
-                          <span>{formatVND(item.dailyPrice)}/ngày</span>
-                          <span>Cọc: {formatVND(item.depositAmount)}</span>
+                <div className="space-y-3 px-6 py-4">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                    <span className="material-symbols-outlined text-[16px]">
+                      warning
+                    </span>
+                    {unassignedItems.length} item chưa gán tài sản
+                  </p>
+                  {unassignedItems.map((item) => {
+                    const itemKey = `${booking.id}-${item.id}`;
+                    const state = assetAssignState[itemKey];
+                    return (
+                      <div
+                        key={itemKey}
+                        className="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-ink">
+                            {item.garmentName ?? "Trang phục"}
+                            {item.sizeLabel && (
+                              <span className="ml-1 text-stone-500">
+                                ({item.sizeLabel})
+                              </span>
+                            )}
+                          </p>
+                          <div className="mt-1 flex gap-4 text-xs text-stone-500">
+                            <span>{formatVND(item.dailyPrice)}/ngày</span>
+                            <span>Cọc: {formatVND(item.depositAmount)}</span>
+                          </div>
                         </div>
-                      </div>
-                      {!state?.open ? (
-                        <button type="button" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100" onClick={() => item.garmentSizeId && onOpenPicker(itemKey, item.garmentId, item.garmentSizeId)}>
-                          <span className="material-symbols-outlined mr-1 align-middle text-[16px]">add</span>
-                          Gán tài sản
-                        </button>
-                      ) : state.loading ? (
-                        <span className="text-sm text-stone-400">Đang tải...</span>
-                      ) : state.assets.length === 0 ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-red-600">Hết tài sản khả dụng</span>
-                          <button type="button" className="text-sm text-stone-500 underline" onClick={() => onClosePicker(itemKey)}>Đóng</button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          <select className="min-w-[200px] rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique" value={state.selected} onChange={(e) => onSelectChange(itemKey, e.target.value)} aria-label="Chọn tài sản">
-                            {state.assets.map((a) => (
-                              <option key={a.id} value={a.id}>{a.assetCode} {a.conditionNote ? `— ${a.conditionNote}` : ""}</option>
-                            ))}
-                          </select>
-                          <button type="button" disabled={actioningId === booking.id} className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50" onClick={() => onAssign(booking.id, item.id, itemKey)}>
-                            {actioningId === booking.id ? "..." : "Xác nhận gán"}
+                        {!state?.open ? (
+                          <button
+                            type="button"
+                            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
+                            onClick={() =>
+                              item.garmentSizeId &&
+                              onOpenPicker(
+                                itemKey,
+                                booking.id,
+                                item.garmentId,
+                                item.garmentSizeId,
+                              )
+                            }
+                          >
+                            <span className="material-symbols-outlined mr-1 align-middle text-[16px]">
+                              add
+                            </span>
+                            Gán tài sản
                           </button>
-                          <button type="button" className="text-sm text-stone-500 underline" onClick={() => onClosePicker(itemKey)}>Hủy</button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        ) : state.loading ? (
+                          <span className="text-sm text-stone-400">
+                            Đang tải...
+                          </span>
+                        ) : state.assets.length === 0 ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-red-600">
+                              Hết tài sản khả dụng
+                            </span>
+                            <button
+                              type="button"
+                              className="text-sm text-stone-500 underline"
+                              onClick={() => onClosePicker(itemKey)}
+                            >
+                              Đóng
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3">
+                            <select
+                              className="min-w-[200px] rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                              value={state.selected}
+                              onChange={(e) =>
+                                onSelectChange(itemKey, e.target.value)
+                              }
+                              aria-label="Chọn tài sản"
+                            >
+                              {state.assets.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.assetCode}{" "}
+                                  {a.conditionNote
+                                    ? `— ${a.conditionNote}`
+                                    : ""}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={actioningId === booking.id}
+                              className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                              onClick={() =>
+                                onAssign(booking.id, item.id, itemKey)
+                              }
+                            >
+                              {actioningId === booking.id
+                                ? "..."
+                                : "Xác nhận gán"}
+                            </button>
+                            <button
+                              type="button"
+                              className="text-sm text-stone-500 underline"
+                              onClick={() => onClosePicker(itemKey)}
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
             </div>
           );
         })
@@ -1046,9 +1462,22 @@ function AssetsAssignTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function OverviewTab({
-  totalRentalRevenue, totalDepositHeld, bookings, activeBookings, depositHoldingCount,
-  utilizationPct, rentedItemCount, utilizationDenominator,
-  countBy, garments, onGoToTab, bookingsNeedingAssets, allAssets, laundryTickets, maintenanceJobs, assets,
+  totalRentalRevenue,
+  totalDepositHeld,
+  bookings,
+  activeBookings,
+  depositHoldingCount,
+  utilizationPct,
+  rentedItemCount,
+  utilizationDenominator,
+  countBy,
+  garments,
+  onGoToTab,
+  bookingsNeedingAssets,
+  allAssets,
+  laundryTickets,
+  maintenanceJobs,
+  assets,
 }: {
   totalRentalRevenue: number;
   totalDepositHeld: number;
@@ -1067,26 +1496,63 @@ function OverviewTab({
   maintenanceJobs: MaintenanceJobResponse[];
   assets: AssetDetail[];
 }) {
-  const effectiveAssets = allAssets.length > 0
-    ? allAssets
-    : assets.length > 0
-      ? assets
-      : activeBookings.flatMap((booking) => booking.items)
-          .filter((item) => item.assetStatus)
-          .map((item) => ({ status: item.assetStatus! }));
-  const assetCounts = effectiveAssets.reduce<Record<string, number>>((acc: Record<string, number>, asset: { status: string }) => {
-    acc[asset.status] = (acc[asset.status] ?? 0) + 1;
-    return acc;
-  }, {});
-  const returnedWaiting = countBy(["returned", "inspection_pending", "overdue"]);
+  const effectiveAssets =
+    allAssets.length > 0
+      ? allAssets
+      : assets.length > 0
+        ? assets
+        : activeBookings
+            .flatMap((booking) => booking.items)
+            .filter((item) => item.assetStatus)
+            .map((item) => ({ status: item.assetStatus! }));
+  const assetCounts = effectiveAssets.reduce<Record<string, number>>(
+    (acc: Record<string, number>, asset: { status: string }) => {
+      acc[asset.status] = (acc[asset.status] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const returnedWaiting = countBy([
+    "returned",
+    "inspection_pending",
+    "overdue",
+  ]);
+  const rejectedHandoversCount = bookings.filter(
+    (b) => b.handover?.status === "REJECTED",
+  ).length;
 
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <SnapshotCard label="Doanh thu (đang phát sinh)" value={formatVND(totalRentalRevenue)} hint="Từ đơn completed + đang thuê" icon="payments" tone="lotus" />
-        <SnapshotCard label="Tiền cọc đang giữ" value={formatVND(totalDepositHeld)} hint={`${depositHoldingCount} đơn đang giữ cọc — trừ khi duyệt hoàn`} icon="account_balance_wallet" tone="antique" />
-        <SnapshotCard label="Đơn đặt chỗ hiện tại" value={String(activeBookings.length)} hint="Đang trong luồng vận hành" icon="calendar_month" tone="jade" />
-        <SnapshotCard label="Hiệu suất lấp đầy" value={garments.length === 0 ? "—" : `${utilizationPct}%`} hint={`${rentedItemCount} đang thuê / ${utilizationDenominator} khả dụng`} icon="pie_chart" tone="bronze" progress={garments.length === 0 ? null : utilizationPct} />
+        <SnapshotCard
+          label="Doanh thu (đang phát sinh)"
+          value={formatVND(totalRentalRevenue)}
+          hint="Từ đơn completed + đang thuê"
+          icon="payments"
+          tone="lotus"
+        />
+        <SnapshotCard
+          label="Tiền cọc đang giữ"
+          value={formatVND(totalDepositHeld)}
+          hint={`${depositHoldingCount} đơn đang giữ cọc — trừ khi duyệt hoàn`}
+          icon="account_balance_wallet"
+          tone="antique"
+        />
+        <SnapshotCard
+          label="Đơn đặt chỗ hiện tại"
+          value={String(activeBookings.length)}
+          hint="Đang trong luồng vận hành"
+          icon="calendar_month"
+          tone="jade"
+        />
+        <SnapshotCard
+          label="Hiệu suất lấp đầy"
+          value={garments.length === 0 ? "—" : `${utilizationPct}%`}
+          hint={`${rentedItemCount} đang thuê / ${utilizationDenominator} khả dụng`}
+          icon="pie_chart"
+          tone="bronze"
+          progress={garments.length === 0 ? null : utilizationPct}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -1098,15 +1564,59 @@ function OverviewTab({
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="font-display text-2xl text-ink">Việc cần xử lý</h2>
-              <p className="text-sm text-stone-500">Ưu tiên vận hành trong ngày</p>
+              <p className="text-sm text-stone-500">
+                Ưu tiên vận hành trong ngày
+              </p>
             </div>
-            <span className="material-symbols-outlined text-lotus">task_alt</span>
+            <span className="material-symbols-outlined text-lotus">
+              task_alt
+            </span>
           </div>
           <div className="flex flex-1 flex-col justify-between gap-3">
-            <QuickWorkItem icon="swap_horiz" label="Cần gán tài sản" value={bookingsNeedingAssets.length} tone="amber" onClick={() => onGoToTab("assets")} />
-            <QuickWorkItem icon="search_check" label="Chờ kiểm tra" value={returnedWaiting} tone="orange" onClick={() => onGoToTab("inspection-log")} />
-            <QuickWorkItem icon="dry_cleaning" label="Đang giặt sấy" value={Math.max(laundryTickets.length, assetCounts["laundry"] ?? 0)} tone="laundry" onClick={() => onGoToTab("laundry")} />
-            <QuickWorkItem icon="build" label="Cần bảo trì" value={Math.max(maintenanceJobs.filter((j) => j.status !== "completed" && j.status !== "cannot_repair").length, assetCounts["maintenance"] ?? 0)} tone="red" onClick={() => onGoToTab("damaged")} />
+            <QuickWorkItem
+              icon="cancel"
+              label="Từ chối bàn giao"
+              value={rejectedHandoversCount}
+              tone="red"
+              onClick={() => onGoToTab("rejected-handovers")}
+            />
+            <QuickWorkItem
+              icon="swap_horiz"
+              label="Cần gán tài sản"
+              value={bookingsNeedingAssets.length}
+              tone="amber"
+              onClick={() => onGoToTab("assets")}
+            />
+            <QuickWorkItem
+              icon="search_check"
+              label="Chờ kiểm tra"
+              value={returnedWaiting}
+              tone="orange"
+              onClick={() => onGoToTab("inspection-log")}
+            />
+            <QuickWorkItem
+              icon="dry_cleaning"
+              label="Đang giặt sấy"
+              value={Math.max(
+                laundryTickets.length,
+                assetCounts["laundry"] ?? 0,
+              )}
+              tone="laundry"
+              onClick={() => onGoToTab("laundry")}
+            />
+            <QuickWorkItem
+              icon="build"
+              label="Cần bảo trì"
+              value={Math.max(
+                maintenanceJobs.filter(
+                  (j) =>
+                    j.status !== "completed" && j.status !== "cannot_repair",
+                ).length,
+                assetCounts["maintenance"] ?? 0,
+              )}
+              tone="red"
+              onClick={() => onGoToTab("damaged")}
+            />
           </div>
         </section>
       </div>
@@ -1114,30 +1624,46 @@ function OverviewTab({
       <section className="rounded-xl border border-sand bg-white p-6 shadow-xs">
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <h2 className="font-display text-2xl text-ink">Tổng Quan Kho Tài Sản</h2>
-            <p className="text-sm text-stone-500">Tình trạng hiện vật đang vận hành trong cửa hàng</p>
+            <h2 className="font-display text-2xl text-ink">
+              Tổng Quan Kho Tài Sản
+            </h2>
+            <p className="text-sm text-stone-500">
+              Tình trạng hiện vật đang vận hành trong cửa hàng
+            </p>
           </div>
-          <span className="rounded-full border border-sand bg-mist px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-bronze">{effectiveAssets.length} tài sản</span>
+          <span className="rounded-full border border-sand bg-mist px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-bronze">
+            {effectiveAssets.length} tài sản
+          </span>
         </div>
 
         {effectiveAssets.length > 0 && (
           <div className="mb-5">
             <div className="flex h-3 w-full overflow-hidden rounded-full border border-sand/60 bg-mist">
-              {ASSET_STATUS_ORDER.filter((s) => (assetCounts[s] ?? 0) > 0).map((status) => (
-                <div
-                  key={status}
-                  title={`${ASSET_STATUS_META[status]?.label ?? status}: ${assetCounts[status]}`}
-                  style={{ width: `${((assetCounts[status] ?? 0) / effectiveAssets.length) * 100}%`, backgroundColor: DONUT_COLORS[status] ?? "#9ca3af" }}
-                />
-              ))}
+              {ASSET_STATUS_ORDER.filter((s) => (assetCounts[s] ?? 0) > 0).map(
+                (status) => (
+                  <div
+                    key={status}
+                    title={`${ASSET_STATUS_META[status]?.label ?? status}: ${assetCounts[status]}`}
+                    style={{
+                      width: `${((assetCounts[status] ?? 0) / effectiveAssets.length) * 100}%`,
+                      backgroundColor: DONUT_COLORS[status] ?? "#9ca3af",
+                    }}
+                  />
+                ),
+              )}
             </div>
-            <p className="mt-2 text-xs text-stone-400">Phân bố trạng thái trên tổng số tài sản</p>
+            <p className="mt-2 text-xs text-stone-400">
+              Phân bố trạng thái trên tổng số tài sản
+            </p>
           </div>
         )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {ASSET_STATUS_ORDER.map((status) => {
-            const meta = ASSET_STATUS_META[status] ?? { label: status, color: "bg-stone-100 text-stone-600" };
+            const meta = ASSET_STATUS_META[status] ?? {
+              label: status,
+              color: "bg-stone-100 text-stone-600",
+            };
             const count = assetCounts[status] ?? 0;
             return (
               <button
@@ -1148,11 +1674,22 @@ function OverviewTab({
               >
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: count > 0 ? (DONUT_COLORS[status] ?? "#9ca3af") : "#d6d3d1" }}
+                  style={{
+                    backgroundColor:
+                      count > 0
+                        ? (DONUT_COLORS[status] ?? "#9ca3af")
+                        : "#d6d3d1",
+                  }}
                 />
                 <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-stone-500">{meta.label}</span>
-                  <span className={`block font-display text-2xl ${count > 0 ? "text-ink" : "text-stone-300"}`}>{count}</span>
+                  <span className="block truncate text-xs font-semibold text-stone-500">
+                    {meta.label}
+                  </span>
+                  <span
+                    className={`block font-display text-2xl ${count > 0 ? "text-ink" : "text-stone-300"}`}
+                  >
+                    {count}
+                  </span>
                 </span>
               </button>
             );
@@ -1162,19 +1699,29 @@ function OverviewTab({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-xl border border-sand bg-white p-6 shadow-xs lg:col-span-2">
-          <h2 className="mb-5 font-display text-2xl text-ink">Tình Trạng Vận Hành</h2>
+          <h2 className="mb-5 font-display text-2xl text-ink">
+            Tình Trạng Vận Hành
+          </h2>
           <BookingPipelineChart countBy={countBy} />
           <div className="mt-5 flex items-start gap-4 rounded-r-lg border-l-4 border-lotus bg-parchment p-4">
-            <span className="material-symbols-outlined mt-0.5 text-lotus">warning</span>
+            <span className="material-symbols-outlined mt-0.5 text-lotus">
+              warning
+            </span>
             <div>
-              <h3 className="text-sm font-semibold text-ink">Cảnh Báo Vận Hành</h3>
+              <h3 className="text-sm font-semibold text-ink">
+                Cảnh Báo Vận Hành
+              </h3>
               <p className="mt-1 text-sm text-stone-600">
                 {bookingsNeedingAssets.length > 0
                   ? `${bookingsNeedingAssets.length} đơn đang chờ gán tài sản. Cần xử lý ngay để không trễ tiến độ giao trang phục.`
                   : "Không có cảnh báo. Tất cả đơn đang chờ đều đã được gán tài sản."}
               </p>
               {bookingsNeedingAssets.length > 0 && (
-                <button type="button" onClick={() => onGoToTab("assets")} className="mt-2 text-sm font-semibold text-lotus underline hover:text-oxblood">
+                <button
+                  type="button"
+                  onClick={() => onGoToTab("assets")}
+                  className="mt-2 text-sm font-semibold text-lotus underline hover:text-oxblood"
+                >
                   Đi tới kho trang phục →
                 </button>
               )}
@@ -1185,14 +1732,35 @@ function OverviewTab({
         <div className="flex flex-col gap-6">
           <div className="rounded-xl border border-sand bg-white p-6 shadow-xs">
             <h2 className="mb-4 font-display text-xl text-ink">Kho Tài Sản</h2>
-            <AssetDonutChart assetCounts={assetCounts} total={effectiveAssets.length} />
+            <AssetDonutChart
+              assetCounts={assetCounts}
+              total={effectiveAssets.length}
+            />
           </div>
           <div className="flex flex-col rounded-xl border border-sand bg-white p-6 shadow-xs">
-            <h2 className="mb-4 font-display text-xl text-ink">Truy Cập Nhanh</h2>
+            <h2 className="mb-4 font-display text-xl text-ink">
+              Truy Cập Nhanh
+            </h2>
             <div className="flex flex-1 flex-col gap-3">
-              <ShortcutButton icon="inventory_2" label="Kho trang phục" badge={bookingsNeedingAssets.length} tone="bronze" onClick={() => onGoToTab("assets")} />
-              <ShortcutButton icon="fact_check" label="Nhật ký kiểm tra" tone="jade" onClick={() => onGoToTab("inspection-log")} />
-              <ShortcutButton icon="bar_chart" label="Báo cáo tài chính" tone="antique" onClick={() => onGoToTab("finance")} />
+              <ShortcutButton
+                icon="inventory_2"
+                label="Kho trang phục"
+                badge={bookingsNeedingAssets.length}
+                tone="bronze"
+                onClick={() => onGoToTab("assets")}
+              />
+              <ShortcutButton
+                icon="fact_check"
+                label="Nhật ký kiểm tra"
+                tone="jade"
+                onClick={() => onGoToTab("inspection-log")}
+              />
+              <ShortcutButton
+                icon="bar_chart"
+                label="Báo cáo tài chính"
+                tone="antique"
+                onClick={() => onGoToTab("finance")}
+              />
             </div>
           </div>
         </div>
@@ -1206,13 +1774,33 @@ function OverviewTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function InventoryTab({
-  garments, categories, sizes, selectedGarmentId, onSelectGarment,
-  assets, assetsLoading, selectedAssetId, onSelectAsset,
-  selectedAsset, assetHistory, assetHistoryLoading,
-  onCreateGarment, onEditGarment, onCreateAsset, onUpdateAssetStatus,
-  garmentModalOpen, editingGarment, onCloseGarmentModal, onSubmitGarment, submitting,
-  assetModalOpen, onCloseAssetModal, onSubmitAsset, onDeleteGarment,
-  onCategoryCreated, onSizeCreated,
+  garments,
+  categories,
+  sizes,
+  selectedGarmentId,
+  onSelectGarment,
+  assets,
+  assetsLoading,
+  selectedAssetId,
+  onSelectAsset,
+  selectedAsset,
+  assetHistory,
+  assetHistoryLoading,
+  onCreateGarment,
+  onEditGarment,
+  onCreateAsset,
+  onUpdateAssetStatus,
+  garmentModalOpen,
+  editingGarment,
+  onCloseGarmentModal,
+  onSubmitGarment,
+  submitting,
+  assetModalOpen,
+  onCloseAssetModal,
+  onSubmitAsset,
+  onDeleteGarment,
+  onCategoryCreated,
+  onSizeCreated,
 }: {
   garments: GarmentSummary[];
   categories: GarmentCategory[];
@@ -1254,20 +1842,30 @@ function InventoryTab({
   const filteredGarments = useMemo(() => {
     const q = garmentSearch.trim().toLowerCase();
     return q
-      ? garments.filter((g) => [g.name, g.categoryName, g.sizeLabel].some((v) => v?.toLowerCase().includes(q)))
+      ? garments.filter((g) =>
+          [g.name, g.categoryName, g.sizeLabel].some((v) =>
+            v?.toLowerCase().includes(q),
+          ),
+        )
       : garments;
   }, [garments, garmentSearch]);
 
   const filteredAssets = useMemo(() => {
     const q = assetSearch.trim().toLowerCase();
     return assets.filter((asset) => {
-      const byText = q ? [asset.assetCode, asset.garmentName, asset.conditionNote].some((v) => v?.toLowerCase().includes(q)) : true;
-      const byStatus = assetStatusFilter === "all" ? true : asset.status === assetStatusFilter;
+      const byText = q
+        ? [asset.assetCode, asset.garmentName, asset.conditionNote].some((v) =>
+            v?.toLowerCase().includes(q),
+          )
+        : true;
+      const byStatus =
+        assetStatusFilter === "all" ? true : asset.status === assetStatusFilter;
       return byText && byStatus;
     });
   }, [assets, assetSearch, assetStatusFilter]);
 
-  const selectedGarment = garments.find((g) => g.id === selectedGarmentId) ?? null;
+  const selectedGarment =
+    garments.find((g) => g.id === selectedGarmentId) ?? null;
 
   return (
     <div className="flex h-[calc(100vh-240px)] -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden border-y border-sand bg-white">
@@ -1275,23 +1873,40 @@ function InventoryTab({
       <section className="w-1/2 flex flex-col border-r border-sand bg-warm-ivory">
         <div className="p-4 border-b border-sand bg-surface-container-low sticky top-0 z-10 flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <h2 className="font-display text-xl text-ink">Danh mục Tuyệt tác</h2>
-            <span className="text-xs text-stone-500">{garments.length} mẫu</span>
+            <h2 className="font-display text-xl text-ink">
+              Danh mục Tuyệt tác
+            </h2>
+            <span className="text-xs text-stone-500">
+              {garments.length} mẫu
+            </span>
           </div>
-          <button type="button" onClick={onCreateGarment} className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood">
+          <button
+            type="button"
+            onClick={onCreateGarment}
+            className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
+          >
             <span className="material-symbols-outlined text-[16px]">add</span>
             Thêm trang phục
           </button>
         </div>
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
-            <input value={garmentSearch} onChange={(e) => setGarmentSearch(e.target.value)} className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique" placeholder="Tìm trang phục, danh mục, size..." />
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
+              search
+            </span>
+            <input
+              value={garmentSearch}
+              onChange={(e) => setGarmentSearch(e.target.value)}
+              className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
+              placeholder="Tìm trang phục, danh mục, size..."
+            />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
           {filteredGarments.length === 0 ? (
-            <div className="py-20 text-center text-stone-400">Chưa có trang phục.</div>
+            <div className="py-20 text-center text-stone-400">
+              Chưa có trang phục.
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-4">
               {filteredGarments.map((g) => {
@@ -1300,54 +1915,74 @@ function InventoryTab({
                   <div
                     key={g.id}
                     className={`group rounded-lg border overflow-hidden text-left transition relative ${
-                      isSelected ? "border-lotus ring-2 ring-lotus/20" : "border-outline-variant hover:shadow-md"
+                      isSelected
+                        ? "border-lotus ring-2 ring-lotus/20"
+                        : "border-outline-variant hover:shadow-md"
                     }`}
                   >
-                  <button
-                    type="button"
-                    onClick={() => onSelectGarment(g.id)}
-                    className="w-full text-left"
-                  >
-                    <div className="aspect-[3/4] relative overflow-hidden bg-lotus/5">
-                      {g.images && g.images.length > 0 ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={g.images[0].imageUrl} alt={g.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-                      ) : (
-                        <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                          <span className="material-symbols-outlined text-[48px] text-antique/30">checkroom</span>
+                    <button
+                      type="button"
+                      onClick={() => onSelectGarment(g.id)}
+                      className="w-full text-left"
+                    >
+                      <div className="aspect-[3/4] relative overflow-hidden bg-lotus/5">
+                        {g.images && g.images.length > 0 ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={g.images[0].imageUrl}
+                            alt={g.name}
+                            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center bg-surface-container-highest">
+                            <span className="material-symbols-outlined text-[48px] text-antique/30">
+                              checkroom
+                            </span>
+                          </div>
+                        )}
+                        <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
+                          {g.categoryName ?? "Trang phục"}
                         </div>
-                      )}
-                      <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
-                        {g.categoryName ?? "Trang phục"}
                       </div>
-                    </div>
-                    <div className="p-3">
-                      <h3 className="font-display text-base text-ink line-clamp-1">{g.name}</h3>
-                      <div className="mt-1 text-xs text-stone-500">Size: {g.sizeLabel ?? "—"} • Màu: {g.color ?? "—"}</div>
-                      <div className="mt-2 flex justify-between items-center border-t border-surface-variant pt-2 text-xs">
-                        <span className="font-semibold text-lotus">{formatVND(g.dailyPrice)}/ngày</span>
-                        <span className="text-stone-500">Cọc {formatVND(g.depositAmount)}</span>
+                      <div className="p-3">
+                        <h3 className="font-display text-base text-ink line-clamp-1">
+                          {g.name}
+                        </h3>
+                        <div className="mt-1 text-xs text-stone-500">
+                          Size: {g.sizeLabel ?? "—"} • Màu: {g.color ?? "—"}
+                        </div>
+                        <div className="mt-2 flex justify-between items-center border-t border-surface-variant pt-2 text-xs">
+                          <span className="font-semibold text-lotus">
+                            {formatVND(g.dailyPrice)}/ngày
+                          </span>
+                          <span className="text-stone-500">
+                            Cọc {formatVND(g.depositAmount)}
+                          </span>
+                        </div>
                       </div>
+                    </button>
+                    <div className="absolute top-2 right-2 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onEditGarment(g)}
+                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
+                        aria-label="Chỉnh sửa"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          edit
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteGarment(g.id)}
+                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
+                        aria-label="Xoá"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          delete
+                        </span>
+                      </button>
                     </div>
-                  </button>
-                  <div className="absolute top-2 right-2 flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onEditGarment(g)}
-                      className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
-                      aria-label="Chỉnh sửa"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteGarment(g.id)}
-                      className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
-                      aria-label="Xoá"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">delete</span>
-                    </button>
-                  </div>
                   </div>
                 );
               })}
@@ -1361,10 +1996,16 @@ function InventoryTab({
         <div className="p-4 border-b border-sand bg-surface-container-low sticky top-0 z-10 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <h2 className="font-display text-xl text-ink">Quản lý Hiện vật</h2>
-            <span className="text-xs text-stone-500">{assets.length} tài sản</span>
+            <span className="text-xs text-stone-500">
+              {assets.length} tài sản
+            </span>
           </div>
           {selectedGarmentId && (
-            <button type="button" onClick={onCreateAsset} className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood">
+            <button
+              type="button"
+              onClick={onCreateAsset}
+              className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
+            >
               <span className="material-symbols-outlined text-[16px]">add</span>
               Thêm tài sản
             </button>
@@ -1373,21 +2014,41 @@ function InventoryTab({
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
-              <input value={assetSearch} onChange={(e) => setAssetSearch(e.target.value)} className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique" placeholder="Tìm mã tài sản..." />
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
+                search
+              </span>
+              <input
+                value={assetSearch}
+                onChange={(e) => setAssetSearch(e.target.value)}
+                className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
+                placeholder="Tìm mã tài sản..."
+              />
             </div>
-            <select value={assetStatusFilter} onChange={(e) => setAssetStatusFilter(e.target.value)} className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique" aria-label="Lọc trạng thái tài sản">
+            <select
+              value={assetStatusFilter}
+              onChange={(e) => setAssetStatusFilter(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+              aria-label="Lọc trạng thái tài sản"
+            >
               <option value="all">Tất cả</option>
-              {Object.entries(ASSET_STATUS_META).map(([key, meta]) => <option key={key} value={key}>{meta.label}</option>)}
+              {Object.entries(ASSET_STATUS_META).map(([key, meta]) => (
+                <option key={key} value={key}>
+                  {meta.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
 
         {assetsLoading ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-stone-400">Đang tải...</div>
+          <div className="flex-1 flex items-center justify-center text-sm text-stone-400">
+            Đang tải...
+          </div>
         ) : filteredAssets.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-sm text-stone-400">
-            {selectedGarmentId ? "Chưa có tài sản cho mẫu này." : "Chọn một mẫu trang phục."}
+            {selectedGarmentId
+              ? "Chưa có tài sản cho mẫu này."
+              : "Chọn một mẫu trang phục."}
           </div>
         ) : (
           <div className="flex-1 flex overflow-hidden">
@@ -1396,33 +2057,49 @@ function InventoryTab({
               <table className="w-full text-left border-collapse">
                 <thead className="bg-surface-container-highest border-b border-outline-variant sticky top-0">
                   <tr>
-                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">Mã hiện vật</th>
-                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">Trạng thái</th>
-                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">Tình trạng</th>
+                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">
+                      Mã hiện vật
+                    </th>
+                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">
+                      Trạng thái
+                    </th>
+                    <th className="font-label-sm text-label-sm text-on-surface-variant py-3 px-4 font-semibold uppercase tracking-wider">
+                      Tình trạng
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="font-body-sm text-body-sm">
                   {filteredAssets.map((a) => {
-                    const sm = ASSET_STATUS_META[a.status] ?? { label: a.status, color: "bg-stone-100 text-stone-600" };
+                    const sm = ASSET_STATUS_META[a.status] ?? {
+                      label: a.status,
+                      color: "bg-stone-100 text-stone-600",
+                    };
                     const isSelected = a.id === selectedAssetId;
                     return (
                       <tr
                         key={a.id}
                         onClick={() => onSelectAsset(isSelected ? null : a.id)}
                         className={`border-b border-outline-variant cursor-pointer transition-colors ${
-                          isSelected ? "bg-surface-container hover:bg-surface-container-high" : "hover:bg-surface-container-high"
+                          isSelected
+                            ? "bg-surface-container hover:bg-surface-container-high"
+                            : "hover:bg-surface-container-high"
                         }`}
                       >
-                        <td className={`py-4 px-4 font-label-md text-label-md text-on-surface border-l-4 ${isSelected ? "border-primary" : "border-transparent"}`}>
+                        <td
+                          className={`py-4 px-4 font-label-md text-label-md text-on-surface border-l-4 ${isSelected ? "border-primary" : "border-transparent"}`}
+                        >
                           {a.assetCode}
                         </td>
                         <td className="py-4 px-4">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${sm.color}`}>
+                          <span
+                            className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${sm.color}`}
+                          >
                             {sm.label}
                           </span>
                         </td>
                         <td className="py-4 px-4 text-on-surface-variant">
-                          {a.conditionNote ?? (a.status === "available" ? "Tốt" : "—")}
+                          {a.conditionNote ??
+                            (a.status === "available" ? "Tốt" : "—")}
                         </td>
                       </tr>
                     );
@@ -1435,8 +2112,14 @@ function InventoryTab({
             {selectedAsset && (
               <aside className="w-80 bg-surface-container-low border-l border-outline-variant flex flex-col flex-shrink-0 shadow-[-4px_0_15px_-3px_rgba(74,4,4,0.05)] z-20">
                 <div className="p-4 border-b border-outline-variant flex justify-between items-center bg-warm-ivory">
-                  <h3 className="font-display text-lg text-ink">{selectedAsset.assetCode}</h3>
-                  <button type="button" onClick={() => onSelectAsset(null)} className="text-stone-500 hover:text-lotus">
+                  <h3 className="font-display text-lg text-ink">
+                    {selectedAsset.assetCode}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => onSelectAsset(null)}
+                    className="text-stone-500 hover:text-lotus"
+                  >
                     <span className="material-symbols-outlined">close</span>
                   </button>
                 </div>
@@ -1444,12 +2127,19 @@ function InventoryTab({
                   {/* Garment preview */}
                   <div className="overflow-hidden rounded border border-outline-variant bg-lotus/5">
                     <div className="aspect-square">
-                      {selectedGarment?.images && selectedGarment.images.length > 0 ? (
+                      {selectedGarment?.images &&
+                      selectedGarment.images.length > 0 ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={selectedGarment.images[0].imageUrl} alt={selectedGarment.name} className="h-full w-full object-cover" />
+                        <img
+                          src={selectedGarment.images[0].imageUrl}
+                          alt={selectedGarment.name}
+                          className="h-full w-full object-cover"
+                        />
                       ) : (
                         <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                          <span className="material-symbols-outlined text-[48px] text-antique/30">checkroom</span>
+                          <span className="material-symbols-outlined text-[48px] text-antique/30">
+                            checkroom
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1460,25 +2150,49 @@ function InventoryTab({
 
                   {/* Status with update control */}
                   <div>
-                    <label className="font-label-sm text-label-sm text-on-surface-variant uppercase mb-1 block">Cập nhật trạng thái</label>
+                    <label className="font-label-sm text-label-sm text-on-surface-variant uppercase mb-1 block">
+                      Cập nhật trạng thái
+                    </label>
                     <select
                       value={selectedAsset.status}
-                      onChange={(e) => onUpdateAssetStatus(selectedAsset.id, e.target.value)}
+                      onChange={(e) =>
+                        onUpdateAssetStatus(selectedAsset.id, e.target.value)
+                      }
                       className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
                     >
                       {[
                         selectedAsset.status,
-                        ...(selectedAsset.status === "available" ? ["reserved", "retired"] : []),
-                        ...(selectedAsset.status === "reserved" ? ["rented", "available"] : []),
-                        ...(selectedAsset.status === "rented" ? ["inspection_pending"] : []),
-                        ...(selectedAsset.status === "inspection_pending" ? ["damaged", "laundry", "cleaned", "maintenance"] : []),
-                        ...(selectedAsset.status === "laundry" ? ["cleaned", "damaged"] : []),
-                        ...(selectedAsset.status === "maintenance" ? ["damaged", "cleaned"] : []),
-                        ...(selectedAsset.status === "cleaned" ? ["available", "retired"] : []),
-                        ...(selectedAsset.status === "damaged" ? ["maintenance", "retired"] : []),
-                      ].filter((key, index, all) => all.indexOf(key) === index).map((key) => (
-                        <option key={key} value={key}>{ASSET_STATUS_META[key]?.label ?? key}</option>
-                      ))}
+                        ...(selectedAsset.status === "available"
+                          ? ["reserved", "retired"]
+                          : []),
+                        ...(selectedAsset.status === "reserved"
+                          ? ["rented", "available"]
+                          : []),
+                        ...(selectedAsset.status === "rented"
+                          ? ["inspection_pending"]
+                          : []),
+                        ...(selectedAsset.status === "inspection_pending"
+                          ? ["damaged", "laundry", "cleaned", "maintenance"]
+                          : []),
+                        ...(selectedAsset.status === "laundry"
+                          ? ["cleaned", "damaged"]
+                          : []),
+                        ...(selectedAsset.status === "maintenance"
+                          ? ["damaged", "cleaned"]
+                          : []),
+                        ...(selectedAsset.status === "cleaned"
+                          ? ["available", "retired"]
+                          : []),
+                        ...(selectedAsset.status === "damaged"
+                          ? ["maintenance", "retired"]
+                          : []),
+                      ]
+                        .filter((key, index, all) => all.indexOf(key) === index)
+                        .map((key) => (
+                          <option key={key} value={key}>
+                            {ASSET_STATUS_META[key]?.label ?? key}
+                          </option>
+                        ))}
                     </select>
                   </div>
 
@@ -1486,46 +2200,75 @@ function InventoryTab({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-stone-500">Trang phục</span>
-                      <span className="font-medium text-ink">{selectedAsset.garmentName}</span>
+                      <span className="font-medium text-ink">
+                        {selectedAsset.garmentName}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Size</span>
-                      <span className="font-medium text-ink">{selectedAsset.sizeLabel ?? "—"}</span>
+                      <span className="font-medium text-ink">
+                        {selectedAsset.sizeLabel ?? "—"}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-stone-500">Giá thuê</span>
-                      <span className="font-medium text-lotus">{formatVND(selectedAsset.dailyPrice)}/ngày</span>
+                      <span className="font-medium text-lotus">
+                        {formatVND(selectedAsset.dailyPrice)}/ngày
+                      </span>
                     </div>
                     {selectedAsset.conditionNote && (
                       <div className="flex justify-between">
                         <span className="text-stone-500">Ghi chú</span>
-                        <span className="font-medium text-ink text-right max-w-[180px]">{selectedAsset.conditionNote}</span>
+                        <span className="font-medium text-ink text-right max-w-[180px]">
+                          {selectedAsset.conditionNote}
+                        </span>
                       </div>
                     )}
                   </div>
 
                   {/* Condition History */}
                   <div>
-                    <h4 className="font-label-md text-label-md text-on-surface border-b border-outline-variant pb-2 mb-3">Lịch sử kiểm tra</h4>
+                    <h4 className="font-label-md text-label-md text-on-surface border-b border-outline-variant pb-2 mb-3">
+                      Lịch sử kiểm tra
+                    </h4>
                     {assetHistoryLoading ? (
                       <p className="text-xs text-stone-400">Đang tải...</p>
                     ) : assetHistory.length === 0 ? (
-                      <p className="text-xs text-stone-400">Chưa có lịch kiểm tra.</p>
+                      <p className="text-xs text-stone-400">
+                        Chưa có lịch kiểm tra.
+                      </p>
                     ) : (
                       <div className="relative pl-5 border-l border-outline-variant ml-2 space-y-4">
                         {assetHistory.slice(0, 5).map((h) => (
                           <div key={h.id} className="relative">
-                            <div className={`absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full border-2 border-surface-container-low ${
-                              h.status === "completed" ? "bg-antique-gold" : "bg-outline"
-                            }`} />
+                            <div
+                              className={`absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full border-2 border-surface-container-low ${
+                                h.status === "completed"
+                                  ? "bg-antique-gold"
+                                  : "bg-outline"
+                              }`}
+                            />
                             <div className="font-label-sm text-label-sm text-on-surface-variant mb-1">
-                              {h.createdAt.slice(0, 10)} — {h.status === "completed" ? "Đã kiểm tra" : h.status}
+                              {h.createdAt.slice(0, 10)} —{" "}
+                              {h.status === "completed"
+                                ? "Đã kiểm tra"
+                                : h.status}
                             </div>
                             <div className="font-body-sm text-body-sm text-on-surface bg-surface p-2 rounded border border-surface-variant">
                               {h.findings.length > 0
-                                ? (() => { const total = h.findings.reduce((sum, f) => sum + f.penaltyAmount, 0); return `${h.findings.length} ghi nhận${total > 0 ? ` · Phạt ${formatVND(total)}` : ""}`; })()
+                                ? (() => {
+                                    const total = h.findings.reduce(
+                                      (sum, f) => sum + f.penaltyAmount,
+                                      0,
+                                    );
+                                    return `${h.findings.length} ghi nhận${total > 0 ? ` · Phạt ${formatVND(total)}` : ""}`;
+                                  })()
                                 : "Không có ghi nhận"}
-                              {h.inspectorName && <span className="block text-xs text-stone-400 mt-1">Bởi: {h.inspectorName}</span>}
+                              {h.inspectorName && (
+                                <span className="block text-xs text-stone-400 mt-1">
+                                  Bởi: {h.inspectorName}
+                                </span>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -1550,7 +2293,14 @@ function InventoryTab({
           sizes={sizes}
           submitting={submitting}
           onClose={onCloseGarmentModal}
-          onSubmit={(payload, imagesToAdd, imageIdsToRemove) => onSubmitGarment(editingGarment?.id ?? null, payload, imagesToAdd, imageIdsToRemove)}
+          onSubmit={(payload, imagesToAdd, imageIdsToRemove) =>
+            onSubmitGarment(
+              editingGarment?.id ?? null,
+              payload,
+              imagesToAdd,
+              imageIdsToRemove,
+            )
+          }
           onCategoryCreated={onCategoryCreated}
           onSizeCreated={onSizeCreated}
         />
@@ -1575,7 +2325,14 @@ function InventoryTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function GarmentFormModal({
-  garment, categories, sizes, submitting, onClose, onSubmit, onCategoryCreated, onSizeCreated,
+  garment,
+  categories,
+  sizes,
+  submitting,
+  onClose,
+  onSubmit,
+  onCategoryCreated,
+  onSizeCreated,
 }: {
   garment: GarmentDetail | null;
   categories: GarmentCategory[];
@@ -1589,32 +2346,72 @@ function GarmentFormModal({
   ) => void;
   onCategoryCreated: (cat: GarmentCategory) => void;
   onSizeCreated: (label: string) => void;
-}) {  const [name, setName] = useState(garment?.name ?? "");
+}) {
+  const [name, setName] = useState(garment?.name ?? "");
   const [categoryId, setCategoryId] = useState(garment?.categoryId ?? "");
   const [description, setDescription] = useState(garment?.description ?? "");
   const [sizeLabel, setSizeLabel] = useState(garment?.sizeLabel ?? "");
   const STANDARD_COLORS = [
-    "Đỏ", "Trắng", "Đen", "Vàng", "Xanh dương", "Xanh ngọc", "Xanh lá",
-    "Hồng", "Tím", "Cam", "Nâu", "Xám", "Nhiều màu", "Họa tiết",
+    "Đỏ",
+    "Trắng",
+    "Đen",
+    "Vàng",
+    "Xanh dương",
+    "Xanh ngọc",
+    "Xanh lá",
+    "Hồng",
+    "Tím",
+    "Cam",
+    "Nâu",
+    "Xám",
+    "Nhiều màu",
+    "Họa tiết",
   ];
   const CUSTOM_COLOR_VALUE = "__custom";
-  const initialIsCustom = !!garment?.color && !STANDARD_COLORS.includes(garment.color);
+  const initialIsCustom =
+    !!garment?.color && !STANDARD_COLORS.includes(garment.color);
   const [colorSelect, setColorSelect] = useState(
     !garment?.color ? "" : initialIsCustom ? CUSTOM_COLOR_VALUE : garment.color,
   );
-  const [customColor, setCustomColor] = useState(initialIsCustom ? garment?.color ?? "" : "");
-  const [material, setMaterial] = useState((garment?.material ?? []).join(", "));
+  const [customColor, setCustomColor] = useState(
+    initialIsCustom ? (garment?.color ?? "") : "",
+  );
+  const [material, setMaterial] = useState(
+    (garment?.material ?? []).join(", "),
+  );
   const [occasion, setOccasion] = useState<string[]>(garment?.occasion ?? []);
   const [occasionOptions, setOccasionOptions] = useState<string[]>([]);
-  const [careInstructions, setCareInstructions] = useState((garment?.careInstructions ?? []).join("\n"));
-  const [usageConditions, setUsageConditions] = useState((garment?.usageConditions ?? []).join("\n"));
+  const [careInstructions, setCareInstructions] = useState(
+    (garment?.careInstructions ?? []).join("\n"),
+  );
+  const [usageConditions, setUsageConditions] = useState(
+    (garment?.usageConditions ?? []).join("\n"),
+  );
   const [measurements, setMeasurements] = useState({
-    shoulderCm: garment?.measurements?.shoulderCm != null ? String(garment.measurements.shoulderCm) : "",
-    bustCm: garment?.measurements?.bustCm != null ? String(garment.measurements.bustCm) : "",
-    waistCm: garment?.measurements?.waistCm != null ? String(garment.measurements.waistCm) : "",
-    hipCm: garment?.measurements?.hipCm != null ? String(garment.measurements.hipCm) : "",
-    lengthCm: garment?.measurements?.lengthCm != null ? String(garment.measurements.lengthCm) : "",
-    sleeveLengthCm: garment?.measurements?.sleeveLengthCm != null ? String(garment.measurements.sleeveLengthCm) : "",
+    shoulderCm:
+      garment?.measurements?.shoulderCm != null
+        ? String(garment.measurements.shoulderCm)
+        : "",
+    bustCm:
+      garment?.measurements?.bustCm != null
+        ? String(garment.measurements.bustCm)
+        : "",
+    waistCm:
+      garment?.measurements?.waistCm != null
+        ? String(garment.measurements.waistCm)
+        : "",
+    hipCm:
+      garment?.measurements?.hipCm != null
+        ? String(garment.measurements.hipCm)
+        : "",
+    lengthCm:
+      garment?.measurements?.lengthCm != null
+        ? String(garment.measurements.lengthCm)
+        : "",
+    sleeveLengthCm:
+      garment?.measurements?.sleeveLengthCm != null
+        ? String(garment.measurements.sleeveLengthCm)
+        : "",
   });
 
   useEffect(() => {
@@ -1624,10 +2421,16 @@ function GarmentFormModal({
   }, []);
 
   function toggleOccasion(value: string) {
-    setOccasion((prev) => (prev.includes(value) ? prev.filter((o) => o !== value) : [...prev, value]));
+    setOccasion((prev) =>
+      prev.includes(value) ? prev.filter((o) => o !== value) : [...prev, value],
+    );
   }
-  const [dailyPrice, setDailyPrice] = useState(garment?.dailyPrice ? garment.dailyPrice.toLocaleString("vi-VN") : "");
-  const [depositAmount, setDepositAmount] = useState(garment?.depositAmount ? garment.depositAmount.toLocaleString("vi-VN") : "");
+  const [dailyPrice, setDailyPrice] = useState(
+    garment?.dailyPrice ? garment.dailyPrice.toLocaleString("vi-VN") : "",
+  );
+  const [depositAmount, setDepositAmount] = useState(
+    garment?.depositAmount ? garment.depositAmount.toLocaleString("vi-VN") : "",
+  );
 
   // Inline add state
   const [addingCategory, setAddingCategory] = useState(false);
@@ -1676,7 +2479,7 @@ function GarmentFormModal({
 
   async function handleClose() {
     for (const url of pendingImages) {
-      await fetch("/api/upload", { method: "DELETE", body: JSON.stringify({ url }) }).catch(() => {});
+      await deleteUploadedFile(url, "products").catch(() => false);
     }
     onClose();
   }
@@ -1684,10 +2487,13 @@ function GarmentFormModal({
   function handleRemovePendingImage(index: number) {
     const urlToRemove = pendingImages[index];
     setPendingImages((prev) => prev.filter((_, idx) => idx !== index));
-    fetch("/api/upload", { method: "DELETE", body: JSON.stringify({ url: urlToRemove }) }).catch(() => {});
+    deleteUploadedFile(urlToRemove, "products").catch(() => false);
   }
 
-  function handleCurrencyChange(e: React.ChangeEvent<HTMLInputElement>, setter: (v: string) => void) {
+  function handleCurrencyChange(
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: (v: string) => void,
+  ) {
     const numeric = e.target.value.replace(/\D/g, "");
     if (!numeric) return setter("");
     setter(Number(numeric).toLocaleString("vi-VN"));
@@ -1695,10 +2501,14 @@ function GarmentFormModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    
+
     const parsedDailyPrice = Number(dailyPrice.replace(/\D/g, ""));
     const parsedDeposit = Number(depositAmount.replace(/\D/g, ""));
-    const splitList = (v: string) => v.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+    const splitList = (v: string) =>
+      v
+        .split(/[,;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
     const parseMeasure = (v: string) => {
       const t = v.trim().replace(",", ".");
       if (!t) return undefined;
@@ -1710,10 +2520,15 @@ function GarmentFormModal({
     if (!name.trim()) newErrors.name = "Vui lòng nhập tên trang phục.";
     if (!categoryId) newErrors.categoryId = "Vui lòng chọn danh mục.";
     if (!sizeLabel.trim()) newErrors.sizeLabel = "Vui lòng nhập size.";
-    const effectiveColor = colorSelect === CUSTOM_COLOR_VALUE ? customColor.trim() : colorSelect.trim();
+    const effectiveColor =
+      colorSelect === CUSTOM_COLOR_VALUE
+        ? customColor.trim()
+        : colorSelect.trim();
     if (!effectiveColor) newErrors.color = "Vui lòng nhập màu sắc.";
-    if (!parsedDailyPrice || parsedDailyPrice <= 0) newErrors.dailyPrice = "Giá thuê phải lớn hơn 0.";
-    if (!parsedDeposit || parsedDeposit <= 0) newErrors.depositAmount = "Tiền cọc phải lớn hơn 0.";
+    if (!parsedDailyPrice || parsedDailyPrice <= 0)
+      newErrors.dailyPrice = "Giá thuê phải lớn hơn 0.";
+    if (!parsedDeposit || parsedDeposit <= 0)
+      newErrors.depositAmount = "Tiền cọc phải lớn hơn 0.";
     if (!description.trim()) newErrors.description = "Vui lòng nhập mô tả.";
     if (existingImages.length + pendingImages.length === 0) {
       newErrors.images = "Vui lòng thêm ít nhất 1 ảnh.";
@@ -1723,34 +2538,43 @@ function GarmentFormModal({
       setErrors(newErrors);
       return;
     }
-    
+
     setErrors({});
-    onSubmit({
-      name,
-      categoryId: categoryId || undefined,
-      description: description || undefined,
-      sizeLabel: sizeLabel || undefined,
-      color: (colorSelect === CUSTOM_COLOR_VALUE ? customColor.trim() : colorSelect.trim()) || undefined,
-      material: splitList(material),
-      occasion,
-      careInstructions: splitList(careInstructions),
-      usageConditions: splitList(usageConditions),
-      measurements: {
-        shoulderCm: parseMeasure(measurements.shoulderCm),
-        bustCm: parseMeasure(measurements.bustCm),
-        waistCm: parseMeasure(measurements.waistCm),
-        hipCm: parseMeasure(measurements.hipCm),
-        lengthCm: parseMeasure(measurements.lengthCm),
-        sleeveLengthCm: parseMeasure(measurements.sleeveLengthCm),
+    onSubmit(
+      {
+        name,
+        categoryId: categoryId || undefined,
+        description: description || undefined,
+        sizeLabel: sizeLabel || undefined,
+        color:
+          (colorSelect === CUSTOM_COLOR_VALUE
+            ? customColor.trim()
+            : colorSelect.trim()) || undefined,
+        material: splitList(material),
+        occasion,
+        careInstructions: splitList(careInstructions),
+        usageConditions: splitList(usageConditions),
+        measurements: {
+          shoulderCm: parseMeasure(measurements.shoulderCm),
+          bustCm: parseMeasure(measurements.bustCm),
+          waistCm: parseMeasure(measurements.waistCm),
+          hipCm: parseMeasure(measurements.hipCm),
+          lengthCm: parseMeasure(measurements.lengthCm),
+          sleeveLengthCm: parseMeasure(measurements.sleeveLengthCm),
+        },
+        dailyPrice: parsedDailyPrice,
+        depositAmount: parsedDeposit,
       },
-      dailyPrice: parsedDailyPrice,
-      depositAmount: parsedDeposit,
-    }, pendingImages, removedImageIds);
+      pendingImages,
+      removedImageIds,
+    );
   }
 
   function handleRemoveExistingImage(imageId: string) {
     setExistingImages((prev) => prev.filter((img) => img.id !== imageId));
-    setRemovedImageIds((prev) => (prev.includes(imageId) ? prev : [...prev, imageId]));
+    setRemovedImageIds((prev) =>
+      prev.includes(imageId) ? prev : [...prev, imageId],
+    );
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1759,14 +2583,9 @@ function GarmentFormModal({
     setUploadingImage(true);
     try {
       for (const file of files) {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.success && data.url) {
-          setPendingImages((prev) => [...prev, data.url]);
-        } else {
-          alert("Upload thất bại: " + (data.message || JSON.stringify(data)));
+        const url = await uploadFile(file, "catalog");
+        if (url) {
+          setPendingImages((prev) => [...prev, url]);
         }
       }
     } catch (err: any) {
@@ -1779,26 +2598,53 @@ function GarmentFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border border-sand bg-white p-6 shadow-2xl">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border border-sand bg-white p-6 shadow-2xl"
+      >
         <div className="mb-6 flex items-center justify-between">
-          <h3 className="font-display text-2xl text-ink">{garment ? "Sửa trang phục" : "Thêm trang phục mới"}</h3>
-          <button type="button" onClick={handleClose} className="text-stone-500 hover:text-lotus">
+          <h3 className="font-display text-2xl text-ink">
+            {garment ? "Sửa trang phục" : "Thêm trang phục mới"}
+          </h3>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="text-stone-500 hover:text-lotus"
+          >
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Tên trang phục *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className={`w-full rounded-lg border ${errors.name ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="Vd: Nhật Bình Hoàng Phái" />
-            {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name}</p>}
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Tên trang phục *
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className={`w-full rounded-lg border ${errors.name ? "border-red-500" : "border-sand"} px-3 py-2 text-sm outline-none focus:border-antique`}
+              placeholder="Vd: Nhật Bình Hoàng Phái"
+            />
+            {errors.name && (
+              <p className="mt-1 text-xs text-red-500">{errors.name}</p>
+            )}
           </div>
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs font-semibold uppercase tracking-wider text-stone-500">Danh mục *</label>
+              <label className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Danh mục *
+              </label>
               {!addingCategory && (
-                <button type="button" onClick={() => setAddingCategory(true)} className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood">
-                  <span className="material-symbols-outlined text-[14px]">add</span> Thêm mới
+                <button
+                  type="button"
+                  onClick={() => setAddingCategory(true)}
+                  className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
+                >
+                  <span className="material-symbols-outlined text-[14px]">
+                    add
+                  </span>{" "}
+                  Thêm mới
                 </button>
               )}
             </div>
@@ -1808,28 +2654,76 @@ function GarmentFormModal({
                   autoFocus
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddCategory(); } if (e.key === "Escape") { setAddingCategory(false); setNewCategoryName(""); } }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddCategory();
+                    }
+                    if (e.key === "Escape") {
+                      setAddingCategory(false);
+                      setNewCategoryName("");
+                    }
+                  }}
                   className="flex-1 rounded-lg border border-antique px-3 py-2 text-sm outline-none focus:border-lotus"
                   placeholder="Tên danh mục mới"
                 />
-                <button type="button" onClick={handleAddCategory} disabled={savingCategory || !newCategoryName.trim()} className="rounded-lg bg-lotus px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-oxblood">{savingCategory ? "..." : "Lưu"}</button>
-                <button type="button" onClick={() => { setAddingCategory(false); setNewCategoryName(""); }} className="rounded-lg border border-sand px-3 py-2 text-xs text-stone-500 hover:bg-stone-50">Huỷ</button>
+                <button
+                  type="button"
+                  onClick={handleAddCategory}
+                  disabled={savingCategory || !newCategoryName.trim()}
+                  className="rounded-lg bg-lotus px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-oxblood"
+                >
+                  {savingCategory ? "..." : "Lưu"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingCategory(false);
+                    setNewCategoryName("");
+                  }}
+                  className="rounded-lg border border-sand px-3 py-2 text-xs text-stone-500 hover:bg-stone-50"
+                >
+                  Huỷ
+                </button>
               </div>
             ) : (
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={`w-full rounded-lg border ${errors.categoryId ? 'border-red-500' : 'border-sand'} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className={`w-full rounded-lg border ${errors.categoryId ? "border-red-500" : "border-sand"} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}
+              >
                 <option value="">— Chọn danh mục —</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
               </select>
             )}
-            {errors.categoryId ? <p className="mt-1 text-xs text-red-500">{errors.categoryId}</p> : <p className="mt-1 text-xs text-stone-400">Danh mục dùng để phân loại trang phục.</p>}
+            {errors.categoryId ? (
+              <p className="mt-1 text-xs text-red-500">{errors.categoryId}</p>
+            ) : (
+              <p className="mt-1 text-xs text-stone-400">
+                Danh mục dùng để phân loại trang phục.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="mb-1 flex items-center justify-between">
-                <label className="text-xs font-semibold uppercase tracking-wider text-stone-500">Size *</label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                  Size *
+                </label>
                 {!addingSize && (
-                  <button type="button" onClick={() => setAddingSize(true)} className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood">
-                    <span className="material-symbols-outlined text-[14px]">add</span> Thêm mới
+                  <button
+                    type="button"
+                    onClick={() => setAddingSize(true)}
+                    className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      add
+                    </span>{" "}
+                    Thêm mới
                   </button>
                 )}
               </div>
@@ -1839,60 +2733,159 @@ function GarmentFormModal({
                     autoFocus
                     value={newSizeLabel}
                     onChange={(e) => setNewSizeLabel(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddSize(); } if (e.key === "Escape") { setAddingSize(false); setNewSizeLabel(""); } }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddSize();
+                      }
+                      if (e.key === "Escape") {
+                        setAddingSize(false);
+                        setNewSizeLabel("");
+                      }
+                    }}
                     className="w-full rounded-lg border border-antique px-3 py-2 text-sm outline-none focus:border-lotus"
                     placeholder="VD: XS, 3XL, 90cm"
                   />
                   <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={handleAddSize} disabled={savingSize || !newSizeLabel.trim()} className="rounded-lg bg-lotus px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-oxblood">{savingSize ? "..." : "Lưu"}</button>
-                    <button type="button" onClick={() => { setAddingSize(false); setNewSizeLabel(""); }} className="rounded-lg border border-sand px-3 py-2 text-xs font-semibold text-stone-500 hover:bg-stone-50">Huỷ</button>
+                    <button
+                      type="button"
+                      onClick={handleAddSize}
+                      disabled={savingSize || !newSizeLabel.trim()}
+                      className="rounded-lg bg-lotus px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-oxblood"
+                    >
+                      {savingSize ? "..." : "Lưu"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingSize(false);
+                        setNewSizeLabel("");
+                      }}
+                      className="rounded-lg border border-sand px-3 py-2 text-xs font-semibold text-stone-500 hover:bg-stone-50"
+                    >
+                      Huỷ
+                    </button>
                   </div>
                 </div>
               ) : (
-                <select value={sizeLabel} onChange={(e) => setSizeLabel(e.target.value)} className={`w-full rounded-lg border ${errors.sizeLabel ? 'border-red-500' : 'border-sand'} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}>
+                <select
+                  value={sizeLabel}
+                  onChange={(e) => setSizeLabel(e.target.value)}
+                  className={`w-full rounded-lg border ${errors.sizeLabel ? "border-red-500" : "border-sand"} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}
+                >
                   <option value="">— Chọn Size —</option>
-                  {[...new Set([...sizes, garment?.sizeLabel].filter(Boolean))].map((s) => <option key={s as string} value={s as string}>{s as string}</option>)}
+                  {[
+                    ...new Set([...sizes, garment?.sizeLabel].filter(Boolean)),
+                  ].map((s) => (
+                    <option key={s as string} value={s as string}>
+                      {s as string}
+                    </option>
+                  ))}
                 </select>
               )}
-              {errors.sizeLabel && <p className="mt-1 text-xs text-red-500">{errors.sizeLabel}</p>}
+              {errors.sizeLabel && (
+                <p className="mt-1 text-xs text-red-500">{errors.sizeLabel}</p>
+              )}
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Màu *</label>
-              <select value={colorSelect} onChange={(e) => setColorSelect(e.target.value)} className={`w-full rounded-lg border ${errors.color ? 'border-red-500' : 'border-sand'} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Màu *
+              </label>
+              <select
+                value={colorSelect}
+                onChange={(e) => setColorSelect(e.target.value)}
+                className={`w-full rounded-lg border ${errors.color ? "border-red-500" : "border-sand"} bg-white px-3 py-2 text-sm outline-none focus:border-antique`}
+              >
                 <option value="">— Chọn màu —</option>
-                {STANDARD_COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
-                <option value={CUSTOM_COLOR_VALUE}>Màu khác (nhập tay)...</option>
+                {STANDARD_COLORS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+                <option value={CUSTOM_COLOR_VALUE}>
+                  Màu khác (nhập tay)...
+                </option>
               </select>
               {colorSelect === CUSTOM_COLOR_VALUE && (
-                <input value={customColor} onChange={(e) => setCustomColor(e.target.value)} className={`mt-2 w-full rounded-lg border ${errors.color ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="Vd: Tím lavender, Xanh rêu..." />
+                <input
+                  value={customColor}
+                  onChange={(e) => setCustomColor(e.target.value)}
+                  className={`mt-2 w-full rounded-lg border ${errors.color ? "border-red-500" : "border-sand"} px-3 py-2 text-sm outline-none focus:border-antique`}
+                  placeholder="Vd: Tím lavender, Xanh rêu..."
+                />
               )}
-              {errors.color && <p className="mt-1 text-xs text-red-500">{errors.color}</p>}
+              {errors.color && (
+                <p className="mt-1 text-xs text-red-500">{errors.color}</p>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Giá thuê/ngày (VNĐ) *</label>
-              <input value={dailyPrice} onChange={(e) => handleCurrencyChange(e, setDailyPrice)} type="text" className={`w-full rounded-lg border ${errors.dailyPrice ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="350.000" />
-              {errors.dailyPrice && <p className="mt-1 text-xs text-red-500">{errors.dailyPrice}</p>}
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Giá thuê/ngày (VNĐ) *
+              </label>
+              <input
+                value={dailyPrice}
+                onChange={(e) => handleCurrencyChange(e, setDailyPrice)}
+                type="text"
+                className={`w-full rounded-lg border ${errors.dailyPrice ? "border-red-500" : "border-sand"} px-3 py-2 text-sm outline-none focus:border-antique`}
+                placeholder="350.000"
+              />
+              {errors.dailyPrice && (
+                <p className="mt-1 text-xs text-red-500">{errors.dailyPrice}</p>
+              )}
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Tiền cọc (VNĐ) *</label>
-              <input value={depositAmount} onChange={(e) => handleCurrencyChange(e, setDepositAmount)} type="text" className={`w-full rounded-lg border ${errors.depositAmount ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="1.000.000" />
-              {errors.depositAmount && <p className="mt-1 text-xs text-red-500">{errors.depositAmount}</p>}
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Tiền cọc (VNĐ) *
+              </label>
+              <input
+                value={depositAmount}
+                onChange={(e) => handleCurrencyChange(e, setDepositAmount)}
+                type="text"
+                className={`w-full rounded-lg border ${errors.depositAmount ? "border-red-500" : "border-sand"} px-3 py-2 text-sm outline-none focus:border-antique`}
+                placeholder="1.000.000"
+              />
+              {errors.depositAmount && (
+                <p className="mt-1 text-xs text-red-500">
+                  {errors.depositAmount}
+                </p>
+              )}
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Mô tả *</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`w-full rounded-lg border ${errors.description ? 'border-red-500' : 'border-sand'} px-3 py-2 text-sm outline-none focus:border-antique`} placeholder="Mô tả trang phục..." />
-            {errors.description && <p className="mt-1 text-xs text-red-500">{errors.description}</p>}
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Mô tả *
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              className={`w-full rounded-lg border ${errors.description ? "border-red-500" : "border-sand"} px-3 py-2 text-sm outline-none focus:border-antique`}
+              placeholder="Mô tả trang phục..."
+            />
+            {errors.description && (
+              <p className="mt-1 text-xs text-red-500">{errors.description}</p>
+            )}
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Chất liệu</label>
-            <input value={material} onChange={(e) => setMaterial(e.target.value)} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: Lụa tơ tằm, Gấm (cách nhau bằng dấu phẩy)" />
-            <p className="mt-1 text-xs text-stone-400">Nhiều chất liệu cách nhau bằng dấu phẩy.</p>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Chất liệu
+            </label>
+            <input
+              value={material}
+              onChange={(e) => setMaterial(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: Lụa tơ tằm, Gấm (cách nhau bằng dấu phẩy)"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Nhiều chất liệu cách nhau bằng dấu phẩy.
+            </p>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Dịp sử dụng</label>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Dịp sử dụng
+            </label>
             {occasionOptions.length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {occasionOptions.map((o) => {
@@ -1910,64 +2903,115 @@ function GarmentFormModal({
                 })}
               </div>
             ) : (
-              <p className="text-xs text-stone-400">Đang tải danh sách dịp sử dụng...</p>
+              <p className="text-xs text-stone-400">
+                Đang tải danh sách dịp sử dụng...
+              </p>
             )}
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Số đo áo (cm)</label>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Số đo áo (cm)
+            </label>
             <div className="grid grid-cols-3 gap-3">
-              {([
-                ["shoulderCm", "Vai"],
-                ["bustCm", "Ngực"],
-                ["waistCm", "Eo"],
-                ["hipCm", "Hông"],
-                ["lengthCm", "Dài áo"],
-                ["sleeveLengthCm", "Dài tay"],
-              ] as const).map(([key, label]) => (
+              {(
+                [
+                  ["shoulderCm", "Vai"],
+                  ["bustCm", "Ngực"],
+                  ["waistCm", "Eo"],
+                  ["hipCm", "Hông"],
+                  ["lengthCm", "Dài áo"],
+                  ["sleeveLengthCm", "Dài tay"],
+                ] as const
+              ).map(([key, label]) => (
                 <div key={key}>
-                  <label className="mb-1 block text-[11px] font-medium text-stone-500">{label}</label>
+                  <label className="mb-1 block text-[11px] font-medium text-stone-500">
+                    {label}
+                  </label>
                   <input
                     value={measurements[key]}
-                    onChange={(e) => setMeasurements((m) => ({ ...m, [key]: e.target.value }))}
-                    type="number" min={0} step="0.5"
+                    onChange={(e) =>
+                      setMeasurements((m) => ({ ...m, [key]: e.target.value }))
+                    }
+                    type="number"
+                    min={0}
+                    step="0.5"
                     className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
                     placeholder="—"
                   />
                 </div>
               ))}
             </div>
-            <p className="mt-1 text-xs text-stone-400">Số đo thực tế của áo, dùng để khách đối chiếu khi chọn size.</p>
+            <p className="mt-1 text-xs text-stone-400">
+              Số đo thực tế của áo, dùng để khách đối chiếu khi chọn size.
+            </p>
           </div>
           <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Hướng dẫn bảo quản</label>
-              <textarea value={careInstructions} onChange={(e) => setCareInstructions(e.target.value)} rows={2} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Mỗi dòng một hướng dẫn..." />
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Hướng dẫn bảo quản
+              </label>
+              <textarea
+                value={careInstructions}
+                onChange={(e) => setCareInstructions(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+                placeholder="Mỗi dòng một hướng dẫn..."
+              />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Điều kiện sử dụng</label>
-              <textarea value={usageConditions} onChange={(e) => setUsageConditions(e.target.value)} rows={2} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Mỗi dòng một điều kiện..." />
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Điều kiện sử dụng
+              </label>
+              <textarea
+                value={usageConditions}
+                onChange={(e) => setUsageConditions(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+                placeholder="Mỗi dòng một điều kiện..."
+              />
             </div>
           </div>
         </div>
 
-        <div className={`mt-6 rounded-xl border ${errors.images ? 'border-red-500 bg-red-50' : 'border-sand bg-mist'} p-4`}>
+        <div
+          className={`mt-6 rounded-xl border ${errors.images ? "border-red-500 bg-red-50" : "border-sand bg-mist"} p-4`}
+        >
           <div className="flex items-center justify-between gap-3 mb-3">
             <div>
-              <h4 className="text-sm font-semibold text-ink">Ảnh trang phục *</h4>
-              <p className="text-xs text-stone-500">Ảnh hiện có và ảnh mới sẽ được quản lý riêng.</p>
+              <h4 className="text-sm font-semibold text-ink">
+                Ảnh trang phục *
+              </h4>
+              <p className="text-xs text-stone-500">
+                Ảnh hiện có và ảnh mới sẽ được quản lý riêng.
+              </p>
             </div>
-            <span className="text-xs text-stone-400">{existingImages.length + pendingImages.length} ảnh</span>
+            <span className="text-xs text-stone-400">
+              {existingImages.length + pendingImages.length} ảnh
+            </span>
           </div>
-          {errors.images && <p className="mb-3 text-xs text-red-500 font-semibold">{errors.images}</p>}
+          {errors.images && (
+            <p className="mb-3 text-xs text-red-500 font-semibold">
+              {errors.images}
+            </p>
+          )}
 
           {existingImages.length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">Ảnh hiện có</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">
+                Ảnh hiện có
+              </p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {existingImages.map((img, index) => (
-                  <div key={img.id} className="group relative overflow-hidden rounded border border-sand bg-white">
+                  <div
+                    key={img.id}
+                    className="group relative overflow-hidden rounded border border-sand bg-white"
+                  >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={img.imageUrl} alt={img.altText ?? "Ảnh trang phục"} className="h-24 w-full object-cover" />
+                    <img
+                      src={img.imageUrl}
+                      alt={img.altText ?? "Ảnh trang phục"}
+                      className="h-24 w-full object-cover"
+                    />
                     <div className="absolute left-2 top-2 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold text-ink">
                       {index === 0 ? "Ảnh chính" : `Ảnh ${index + 1}`}
                     </div>
@@ -1977,7 +3021,9 @@ function GarmentFormModal({
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh"
                     >
-                      <span className="material-symbols-outlined text-[14px]">close</span>
+                      <span className="material-symbols-outlined text-[14px]">
+                        close
+                      </span>
                     </button>
                   </div>
                 ))}
@@ -1987,19 +3033,30 @@ function GarmentFormModal({
 
           {pendingImages.length > 0 && (
             <div className="mt-4">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">Ảnh mới</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">
+                Ảnh mới
+              </p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {pendingImages.map((imgUrl, i) => (
-                  <div key={`${imgUrl}-${i}`} className="group relative overflow-hidden rounded border border-lotus bg-white">
+                  <div
+                    key={`${imgUrl}-${i}`}
+                    className="group relative overflow-hidden rounded border border-lotus bg-white"
+                  >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={imgUrl} alt="Pending" className="h-24 w-full object-cover opacity-90" />
+                    <img
+                      src={imgUrl}
+                      alt="Pending"
+                      className="h-24 w-full object-cover opacity-90"
+                    />
                     <button
                       type="button"
                       onClick={() => handleRemovePendingImage(i)}
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh mới"
                     >
-                      <span className="material-symbols-outlined text-[14px]">close</span>
+                      <span className="material-symbols-outlined text-[14px]">
+                        close
+                      </span>
                     </button>
                   </div>
                 ))}
@@ -2009,17 +3066,44 @@ function GarmentFormModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="rounded border border-sand bg-white p-3">
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-stone-500">Tải ảnh lên (File)</label>
-              <input type="file" accept="image/*" multiple onChange={handleFileUpload} disabled={uploadingImage} className="block w-full text-xs text-stone-500 file:mr-3 file:rounded file:border-0 file:bg-sand/30 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink hover:file:bg-sand/50" />
-              {uploadingImage && <p className="mt-1 text-[10px] text-stone-400">Đang tải lên...</p>}
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+                Tải ảnh lên (File)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFileUpload}
+                disabled={uploadingImage}
+                className="block w-full text-xs text-stone-500 file:mr-3 file:rounded file:border-0 file:bg-sand/30 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink hover:file:bg-sand/50"
+              />
+              {uploadingImage && (
+                <p className="mt-1 text-[10px] text-stone-400">
+                  Đang tải lên...
+                </p>
+              )}
             </div>
           </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={handleClose} className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50">Hủy</button>
-          <button type="submit" disabled={submitting} className="rounded-lg bg-lotus px-6 py-2.5 text-sm font-semibold text-white hover:bg-oxblood disabled:opacity-50">
-            {submitting ? "Đang lưu..." : garment ? "Lưu thay đổi" : "Tạo trang phục"}
+          <button
+            type="button"
+            onClick={handleClose}
+            className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-lg bg-lotus px-6 py-2.5 text-sm font-semibold text-white hover:bg-oxblood disabled:opacity-50"
+          >
+            {submitting
+              ? "Đang lưu..."
+              : garment
+                ? "Lưu thay đổi"
+                : "Tạo trang phục"}
           </button>
         </div>
       </form>
@@ -2059,21 +3143,27 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
   }, [garmentId]);
 
   async function handleSave(
-    payload: { accessoryId: string; quantity: number; isIncluded: boolean; extraPrice: number; note?: string },
+    payload: {
+      accessoryId: string;
+      quantity: number;
+      isIncluded: boolean;
+      extraPrice: number;
+      note?: string;
+    },
     link?: GarmentAccessoryLink | null,
   ) {
     setSaving(true);
     const res = link
       ? await updateGarmentAccessory(garmentId, link.accessory.id, {
-        quantity: payload.quantity,
-        isIncluded: payload.isIncluded,
-        extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
-        note: payload.note,
-      })
+          quantity: payload.quantity,
+          isIncluded: payload.isIncluded,
+          extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
+          note: payload.note,
+        })
       : await addGarmentAccessory(garmentId, {
-        ...payload,
-        extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
-      });
+          ...payload,
+          extraPrice: payload.isIncluded ? 0 : payload.extraPrice,
+        });
     setSaving(false);
     if (res.success) {
       setModalOpen(false);
@@ -2099,7 +3189,9 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <h3 className="font-display text-lg text-ink">
           Phụ kiện đi kèm{" "}
-          <span className="text-xs font-sans font-medium text-stone-500">({links.length})</span>
+          <span className="text-xs font-sans font-medium text-stone-500">
+            ({links.length})
+          </span>
         </h3>
         <button
           type="button"
@@ -2117,7 +3209,9 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
         {loading ? (
           <p className="py-3 text-center text-xs text-stone-400">Đang tải...</p>
         ) : error ? (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {error}
+          </p>
         ) : links.length === 0 ? (
           <p className="rounded-lg border border-dashed border-sand bg-mist py-4 text-center text-xs text-stone-500">
             Chưa gắn phụ kiện nào cho mẫu này.
@@ -2131,20 +3225,32 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
               >
                 {l.accessory.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={l.accessory.imageUrl} alt={l.accessory.name} className="h-10 w-10 shrink-0 rounded object-cover" />
+                  <img
+                    src={l.accessory.imageUrl}
+                    alt={l.accessory.name}
+                    className="h-10 w-10 shrink-0 rounded object-cover"
+                  />
                 ) : (
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white">
-                    <span className="material-symbols-outlined text-lg text-stone-300">diamond</span>
+                    <span className="material-symbols-outlined text-lg text-stone-300">
+                      diamond
+                    </span>
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{l.accessory.name}</p>
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {l.accessory.name}
+                  </p>
                   <p className="text-xs text-stone-500">
                     {l.accessory.code} · SL {l.quantity} ·{" "}
                     {l.isIncluded ? (
-                      <span className="font-medium text-jade">Đi kèm miễn phí</span>
+                      <span className="font-medium text-jade">
+                        Đi kèm miễn phí
+                      </span>
                     ) : (
-                      <span className="font-medium text-bronze">Thuê kèm +{formatVND(l.extraPrice)}</span>
+                      <span className="font-medium text-bronze">
+                        Thuê kèm +{formatVND(l.extraPrice)}
+                      </span>
                     )}
                   </p>
                 </div>
@@ -2157,7 +3263,9 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-lotus"
                   aria-label="Sửa"
                 >
-                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                  <span className="material-symbols-outlined text-[16px]">
+                    edit
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -2165,7 +3273,9 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-red-500"
                   aria-label="Gỡ"
                 >
-                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  <span className="material-symbols-outlined text-[16px]">
+                    delete
+                  </span>
                 </button>
               </li>
             ))}
@@ -2200,14 +3310,23 @@ function GarmentAccessoryLinkModal({
   saving: boolean;
   onClose: () => void;
   onSubmit: (
-    payload: { accessoryId: string; quantity: number; isIncluded: boolean; extraPrice: number; note?: string },
+    payload: {
+      accessoryId: string;
+      quantity: number;
+      isIncluded: boolean;
+      extraPrice: number;
+      note?: string;
+    },
     link?: GarmentAccessoryLink | null,
   ) => void;
 }) {
   const [options, setOptions] = useState<AccessoryItem[]>([]);
-  const [accessoryId, setAccessoryId] = useState(link?.accessory.id ?? "");  const [quantity, setQuantity] = useState(link ? String(link.quantity) : "1");
+  const [accessoryId, setAccessoryId] = useState(link?.accessory.id ?? "");
+  const [quantity, setQuantity] = useState(link ? String(link.quantity) : "1");
   const [isIncluded, setIsIncluded] = useState(link ? link.isIncluded : true);
-  const [extraPrice, setExtraPrice] = useState(link && !link.isIncluded ? String(link.extraPrice) : "");
+  const [extraPrice, setExtraPrice] = useState(
+    link && !link.isIncluded ? String(link.extraPrice) : "",
+  );
   const [note, setNote] = useState(link?.note ?? "");
   const [error, setError] = useState<string | null>(null);
 
@@ -2256,7 +3375,11 @@ function GarmentAccessoryLinkModal({
           <h3 className="font-display text-2xl text-ink">
             {link ? "Sửa phụ kiện đi kèm" : "Gắn phụ kiện"}
           </h3>
-          <button type="button" onClick={onClose} className="text-stone-500 hover:text-lotus">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-stone-500 hover:text-lotus"
+          >
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
@@ -2268,7 +3391,9 @@ function GarmentAccessoryLinkModal({
             {link ? (
               <p className="rounded-lg border border-sand bg-stone-50 px-3 py-2 text-sm font-semibold text-ink">
                 {link.accessory.name}{" "}
-                <span className="font-normal text-stone-400">({link.accessory.code})</span>
+                <span className="font-normal text-stone-400">
+                  ({link.accessory.code})
+                </span>
               </p>
             ) : (
               <select
@@ -2308,7 +3433,9 @@ function GarmentAccessoryLinkModal({
               </label>
               <input
                 value={extraPrice}
-                onChange={(e) => setExtraPrice(e.target.value.replace(/\D/g, ""))}
+                onChange={(e) =>
+                  setExtraPrice(e.target.value.replace(/\D/g, ""))
+                }
                 type="text"
                 inputMode="numeric"
                 disabled={isIncluded}
@@ -2379,14 +3506,25 @@ function DeleteGarmentConfirmModal({
         <div className="mb-4">
           <h3 className="font-display text-xl text-ink">Xóa trang phục</h3>
           <p className="mt-2 text-sm text-stone-500">
-            Bạn có chắc chắn muốn xóa trang phục này không? Trang phục sẽ được xóa mềm và có thể khôi phục sau.
+            Bạn có chắc chắn muốn xóa trang phục này không? Trang phục sẽ được
+            xóa mềm và có thể khôi phục sau.
           </p>
         </div>
         <div className="flex justify-end gap-3 mt-6">
-          <button type="button" onClick={onCancel} disabled={submitting} className="rounded-lg border border-sand px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-50 disabled:opacity-50">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-sand px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+          >
             Hủy
           </button>
-          <button type="button" onClick={onConfirm} disabled={submitting} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+          >
             {submitting ? "Đang xóa..." : "Xóa"}
           </button>
         </div>
@@ -2400,7 +3538,11 @@ function DeleteGarmentConfirmModal({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AssetFormModal({
-  garmentId, garmentName, submitting, onClose, onSubmit,
+  garmentId,
+  garmentName,
+  submitting,
+  onClose,
+  onSubmit,
 }: {
   garmentId: string;
   garmentName: string;
@@ -2440,53 +3582,113 @@ function AssetFormModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-md rounded-lg border border-sand bg-white p-6 shadow-2xl">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md rounded-lg border border-sand bg-white p-6 shadow-2xl"
+      >
         <div className="mb-6 flex items-center justify-between">
           <h3 className="font-display text-2xl text-ink">Thêm tài sản mới</h3>
-          <button type="button" onClick={onClose} className="text-stone-500 hover:text-lotus">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-stone-500 hover:text-lotus"
+          >
             <span className="material-symbols-outlined">close</span>
           </button>
         </div>
-        <p className="mb-4 text-sm text-stone-500">Trang phục: <strong className="text-ink">{garmentName}</strong></p>
+        <p className="mb-4 text-sm text-stone-500">
+          Trang phục: <strong className="text-ink">{garmentName}</strong>
+        </p>
 
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Size *</label>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Size *
+            </label>
             {sizesLoading ? (
               <p className="text-xs text-stone-400">Đang tải size...</p>
             ) : sizeOptions.length === 0 ? (
               <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                Mẫu này chưa có size nào. Hãy thêm size cho trang phục trước khi tạo tài sản.
+                Mẫu này chưa có size nào. Hãy thêm size cho trang phục trước khi
+                tạo tài sản.
               </p>
             ) : sizeOptions.length === 1 ? (
               <p className="w-full rounded-lg border border-sand bg-stone-50 px-3 py-2 text-sm font-semibold text-ink">
-                {sizeOptions[0].sizeLabel ?? "—"} <span className="font-normal text-stone-400">(size duy nhất, tự động gán)</span>
+                {sizeOptions[0].sizeLabel ?? "—"}{" "}
+                <span className="font-normal text-stone-400">
+                  (size duy nhất, tự động gán)
+                </span>
               </p>
             ) : (
-              <select value={selectedSizeId} onChange={(e) => setSelectedSizeId(e.target.value)} required className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique">
+              <select
+                value={selectedSizeId}
+                onChange={(e) => setSelectedSizeId(e.target.value)}
+                required
+                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+              >
                 <option value="">— Chọn size —</option>
-                {sizeOptions.map((s) => <option key={s.id} value={s.id}>{s.sizeLabel ?? "—"}</option>)}
+                {sizeOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.sizeLabel ?? "—"}
+                  </option>
+                ))}
               </select>
             )}
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Mã tài sản *</label>
-            <input value={assetCode} onChange={(e) => setAssetCode(e.target.value)} required className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: NB-005" />
-            <p className="mt-1 text-xs text-stone-400">Mã duy nhất cho món đồ vật lý.</p>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Mã tài sản *
+            </label>
+            <input
+              value={assetCode}
+              onChange={(e) => setAssetCode(e.target.value)}
+              required
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: NB-005"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Mã duy nhất cho món đồ vật lý.
+            </p>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Ghi chú tình trạng</label>
-            <input value={conditionNote} onChange={(e) => setConditionNote(e.target.value)} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: Mới 100%" />
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Ghi chú tình trạng
+            </label>
+            <input
+              value={conditionNote}
+              onChange={(e) => setConditionNote(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: Mới 100%"
+            />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Giá mua (VNĐ)</label>
-            <input value={purchaseCost} onChange={(e) => setPurchaseCost(e.target.value)} type="number" min={0} className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique" placeholder="Vd: 5000000" />
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Giá mua (VNĐ)
+            </label>
+            <input
+              value={purchaseCost}
+              onChange={(e) => setPurchaseCost(e.target.value)}
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: 5000000"
+            />
           </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50">Hủy</button>
-          <button type="submit" disabled={submitting || sizesLoading || sizeOptions.length === 0} className="rounded-lg bg-jade px-6 py-2.5 text-sm font-semibold text-white hover:bg-forest disabled:opacity-50">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-sand px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-50"
+          >
+            Hủy
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || sizesLoading || sizeOptions.length === 0}
+            className="rounded-lg bg-jade px-6 py-2.5 text-sm font-semibold text-white hover:bg-forest disabled:opacity-50"
+          >
             {submitting ? "Đang tạo..." : "Tạo tài sản"}
           </button>
         </div>
@@ -2499,14 +3701,24 @@ function AssetFormModal({
 // TAB: Inspection Log
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const INSPECTION_STATUS_META: Record<string, { label: string; color: string }> = {
-  pending:     { label: "Chờ xử lý",      color: "bg-stone-100 text-stone-600" },
-  in_progress: { label: "Đang kiểm tra",  color: "bg-amber-100 text-amber-700" },
-  completed:   { label: "Hoàn tất",       color: "bg-jade/10 text-jade" },
-  disputed:    { label: "Tranh chấp",     color: "bg-red-50 text-red-600" },
-};
+const INSPECTION_STATUS_META: Record<string, { label: string; color: string }> =
+  {
+    pending: { label: "Chờ xử lý", color: "bg-stone-100 text-stone-600" },
+    in_progress: {
+      label: "Đang kiểm tra",
+      color: "bg-amber-100 text-amber-700",
+    },
+    completed: { label: "Hoàn tất", color: "bg-jade/10 text-jade" },
+    disputed: { label: "Tranh chấp", color: "bg-red-50 text-red-600" },
+  };
 
-function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading: boolean }) {
+function InspectionLogTab({
+  log,
+  loading,
+}: {
+  log: InspectionLogEntry[];
+  loading: boolean;
+}) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [penaltyFilter, setPenaltyFilter] = useState("all");
@@ -2515,9 +3727,12 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
     const q = search.trim().toLowerCase();
     return log.filter((entry) => {
       const byText = q
-        ? [entry.assetCode, entry.garmentName, entry.inspectorName].some((v) => v?.toLowerCase().includes(q))
+        ? [entry.assetCode, entry.garmentName, entry.inspectorName].some((v) =>
+            v?.toLowerCase().includes(q),
+          )
         : true;
-      const byStatus = statusFilter === "all" ? true : entry.status === statusFilter;
+      const byStatus =
+        statusFilter === "all" ? true : entry.status === statusFilter;
       const byPenalty =
         penaltyFilter === "all"
           ? true
@@ -2533,12 +3748,16 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
       ) : log.length === 0 ? (
-        <div className="py-20 text-center text-stone-400">Chưa có phiên kiểm tra nào.</div>
+        <div className="py-20 text-center text-stone-400">
+          Chưa có phiên kiểm tra nào.
+        </div>
       ) : (
         <>
           <div className="flex flex-wrap gap-2">
             <div className="relative min-w-[220px] flex-1">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
+                search
+              </span>
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -2554,7 +3773,9 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
             >
               <option value="all">Tất cả trạng thái</option>
               {Object.entries(INSPECTION_STATUS_META).map(([key, meta]) => (
-                <option key={key} value={key}>{meta.label}</option>
+                <option key={key} value={key}>
+                  {meta.label}
+                </option>
               ))}
             </select>
             <select
@@ -2570,7 +3791,9 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
           </div>
 
           {filteredLog.length === 0 ? (
-            <div className="py-20 text-center text-stone-400">Không tìm thấy phiên kiểm tra phù hợp.</div>
+            <div className="py-20 text-center text-stone-400">
+              Không tìm thấy phiên kiểm tra phù hợp.
+            </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
               <table className="w-full text-left text-sm">
@@ -2587,20 +3810,39 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
                 </thead>
                 <tbody className="divide-y divide-sand">
                   {filteredLog.map((entry) => {
-                    const sm = INSPECTION_STATUS_META[entry.status] ?? { label: entry.status, color: "bg-stone-100 text-stone-600" };
+                    const sm = INSPECTION_STATUS_META[entry.status] ?? {
+                      label: entry.status,
+                      color: "bg-stone-100 text-stone-600",
+                    };
                     return (
                       <tr key={entry.id} className="transition hover:bg-mist">
-                        <td className="px-6 py-4 font-semibold text-ink">{entry.assetCode}</td>
-                        <td className="px-6 py-4 text-stone-600">{entry.garmentName}</td>
+                        <td className="px-6 py-4 font-semibold text-ink">
+                          {entry.assetCode}
+                        </td>
+                        <td className="px-6 py-4 text-stone-600">
+                          {entry.garmentName}
+                        </td>
                         <td className="px-6 py-4">
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${sm.color}`}>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${sm.color}`}
+                          >
                             {sm.label}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-stone-600">{entry.inspectorName ?? "—"}</td>
-                        <td className="px-6 py-4 text-stone-600">{entry.findingsCount}</td>
-                        <td className="px-6 py-4 text-red-700">{entry.totalPenalty > 0 ? formatVND(entry.totalPenalty) : "—"}</td>
-                        <td className="px-6 py-4 text-stone-500">{entry.createdAt.slice(0, 10)}</td>
+                        <td className="px-6 py-4 text-stone-600">
+                          {entry.inspectorName ?? "—"}
+                        </td>
+                        <td className="px-6 py-4 text-stone-600">
+                          {entry.findingsCount}
+                        </td>
+                        <td className="px-6 py-4 text-red-700">
+                          {entry.totalPenalty > 0
+                            ? formatVND(entry.totalPenalty)
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4 text-stone-500">
+                          {entry.createdAt.slice(0, 10)}
+                        </td>
                       </tr>
                     );
                   })}
@@ -2619,7 +3861,10 @@ function InspectionLogTab({ log, loading }: { log: InspectionLogEntry[]; loading
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function LaundryTab({
-  tickets, loading, actioningId, onComplete,
+  tickets,
+  loading,
+  actioningId,
+  onComplete,
 }: {
   tickets: LaundryTicketResponse[];
   loading: boolean;
@@ -2631,11 +3876,16 @@ function LaundryTab({
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
       ) : tickets.length === 0 ? (
-        <div className="py-20 text-center text-stone-400">Không có đồ cần giặt sấy.</div>
+        <div className="py-20 text-center text-stone-400">
+          Không có đồ cần giặt sấy.
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {tickets.map((t) => (
-            <div key={t.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+            <div
+              key={t.id}
+              className="rounded-xl border border-sand bg-white p-5 shadow-sm"
+            >
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-semibold text-ink">{t.assetCode}</p>
@@ -2645,7 +3895,9 @@ function LaundryTab({
                   {t.status === "open" ? "Chờ giặt" : "Đang giặt"}
                 </span>
               </div>
-              {t.note && <p className="mt-2 text-xs text-stone-500">{t.note}</p>}
+              {t.note && (
+                <p className="mt-2 text-xs text-stone-500">{t.note}</p>
+              )}
               <div className="mt-4 flex justify-end">
                 <button
                   type="button"
@@ -2669,7 +3921,11 @@ function LaundryTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function DamagedTab({
-  jobs, damagedAssets, loading, actioningId, onComplete,
+  jobs,
+  damagedAssets,
+  loading,
+  actioningId,
+  onComplete,
 }: {
   jobs: MaintenanceJobResponse[];
   damagedAssets: AssetDetail[];
@@ -2677,45 +3933,69 @@ function DamagedTab({
   actioningId: string | null;
   onComplete: (id: string, status: CompleteMaintenanceStatus) => Promise<void>;
 }) {
-  const [confirmDialog, setConfirmDialog] = useState<{title:string; message:string; danger?:boolean; onConfirm:()=>void} | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    danger?: boolean;
+    onConfirm: () => void;
+  } | null>(null);
   const maintenanceAssetIds = new Set(jobs.map((job) => job.garmentAssetId));
-  const directDamagedAssets = damagedAssets.filter((asset) => !maintenanceAssetIds.has(asset.id));
+  const directDamagedAssets = damagedAssets.filter(
+    (asset) => !maintenanceAssetIds.has(asset.id),
+  );
   return (
     <div className="space-y-4">
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
       ) : jobs.length === 0 && directDamagedAssets.length === 0 ? (
-        <div className="py-20 text-center text-stone-400">Không có tài sản hư hỏng hoặc bảo trì.</div>
+        <div className="py-20 text-center text-stone-400">
+          Không có tài sản hư hỏng hoặc bảo trì.
+        </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {jobs.map((j) => (
-            <div key={`job-${j.id}`} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+            <div
+              key={`job-${j.id}`}
+              className="rounded-xl border border-sand bg-white p-5 shadow-sm"
+            >
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-semibold text-ink">{j.assetCode}</p>
                   <p className="text-sm text-stone-500">{j.garmentName}</p>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  j.status === "open" ? "bg-red-100 text-red-700" :
-                  j.status === "in_progress" ? "bg-amber-100 text-amber-700" :
-                  "bg-jade/10 text-jade"
-                }`}>
-                  {j.status === "open" ? "Cần xử lý" : j.status === "in_progress" ? "Đang sửa" : "Hoàn tất"}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    j.status === "open"
+                      ? "bg-red-100 text-red-700"
+                      : j.status === "in_progress"
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-jade/10 text-jade"
+                  }`}
+                >
+                  {j.status === "open"
+                    ? "Cần xử lý"
+                    : j.status === "in_progress"
+                      ? "Đang sửa"
+                      : "Hoàn tất"}
                 </span>
               </div>
-              {j.note && <p className="mt-2 text-xs text-stone-500">{j.note}</p>}
+              {j.note && (
+                <p className="mt-2 text-xs text-stone-500">{j.note}</p>
+              )}
               <div className="mt-4 flex gap-2 justify-end">
                 {j.status !== "completed" && j.status !== "cannot_repair" && (
                   <>
                     <button
                       type="button"
                       disabled={actioningId === j.id}
-                      onClick={() => setConfirmDialog({
-                        title: "Hoàn tất bảo trì",
-                        message: "Xác nhận hoàn tất bảo trì?",
-                        danger: false,
-                        onConfirm: () => onComplete(j.id, "completed"),
-                      })}
+                      onClick={() =>
+                        setConfirmDialog({
+                          title: "Hoàn tất bảo trì",
+                          message: "Xác nhận hoàn tất bảo trì?",
+                          danger: false,
+                          onConfirm: () => onComplete(j.id, "completed"),
+                        })
+                      }
                       className="rounded-lg bg-jade px-3 py-2 text-xs font-semibold text-white transition hover:bg-forest disabled:opacity-50"
                     >
                       {actioningId === j.id ? "..." : "Hoàn tất"}
@@ -2723,12 +4003,15 @@ function DamagedTab({
                     <button
                       type="button"
                       disabled={actioningId === j.id}
-                      onClick={() => setConfirmDialog({
-                        title: "Không thể sửa",
-                        message: "Xác nhận không thể sửa được? Hành động này không thể hoàn tác.",
-                        danger: true,
-                        onConfirm: () => onComplete(j.id, "cannot_repair"),
-                      })}
+                      onClick={() =>
+                        setConfirmDialog({
+                          title: "Không thể sửa",
+                          message:
+                            "Xác nhận không thể sửa được? Hành động này không thể hoàn tác.",
+                          danger: true,
+                          onConfirm: () => onComplete(j.id, "cannot_repair"),
+                        })
+                      }
                       className="rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
                     >
                       Không sửa được
@@ -2739,23 +4022,50 @@ function DamagedTab({
             </div>
           ))}
           {directDamagedAssets.map((asset) => (
-            <div key={`damaged-${asset.id}`} className="rounded-xl border border-red-200 bg-white p-5 shadow-sm">
+            <div
+              key={`damaged-${asset.id}`}
+              className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-semibold text-ink">{asset.assetCode}</p>
-                  <p className="text-sm text-stone-500">{asset.garmentName}{asset.sizeLabel ? ` · Size ${asset.sizeLabel}` : ""}</p>
+                  <p className="text-sm text-stone-500">
+                    {asset.garmentName}
+                    {asset.sizeLabel ? ` · Size ${asset.sizeLabel}` : ""}
+                  </p>
                 </div>
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Hư hỏng</span>
+                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                  Hư hỏng
+                </span>
               </div>
-              {asset.conditionNote && <p className="mt-3 text-xs text-stone-600">{asset.conditionNote}</p>}
-              <p className="mt-3 text-xs text-stone-400">Cập nhật {new Date(asset.updatedAt).toLocaleString("vi-VN")}</p>
-              <p className="mt-4 text-xs text-stone-500">Tài sản đã được ghi nhận hư hỏng, không nằm trong hàng chờ bảo trì.</p>
+              {asset.conditionNote && (
+                <p className="mt-3 text-xs text-stone-600">
+                  {asset.conditionNote}
+                </p>
+              )}
+              <p className="mt-3 text-xs text-stone-400">
+                Cập nhật {new Date(asset.updatedAt).toLocaleString("vi-VN")}
+              </p>
+              <p className="mt-4 text-xs text-stone-500">
+                Tài sản đã được ghi nhận hư hỏng, không nằm trong hàng chờ bảo
+                trì.
+              </p>
             </div>
           ))}
         </div>
       )}
 
-      <ConfirmModal open={!!confirmDialog} title={confirmDialog?.title??""} message={confirmDialog?.message??""} danger={confirmDialog?.danger} onConfirm={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} onCancel={() => setConfirmDialog(null)} />
+      <ConfirmModal
+        open={!!confirmDialog}
+        title={confirmDialog?.title ?? ""}
+        message={confirmDialog?.message ?? ""}
+        danger={confirmDialog?.danger}
+        onConfirm={() => {
+          confirmDialog?.onConfirm();
+          setConfirmDialog(null);
+        }}
+        onCancel={() => setConfirmDialog(null)}
+      />
     </div>
   );
 }
@@ -2765,8 +4075,11 @@ function DamagedTab({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function FinanceTab({
-  totalRentalRevenue: _legacyRevenue, totalDepositHeld: _legacyDeposit, totalPenalties: _legacyPenalties,
-  depositHoldingCount: _legacyCount, bookings: _legacyBookings,
+  totalRentalRevenue: _legacyRevenue,
+  totalDepositHeld: _legacyDeposit,
+  totalPenalties: _legacyPenalties,
+  depositHoldingCount: _legacyCount,
+  bookings: _legacyBookings,
 }: {
   totalRentalRevenue: number;
   totalDepositHeld: number;
@@ -2776,21 +4089,29 @@ function FinanceTab({
 }) {
   // ── State ──
   const [summary, setSummary] = useState<FinancialSummaryResponse | null>(null);
-  const [revenueByDay, setRevenueByDay] = useState<{ date: string; rentalRevenue: number; depositReceived: number }[]>([]);
-  const [transactions, setTransactions] = useState<FinancialTransactionItem[]>([]);
+  const [revenueByDay, setRevenueByDay] = useState<
+    { date: string; rentalRevenue: number; depositReceived: number }[]
+  >([]);
+  const [transactions, setTransactions] = useState<FinancialTransactionItem[]>(
+    [],
+  );
   const [txTotal, setTxTotal] = useState(0);
   const [txPage, setTxPage] = useState(1);
-  const [reconciliation, setReconciliation] = useState<ReconciliationResponse | null>(null);
+  const [reconciliation, setReconciliation] =
+    useState<ReconciliationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
-  const [preset, setPreset] = useState<FinancialQueryParams["preset"]>("this_month");
+  const [preset, setPreset] =
+    useState<FinancialQueryParams["preset"]>("this_month");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [txStatusFilter, setTxStatusFilter] = useState("");
   const [txMethodFilter, setTxMethodFilter] = useState("");
-  const [subView, setSubView] = useState<"overview" | "transactions" | "reconciliation">("overview");
+  const [subView, setSubView] = useState<
+    "overview" | "transactions" | "reconciliation"
+  >("overview");
 
   const buildParams = (): FinancialQueryParams | null => {
     const params: FinancialQueryParams = {};
@@ -2820,7 +4141,7 @@ function FinanceTab({
       setReconciliation(null);
       return;
     }
-    
+
     setLoading(true);
     setError(null);
     try {
@@ -2831,7 +4152,8 @@ function FinanceTab({
         getReconciliation(params),
       ]);
       if (summaryRes.success && summaryRes.data) setSummary(summaryRes.data);
-      if (revenueRes.success && revenueRes.data) setRevenueByDay(revenueRes.data);
+      if (revenueRes.success && revenueRes.data)
+        setRevenueByDay(revenueRes.data);
       if (txRes.success && txRes.data) {
         setTransactions(txRes.data.items);
         setTxTotal(txRes.data.total);
@@ -2844,15 +4166,29 @@ function FinanceTab({
     }
   };
 
-  useEffect(() => { fetchData(); }, [preset, customStart, customEnd, txStatusFilter, txMethodFilter, txPage]);
+  useEffect(() => {
+    fetchData();
+  }, [preset, customStart, customEnd, txStatusFilter, txMethodFilter, txPage]);
 
   // ── Chart data ──
-  const maxRevenue = Math.max(...revenueByDay.map((d) => Math.max(d.rentalRevenue, d.depositReceived)), 1);
+  const maxRevenue = Math.max(
+    ...revenueByDay.map((d) => Math.max(d.rentalRevenue, d.depositReceived)),
+    1,
+  );
 
-  const DEPOSIT_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  const DEPOSIT_STATUS_LABELS: Record<
+    string,
+    { label: string; color: string }
+  > = {
     PENDING: { label: "Đang giữ", color: "bg-amber-100 text-amber-700" },
-    PARTIALLY_REFUNDED: { label: "Hoàn 1 phần", color: "bg-blue-100 text-blue-700" },
-    FULLY_REFUNDED: { label: "Đã hoàn", color: "bg-emerald-100 text-emerald-700" },
+    PARTIALLY_REFUNDED: {
+      label: "Hoàn 1 phần",
+      color: "bg-blue-100 text-blue-700",
+    },
+    FULLY_REFUNDED: {
+      label: "Đã hoàn",
+      color: "bg-emerald-100 text-emerald-700",
+    },
     DEDUCTED: { label: "Đã trừ", color: "bg-orange-100 text-orange-700" },
     FORFEITED: { label: "Bị giữ", color: "bg-red-100 text-red-700" },
   };
@@ -2862,18 +4198,28 @@ function FinanceTab({
     DEPOSIT: { label: "Cọc", color: "bg-amber-100 text-amber-700" },
     REFUND: { label: "Hoàn cọc", color: "bg-blue-100 text-blue-700" },
     DAMAGE_DEDUCTION: { label: "Phạt", color: "bg-red-100 text-red-700" },
-    FORFEITED_DEPOSIT: { label: "Giữ cọc", color: "bg-stone-100 text-stone-600" },
+    FORFEITED_DEPOSIT: {
+      label: "Giữ cọc",
+      color: "bg-stone-100 text-stone-600",
+    },
   };
 
   if (loading && !summary) {
-    return <div className="py-20 text-center text-stone-400">Đang tải dữ liệu tài chính...</div>;
+    return (
+      <div className="py-20 text-center text-stone-400">
+        Đang tải dữ liệu tài chính...
+      </div>
+    );
   }
 
   if (error) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
         {error}
-        <button onClick={fetchData} className="ml-4 rounded-lg bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700">
+        <button
+          onClick={fetchData}
+          className="ml-4 rounded-lg bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700"
+        >
           Thử lại
         </button>
       </div>
@@ -2884,13 +4230,22 @@ function FinanceTab({
     <div className="space-y-6">
       {/* ── Filter Bar ── */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-3 shadow-sm">
-        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Bộ lọc:</span>
+        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+          Bộ lọc:
+        </span>
         {(["today", "this_month", "this_year"] as const).map((p) => {
-          const labels = { today: "Hôm nay", this_month: "Tháng này", this_year: "Năm nay" } as const;
+          const labels = {
+            today: "Hôm nay",
+            this_month: "Tháng này",
+            this_year: "Năm nay",
+          } as const;
           return (
             <button
               key={p}
-              onClick={() => { setPreset(p); setTxPage(1); }}
+              onClick={() => {
+                setPreset(p);
+                setTxPage(1);
+              }}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${preset === p ? "bg-lotus text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
             >
               {labels[p]}
@@ -2898,31 +4253,50 @@ function FinanceTab({
           );
         })}
         <button
-          onClick={() => { setPreset("custom"); setTxPage(1); }}
+          onClick={() => {
+            setPreset("custom");
+            setTxPage(1);
+          }}
           className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${preset === "custom" ? "bg-lotus text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
         >
           Tuỳ chọn
         </button>
         {preset === "custom" && (
           <>
-            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="rounded-lg border border-sand px-3 py-1.5 text-xs" />
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="rounded-lg border border-sand px-3 py-1.5 text-xs"
+            />
             <span className="text-stone-400">→</span>
-            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="rounded-lg border border-sand px-3 py-1.5 text-xs" />
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="rounded-lg border border-sand px-3 py-1.5 text-xs"
+            />
           </>
         )}
         <div className="ml-auto flex gap-2">
-          {(["overview", "transactions", "reconciliation"] as const).map((v) => {
-            const vLabels = { overview: "Tổng quan", transactions: "Giao dịch", reconciliation: "Đối soát" };
-            return (
-              <button
-                key={v}
-                onClick={() => setSubView(v)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${subView === v ? "bg-antique text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
-              >
-                {vLabels[v]}
-              </button>
-            );
-          })}
+          {(["overview", "transactions", "reconciliation"] as const).map(
+            (v) => {
+              const vLabels = {
+                overview: "Tổng quan",
+                transactions: "Giao dịch",
+                reconciliation: "Đối soát",
+              };
+              return (
+                <button
+                  key={v}
+                  onClick={() => setSubView(v)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${subView === v ? "bg-antique text-white" : "bg-mist text-stone-600 hover:bg-stone-200"}`}
+                >
+                  {vLabels[v]}
+                </button>
+              );
+            },
+          )}
         </div>
       </div>
 
@@ -2930,32 +4304,81 @@ function FinanceTab({
         <>
           {/* ── KPI Cards ── */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <KPICard label="Doanh thu cho thuê" value={formatVND(summary.rentalRevenue)} icon="payments" tone="jade" hint="Không bao gồm tiền cọc" />
-            <KPICard label="Tiền cọc đang giữ" value={formatVND(summary.depositHeld)} icon="account_balance_wallet" tone="amber" hint={`${summary.depositHeldCount} đơn`} />
-            <KPICard label="Đã hoàn cọc" value={formatVND(summary.refundedDeposit)} icon="currency_exchange" tone="blue" />
-            <KPICard label="Khấu trừ hư hỏng" value={formatVND(summary.damageDeduction)} icon="warning" tone="red" />
-            <KPICard label="Cọc bị giữ" value={formatVND(summary.forfeitedDeposit)} icon="block" tone="stone" />
-            <KPICard label="Số giao dịch" value={String(summary.totalTransactions)} icon="receipt_long" tone="purple" />
+            <KPICard
+              label="Doanh thu cho thuê"
+              value={formatVND(summary.rentalRevenue)}
+              icon="payments"
+              tone="jade"
+              hint="Không bao gồm tiền cọc"
+            />
+            <KPICard
+              label="Tiền cọc đang giữ"
+              value={formatVND(summary.depositHeld)}
+              icon="account_balance_wallet"
+              tone="amber"
+              hint={`${summary.depositHeldCount} đơn`}
+            />
+            <KPICard
+              label="Đã hoàn cọc"
+              value={formatVND(summary.refundedDeposit)}
+              icon="currency_exchange"
+              tone="blue"
+            />
+            <KPICard
+              label="Khấu trừ hư hỏng"
+              value={formatVND(summary.damageDeduction)}
+              icon="warning"
+              tone="red"
+            />
+            <KPICard
+              label="Cọc bị giữ"
+              value={formatVND(summary.forfeitedDeposit)}
+              icon="block"
+              tone="stone"
+            />
+            <KPICard
+              label="Số giao dịch"
+              value={String(summary.totalTransactions)}
+              icon="receipt_long"
+              tone="purple"
+            />
           </div>
 
           {/* ── Charts ── */}
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Revenue by Day Chart */}
             <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Doanh thu theo ngày</h3>
-              <p className="mb-4 text-xs text-stone-400">Chỉ tính tiền thuê — không bao gồm tiền cọc</p>
+              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
+                Doanh thu theo ngày
+              </h3>
+              <p className="mb-4 text-xs text-stone-400">
+                Chỉ tính tiền thuê — không bao gồm tiền cọc
+              </p>
               {revenueByDay.length === 0 ? (
-                <div className="flex h-40 items-center justify-center text-sm text-stone-400">Chưa có dữ liệu trong khoảng thời gian này.</div>
+                <div className="flex h-40 items-center justify-center text-sm text-stone-400">
+                  Chưa có dữ liệu trong khoảng thời gian này.
+                </div>
               ) : (
-                <div className="flex items-end gap-1 overflow-x-auto" style={{ minHeight: 160 }}>
+                <div
+                  className="flex items-end gap-1 overflow-x-auto"
+                  style={{ minHeight: 160 }}
+                >
                   {revenueByDay.map((d) => (
-                    <div key={d.date} className="flex flex-col items-center gap-1" style={{ flex: "1 0 32px", maxWidth: 48 }}>
+                    <div
+                      key={d.date}
+                      className="flex flex-col items-center gap-1"
+                      style={{ flex: "1 0 32px", maxWidth: 48 }}
+                    >
                       <div
                         title={`${d.date}: ${formatVND(d.rentalRevenue)}`}
                         className="w-full rounded-t-md bg-jade transition-all hover:bg-emerald-700"
-                        style={{ height: `${Math.max((d.rentalRevenue / maxRevenue) * 120, d.rentalRevenue > 0 ? 4 : 1)}px` }}
+                        style={{
+                          height: `${Math.max((d.rentalRevenue / maxRevenue) * 120, d.rentalRevenue > 0 ? 4 : 1)}px`,
+                        }}
                       />
-                      <span className="text-[9px] text-stone-400">{d.date.slice(5)}</span>
+                      <span className="text-[9px] text-stone-400">
+                        {d.date.slice(5)}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -2964,32 +4387,62 @@ function FinanceTab({
 
             {/* Rental vs Deposit Chart */}
             <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Thuê vs Cọc theo ngày</h3>
+              <h3 className="mb-1 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
+                Thuê vs Cọc theo ngày
+              </h3>
               <div className="mb-4 flex items-center gap-4 text-xs text-stone-500">
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-jade" /> Tiền thuê</span>
-                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-antique" /> Tiền cọc</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-jade" />{" "}
+                  Tiền thuê
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-antique" />{" "}
+                  Tiền cọc
+                </span>
               </div>
               {revenueByDay.length === 0 ? (
-                <div className="flex h-40 items-center justify-center text-sm text-stone-400">Chưa có dữ liệu.</div>
+                <div className="flex h-40 items-center justify-center text-sm text-stone-400">
+                  Chưa có dữ liệu.
+                </div>
               ) : (
-                <div className="flex items-end gap-1 overflow-x-auto" style={{ minHeight: 160 }}>
+                <div
+                  className="flex items-end gap-1 overflow-x-auto"
+                  style={{ minHeight: 160 }}
+                >
                   {revenueByDay.map((d) => {
-                    const localMax = Math.max(d.rentalRevenue, d.depositReceived, 1);
+                    const localMax = Math.max(
+                      d.rentalRevenue,
+                      d.depositReceived,
+                      1,
+                    );
                     return (
-                      <div key={d.date} className="flex flex-col items-center gap-1" style={{ flex: "1 0 32px", maxWidth: 48 }}>
-                        <div className="flex w-full items-end justify-center gap-0.5" style={{ height: 120 }}>
+                      <div
+                        key={d.date}
+                        className="flex flex-col items-center gap-1"
+                        style={{ flex: "1 0 32px", maxWidth: 48 }}
+                      >
+                        <div
+                          className="flex w-full items-end justify-center gap-0.5"
+                          style={{ height: 120 }}
+                        >
                           <div
                             title={`Thuê: ${formatVND(d.rentalRevenue)}`}
                             className="w-1/2 rounded-t-md bg-jade transition-all hover:bg-emerald-700"
-                            style={{ height: `${Math.max((d.rentalRevenue / maxRevenue) * 100, d.rentalRevenue > 0 ? 3 : 1)}%` }}
+                            style={{
+                              height: `${Math.max((d.rentalRevenue / maxRevenue) * 100, d.rentalRevenue > 0 ? 3 : 1)}%`,
+                            }}
                           />
                           <div
                             title={`Cọc: ${formatVND(d.depositReceived)}`}
                             className="w-1/2 rounded-t-md bg-antique transition-all hover:bg-bronze"
-                            style={{ height: `${Math.max((d.depositReceived / maxRevenue) * 100, d.depositReceived > 0 ? 3 : 1)}%` }}
+                            style={{
+                              height: `${Math.max((d.depositReceived / maxRevenue) * 100, d.depositReceived > 0 ? 3 : 1)}%`,
+                            }}
                           />
                         </div>
-                        <span className="text-[9px] text-stone-400">{d.date.slice(5)}</span>
+                        <span className="text-[9px] text-stone-400">
+                          {d.date.slice(5)}
+                        </span>
                       </div>
                     );
                   })}
@@ -3001,19 +4454,37 @@ function FinanceTab({
           {/* ── Booking Stats ── */}
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Tổng đơn</p>
-              <p className="mt-2 font-display text-2xl text-ink">{summary.totalBookings}</p>
-              <p className="mt-1 text-[10px] text-stone-400">Bao gồm tất cả trạng thái</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+                Tổng đơn
+              </p>
+              <p className="mt-2 font-display text-2xl text-ink">
+                {summary.totalBookings}
+              </p>
+              <p className="mt-1 text-[10px] text-stone-400">
+                Bao gồm tất cả trạng thái
+              </p>
             </div>
             <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Đã thanh toán</p>
-              <p className="mt-2 font-display text-2xl text-jade">{summary.paidBookings}</p>
-              <p className="mt-1 text-[10px] text-stone-400">Hoàn tất thanh toán</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+                Đã thanh toán
+              </p>
+              <p className="mt-2 font-display text-2xl text-jade">
+                {summary.paidBookings}
+              </p>
+              <p className="mt-1 text-[10px] text-stone-400">
+                Hoàn tất thanh toán
+              </p>
             </div>
             <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">Chưa thanh toán</p>
-              <p className="mt-2 font-display text-2xl text-amber-700">{summary.unpaidBookings}</p>
-              <p className="mt-1 text-[10px] text-stone-400">Chờ khách thanh toán</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+                Chưa thanh toán
+              </p>
+              <p className="mt-2 font-display text-2xl text-amber-700">
+                {summary.unpaidBookings}
+              </p>
+              <p className="mt-1 text-[10px] text-stone-400">
+                Chờ khách thanh toán
+              </p>
             </div>
           </div>
         </>
@@ -3022,11 +4493,16 @@ function FinanceTab({
       {subView === "transactions" && (
         <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand px-6 py-4">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Giao dịch tài chính</h3>
+            <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Giao dịch tài chính
+            </h3>
             <div className="flex gap-2">
               <select
                 value={txStatusFilter}
-                onChange={(e) => { setTxStatusFilter(e.target.value); setTxPage(1); }}
+                onChange={(e) => {
+                  setTxStatusFilter(e.target.value);
+                  setTxPage(1);
+                }}
                 className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
                 aria-label="Lọc loại giao dịch"
               >
@@ -3038,7 +4514,10 @@ function FinanceTab({
               </select>
               <select
                 value={txMethodFilter}
-                onChange={(e) => { setTxMethodFilter(e.target.value); setTxPage(1); }}
+                onChange={(e) => {
+                  setTxMethodFilter(e.target.value);
+                  setTxPage(1);
+                }}
                 className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
                 aria-label="Lọc phương thức"
               >
@@ -3064,20 +4543,52 @@ function FinanceTab({
               </thead>
               <tbody className="divide-y divide-sand">
                 {transactions.length === 0 ? (
-                  <tr><td colSpan={8} className="px-6 py-10 text-center text-stone-400">Chưa có giao dịch nào.</td></tr>
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="px-6 py-10 text-center text-stone-400"
+                    >
+                      Chưa có giao dịch nào.
+                    </td>
+                  </tr>
                 ) : (
                   transactions.map((tx) => {
-                    const typeMeta = TX_TYPE_LABELS[tx.type] ?? { label: tx.rawType, color: "bg-stone-100 text-stone-600" };
+                    const typeMeta = TX_TYPE_LABELS[tx.type] ?? {
+                      label: tx.rawType,
+                      color: "bg-stone-100 text-stone-600",
+                    };
                     return (
                       <tr key={tx.id} className="transition hover:bg-mist">
-                        <td className="px-6 py-3 font-mono text-xs text-stone-500">#{tx.id.slice(0, 8)}</td>
-                        <td className="px-6 py-3 font-semibold text-ink">{tx.bookingId ? `#${tx.bookingId.slice(0, 8).toUpperCase()}` : "—"}</td>
-                        <td className="px-6 py-3 text-stone-600">{tx.customerName ?? "—"}</td>
-                        <td className="px-6 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${typeMeta.color}`}>{typeMeta.label}</span></td>
-                        <td className="px-6 py-3 text-ink font-semibold">{formatVND(tx.amount)}</td>
-                        <td className="px-6 py-3 text-stone-500 text-xs uppercase">{tx.method ?? "—"}</td>
-                        <td className="px-6 py-3 text-xs text-stone-500">{tx.status}</td>
-                        <td className="px-6 py-3 text-xs text-stone-400">{new Date(tx.createdAt).toLocaleString("vi-VN")}</td>
+                        <td className="px-6 py-3 font-mono text-xs text-stone-500">
+                          #{tx.id.slice(0, 8)}
+                        </td>
+                        <td className="px-6 py-3 font-semibold text-ink">
+                          {tx.bookingId
+                            ? `#${tx.bookingId.slice(0, 8).toUpperCase()}`
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-3 text-stone-600">
+                          {tx.customerName ?? "—"}
+                        </td>
+                        <td className="px-6 py-3">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${typeMeta.color}`}
+                          >
+                            {typeMeta.label}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 text-ink font-semibold">
+                          {formatVND(tx.amount)}
+                        </td>
+                        <td className="px-6 py-3 text-stone-500 text-xs uppercase">
+                          {tx.method ?? "—"}
+                        </td>
+                        <td className="px-6 py-3 text-xs text-stone-500">
+                          {tx.status}
+                        </td>
+                        <td className="px-6 py-3 text-xs text-stone-400">
+                          {new Date(tx.createdAt).toLocaleString("vi-VN")}
+                        </td>
                       </tr>
                     );
                   })
@@ -3087,10 +4598,24 @@ function FinanceTab({
           </div>
           {txTotal > 20 && (
             <div className="flex items-center justify-between border-t border-sand px-6 py-3">
-              <span className="text-xs text-stone-500">Trang {txPage} / {Math.ceil(txTotal / 20)} — {txTotal} giao dịch</span>
+              <span className="text-xs text-stone-500">
+                Trang {txPage} / {Math.ceil(txTotal / 20)} — {txTotal} giao dịch
+              </span>
               <div className="flex gap-2">
-                <button disabled={txPage <= 1} onClick={() => setTxPage((p) => p - 1)} className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40">← Trước</button>
-                <button disabled={txPage >= Math.ceil(txTotal / 20)} onClick={() => setTxPage((p) => p + 1)} className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40">Tiếp →</button>
+                <button
+                  disabled={txPage <= 1}
+                  onClick={() => setTxPage((p) => p - 1)}
+                  className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40"
+                >
+                  ← Trước
+                </button>
+                <button
+                  disabled={txPage >= Math.ceil(txTotal / 20)}
+                  onClick={() => setTxPage((p) => p + 1)}
+                  className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 disabled:opacity-40"
+                >
+                  Tiếp →
+                </button>
               </div>
             </div>
           )}
@@ -3100,27 +4625,73 @@ function FinanceTab({
       {subView === "reconciliation" && reconciliation && (
         <div className="space-y-6">
           <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">Đối soát giao dịch</h3>
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Đối soát giao dịch
+            </h3>
             <p className="mb-6 text-xs text-stone-400">
-              Kỳ: {new Date(reconciliation.period.start).toLocaleDateString("vi-VN")} → {new Date(reconciliation.period.end).toLocaleDateString("vi-VN")}
+              Kỳ:{" "}
+              {new Date(reconciliation.period.start).toLocaleDateString(
+                "vi-VN",
+              )}{" "}
+              →{" "}
+              {new Date(reconciliation.period.end).toLocaleDateString("vi-VN")}
             </p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <ReconCard label="Doanh thu cho thuê" value={formatVND(reconciliation.rentalRevenue)} color="text-jade" />
-              <ReconCard label="Tiền cọc đã thu" value={formatVND(reconciliation.depositReceived)} color="text-amber-700" />
-              <ReconCard label="Đã hoàn cọc" value={formatVND(reconciliation.refundedDeposit)} color="text-blue-600" />
-              <ReconCard label="Phạt hư hỏng" value={formatVND(reconciliation.damageDeduction)} color="text-red-600" />
-              <ReconCard label="Số giao dịch" value={String(reconciliation.transactionCount)} color="text-stone-700" />
-              <ReconCard label="Dòng tiền ròng" value={formatVND(reconciliation.netCashFlow)} color="text-ink" highlight />
+              <ReconCard
+                label="Doanh thu cho thuê"
+                value={formatVND(reconciliation.rentalRevenue)}
+                color="text-jade"
+              />
+              <ReconCard
+                label="Tiền cọc đã thu"
+                value={formatVND(reconciliation.depositReceived)}
+                color="text-amber-700"
+              />
+              <ReconCard
+                label="Đã hoàn cọc"
+                value={formatVND(reconciliation.refundedDeposit)}
+                color="text-blue-600"
+              />
+              <ReconCard
+                label="Phạt hư hỏng"
+                value={formatVND(reconciliation.damageDeduction)}
+                color="text-red-600"
+              />
+              <ReconCard
+                label="Số giao dịch"
+                value={String(reconciliation.transactionCount)}
+                color="text-stone-700"
+              />
+              <ReconCard
+                label="Dòng tiền ròng"
+                value={formatVND(reconciliation.netCashFlow)}
+                color="text-ink"
+                highlight
+              />
             </div>
           </div>
 
           {/* Reconciliation verification */}
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Kiểm tra nghiệp vụ</h4>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+              Kiểm tra nghiệp vụ
+            </h4>
             <ul className="space-y-1 text-sm text-emerald-800">
-              <li>✓ Doanh thu cho thuê <b>KHÔNG</b> bao gồm tiền cọc</li>
-              <li>✓ Dòng tiền ròng = Doanh thu + Cọc thu − Cọc hoàn = {formatVND(reconciliation.rentalRevenue + reconciliation.depositReceived - reconciliation.refundedDeposit)}</li>
-              <li>✓ Tiền phạt được ghi nhận riêng: {formatVND(reconciliation.damageDeduction)}</li>
+              <li>
+                ✓ Doanh thu cho thuê <b>KHÔNG</b> bao gồm tiền cọc
+              </li>
+              <li>
+                ✓ Dòng tiền ròng = Doanh thu + Cọc thu − Cọc hoàn ={" "}
+                {formatVND(
+                  reconciliation.rentalRevenue +
+                    reconciliation.depositReceived -
+                    reconciliation.refundedDeposit,
+                )}
+              </li>
+              <li>
+                ✓ Tiền phạt được ghi nhận riêng:{" "}
+                {formatVND(reconciliation.damageDeduction)}
+              </li>
             </ul>
           </div>
         </div>
@@ -3129,7 +4700,19 @@ function FinanceTab({
   );
 }
 
-function KPICard({ label, value, icon, tone, hint }: { label: string; value: string; icon: string; tone: string; hint?: string }) {
+function KPICard({
+  label,
+  value,
+  icon,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string;
+  icon: string;
+  tone: string;
+  hint?: string;
+}) {
   const toneMap: Record<string, string> = {
     jade: "border-emerald-200 bg-emerald-50",
     amber: "border-amber-200 bg-amber-50",
@@ -3139,25 +4722,53 @@ function KPICard({ label, value, icon, tone, hint }: { label: string; value: str
     purple: "border-purple-200 bg-purple-50",
   };
   const textMap: Record<string, string> = {
-    jade: "text-jade", amber: "text-amber-700", blue: "text-blue-700",
-    red: "text-red-700", stone: "text-stone-600", purple: "text-purple-700",
+    jade: "text-jade",
+    amber: "text-amber-700",
+    blue: "text-blue-700",
+    red: "text-red-700",
+    stone: "text-stone-600",
+    purple: "text-purple-700",
   };
   return (
-    <div className={`rounded-xl border p-4 shadow-sm ${toneMap[tone] ?? "border-sand bg-white"}`}>
+    <div
+      className={`rounded-xl border p-4 shadow-sm ${toneMap[tone] ?? "border-sand bg-white"}`}
+    >
       <div className="flex items-center gap-2 mb-2">
-        <span className={`material-symbols-outlined text-[18px] ${textMap[tone] ?? "text-stone-500"}`}>{icon}</span>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500 leading-tight">{label}</p>
+        <span
+          className={`material-symbols-outlined text-[18px] ${textMap[tone] ?? "text-stone-500"}`}
+        >
+          {icon}
+        </span>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500 leading-tight">
+          {label}
+        </p>
       </div>
-      <p className={`font-display text-xl ${textMap[tone] ?? "text-ink"}`}>{value}</p>
+      <p className={`font-display text-xl ${textMap[tone] ?? "text-ink"}`}>
+        {value}
+      </p>
       {hint && <p className="mt-1 text-[10px] text-stone-400">{hint}</p>}
     </div>
   );
 }
 
-function ReconCard({ label, value, color, highlight }: { label: string; value: string; color: string; highlight?: boolean }) {
+function ReconCard({
+  label,
+  value,
+  color,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  highlight?: boolean;
+}) {
   return (
-    <div className={`rounded-lg border p-4 ${highlight ? "border-ink bg-parchment" : "border-sand bg-mist"}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500">{label}</p>
+    <div
+      className={`rounded-lg border p-4 ${highlight ? "border-ink bg-parchment" : "border-sand bg-mist"}`}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+        {label}
+      </p>
       <p className={`mt-1 font-display text-xl ${color}`}>{value}</p>
     </div>
   );
@@ -3167,12 +4778,13 @@ function ReconCard({ label, value, color, highlight }: { label: string; value: s
 // Shared presentational components
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const TONE_CLASSES: Record<string, { text: string; bg: string; bar: string }> = {
-  lotus:   { text: "text-lotus",   bg: "bg-lotus/10", bar: "bg-lotus" },
-  antique: { text: "text-antique", bg: "bg-antique/10", bar: "bg-antique" },
-  jade:    { text: "text-jade",    bg: "bg-jade/10", bar: "bg-jade" },
-  bronze:  { text: "text-bronze",  bg: "bg-bronze/10", bar: "bg-bronze" },
-};
+const TONE_CLASSES: Record<string, { text: string; bg: string; bar: string }> =
+  {
+    lotus: { text: "text-lotus", bg: "bg-lotus/10", bar: "bg-lotus" },
+    antique: { text: "text-antique", bg: "bg-antique/10", bar: "bg-antique" },
+    jade: { text: "text-jade", bg: "bg-jade/10", bar: "bg-jade" },
+    bronze: { text: "text-bronze", bg: "bg-bronze/10", bar: "bg-bronze" },
+  };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chart: Booking Pipeline (horizontal bar chart)
@@ -3180,10 +4792,19 @@ const TONE_CLASSES: Record<string, { text: string; bg: string; bar: string }> = 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chart: Monthly Revenue & Deposit (grouped bars, last 6 months)
 // ─────────────────────────────────────────────────────────────────────────────
-function MonthlyFinanceChart({ bookings }: { bookings: StaffBookingResponse[] }) {
+function MonthlyFinanceChart({
+  bookings,
+}: {
+  bookings: StaffBookingResponse[];
+}) {
   const months = useMemo(() => {
     const now = new Date();
-    const buckets: { key: string; label: string; revenue: number; deposit: number }[] = [];
+    const buckets: {
+      key: string;
+      label: string;
+      revenue: number;
+      deposit: number;
+    }[] = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       buckets.push({
@@ -3208,26 +4829,40 @@ function MonthlyFinanceChart({ bookings }: { bookings: StaffBookingResponse[] })
   const maxVal = Math.max(...months.flatMap((m) => [m.revenue, m.deposit]), 1);
   const current = months[months.length - 1];
   const previous = months[months.length - 2];
-  const delta = previous.revenue > 0
-    ? Math.round(((current.revenue - previous.revenue) / previous.revenue) * 100)
-    : null;
+  const delta =
+    previous.revenue > 0
+      ? Math.round(
+          ((current.revenue - previous.revenue) / previous.revenue) * 100,
+        )
+      : null;
   const hasData = months.some((m) => m.revenue > 0 || m.deposit > 0);
 
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-2xl text-ink">Doanh Thu & Tiền Cọc Theo Tháng</h2>
-          <p className="text-sm text-stone-500">6 tháng gần nhất, tính theo thời điểm tạo đơn</p>
+          <h2 className="font-display text-2xl text-ink">
+            Doanh Thu & Tiền Cọc Theo Tháng
+          </h2>
+          <p className="text-sm text-stone-500">
+            6 tháng gần nhất, tính theo thời điểm tạo đơn
+          </p>
         </div>
         {delta !== null ? (
-          <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${delta >= 0 ? "bg-jade/10 text-jade" : "bg-red-50 text-red-600"}`}>
-            <span className="material-symbols-outlined text-[16px]">{delta >= 0 ? "trending_up" : "trending_down"}</span>
-            {delta >= 0 ? "+" : ""}{delta}% so với tháng trước
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${delta >= 0 ? "bg-jade/10 text-jade" : "bg-red-50 text-red-600"}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">
+              {delta >= 0 ? "trending_up" : "trending_down"}
+            </span>
+            {delta >= 0 ? "+" : ""}
+            {delta}% so với tháng trước
           </span>
         ) : current.revenue > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-3 py-1 text-xs font-semibold text-jade">
-            <span className="material-symbols-outlined text-[16px]">trending_up</span>
+            <span className="material-symbols-outlined text-[16px]">
+              trending_up
+            </span>
             Tháng trước chưa có doanh thu
           </span>
         ) : null}
@@ -3261,17 +4896,27 @@ function MonthlyFinanceChart({ bookings }: { bookings: StaffBookingResponse[] })
                   <div
                     title={`Doanh thu ${m.label}: ${formatVND(m.revenue)}`}
                     className="w-1/2 max-w-[26px] rounded-t-md bg-lotus transition-all duration-500 hover:bg-oxblood"
-                    style={{ height: `${Math.max((m.revenue / maxVal) * 100, m.revenue > 0 ? 3 : 1)}%` }}
+                    style={{
+                      height: `${Math.max((m.revenue / maxVal) * 100, m.revenue > 0 ? 3 : 1)}%`,
+                    }}
                   />
                   <div
                     title={`Tiền cọc ${m.label}: ${formatVND(m.deposit)}`}
                     className="w-1/2 max-w-[26px] rounded-t-md bg-antique transition-all duration-500 hover:bg-bronze"
-                    style={{ height: `${Math.max((m.deposit / maxVal) * 100, m.deposit > 0 ? 3 : 1)}%` }}
+                    style={{
+                      height: `${Math.max((m.deposit / maxVal) * 100, m.deposit > 0 ? 3 : 1)}%`,
+                    }}
                   />
                 </div>
                 <div className="text-center">
-                  <p className={`text-[11px] font-semibold uppercase tracking-wide ${isCurrent ? "text-lotus" : "text-stone-500"}`}>{m.label}</p>
-                  <p className="text-[11px] text-stone-400">{m.revenue > 0 ? formatCompactVND(m.revenue) : "–"}</p>
+                  <p
+                    className={`text-[11px] font-semibold uppercase tracking-wide ${isCurrent ? "text-lotus" : "text-stone-500"}`}
+                  >
+                    {m.label}
+                  </p>
+                  <p className="text-[11px] text-stone-400">
+                    {m.revenue > 0 ? formatCompactVND(m.revenue) : "–"}
+                  </p>
                 </div>
               </div>
             );
@@ -3282,13 +4927,29 @@ function MonthlyFinanceChart({ bookings }: { bookings: StaffBookingResponse[] })
   );
 }
 
-function BookingPipelineChart({ countBy }: { countBy: (s: string[]) => number }) {
+function BookingPipelineChart({
+  countBy,
+}: {
+  countBy: (s: string[]) => number;
+}) {
   const stages = [
-    { label: "Chờ xử lý",    statuses: ["pending_confirmation", "awaiting_payment"], color: "#d97706" },
-    { label: "Đang chuẩn bị", statuses: ["paid", "preparing", "ready_for_pickup", "delivering"], color: "#7c3aed" },
-    { label: "Đang thuê",     statuses: ["renting"],                                color: "#c0392b" },
-    { label: "Chờ kiểm tra",  statuses: ["returned", "inspection_pending"],         color: "#ea580c" },
-    { label: "Hoàn thành",    statuses: ["completed"],                              color: "#059669" },
+    {
+      label: "Chờ xử lý",
+      statuses: ["pending_confirmation", "awaiting_payment"],
+      color: "#d97706",
+    },
+    {
+      label: "Đang chuẩn bị",
+      statuses: ["paid", "preparing", "ready_for_pickup", "delivering"],
+      color: "#7c3aed",
+    },
+    { label: "Đang thuê", statuses: ["renting"], color: "#c0392b" },
+    {
+      label: "Chờ kiểm tra",
+      statuses: ["returned", "inspection_pending"],
+      color: "#ea580c",
+    },
+    { label: "Hoàn thành", statuses: ["completed"], color: "#059669" },
   ];
   const values = stages.map((s) => countBy(s.statuses));
   const max = Math.max(...values, 1);
@@ -3299,19 +4960,30 @@ function BookingPipelineChart({ countBy }: { countBy: (s: string[]) => number })
         const pct = (values[i] / max) * 100;
         return (
           <div key={stage.label} className="flex items-center gap-3">
-            <span className="w-28 flex-shrink-0 text-xs font-semibold text-stone-500 text-right leading-tight">{stage.label}</span>
+            <span className="w-28 flex-shrink-0 text-xs font-semibold text-stone-500 text-right leading-tight">
+              {stage.label}
+            </span>
             <div className="relative flex-1 h-7 rounded-md bg-stone-100 overflow-hidden">
               <div
                 className="h-full rounded-md transition-all duration-500"
-                style={{ width: `${pct}%`, backgroundColor: stage.color, minWidth: values[i] > 0 ? "2rem" : 0 }}
+                style={{
+                  width: `${pct}%`,
+                  backgroundColor: stage.color,
+                  minWidth: values[i] > 0 ? "2rem" : 0,
+                }}
               />
               {values[i] > 0 && (
-                <span className="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white mix-blend-luminosity" style={{ color: "#fff" }}>
+                <span
+                  className="absolute inset-0 flex items-center pl-2 text-xs font-bold text-white mix-blend-luminosity"
+                  style={{ color: "#fff" }}
+                >
                   {values[i]}
                 </span>
               )}
             </div>
-            <span className="w-6 flex-shrink-0 text-xs font-bold text-stone-600 text-right">{values[i]}</span>
+            <span className="w-6 flex-shrink-0 text-xs font-bold text-stone-600 text-right">
+              {values[i]}
+            </span>
           </div>
         );
       })}
@@ -3323,25 +4995,39 @@ function BookingPipelineChart({ countBy }: { countBy: (s: string[]) => number })
 // Chart: Asset Status Donut
 // ─────────────────────────────────────────────────────────────────────────────
 const DONUT_COLORS: Record<string, string> = {
-  available:          "#059669",
-  reserved:           "#d97706",
-  rented:             "#c0392b",
+  available: "#059669",
+  reserved: "#d97706",
+  rented: "#c0392b",
   inspection_pending: "#ea580c",
-  laundry:            "#0284c7",
-  maintenance:        "#7c3aed",
-  damaged:            "#dc2626",
-  retired:            "#9ca3af",
-  lost:               "#4b5563",
+  laundry: "#0284c7",
+  maintenance: "#7c3aed",
+  damaged: "#dc2626",
+  retired: "#9ca3af",
+  lost: "#4b5563",
 };
 
-function AssetDonutChart({ assetCounts, total }: { assetCounts: Record<string, number>; total: number }) {
+function AssetDonutChart({
+  assetCounts,
+  total,
+}: {
+  assetCounts: Record<string, number>;
+  total: number;
+}) {
   if (total === 0) {
-    return <div className="flex h-40 items-center justify-center text-sm text-stone-400">Chưa có tài sản nào.</div>;
+    return (
+      <div className="flex h-40 items-center justify-center text-sm text-stone-400">
+        Chưa có tài sản nào.
+      </div>
+    );
   }
   const slices = Object.entries(assetCounts).filter(([, v]) => v > 0);
-  const cx = 60; const cy = 60; const r = 50; const innerR = 32;
+  const cx = 60;
+  const cy = 60;
+  const r = 50;
+  const innerR = 32;
   let cumAngle = -Math.PI / 2;
-  const paths: { d: string; color: string; label: string; count: number }[] = [];
+  const paths: { d: string; color: string; label: string; count: number }[] =
+    [];
 
   for (const [status, count] of slices) {
     const angle = (count / total) * 2 * Math.PI;
@@ -3355,22 +5041,47 @@ function AssetDonutChart({ assetCounts, total }: { assetCounts: Record<string, n
     const iy2 = cy + innerR * Math.sin(cumAngle + angle);
     const large = angle > Math.PI ? 1 : 0;
     const d = `M ${ix1} ${iy1} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${large} 0 ${ix1} ${iy1} Z`;
-    paths.push({ d, color: DONUT_COLORS[status] ?? "#9ca3af", label: ASSET_STATUS_META[status]?.label ?? status, count });
+    paths.push({
+      d,
+      color: DONUT_COLORS[status] ?? "#9ca3af",
+      label: ASSET_STATUS_META[status]?.label ?? status,
+      count,
+    });
     cumAngle += angle;
   }
 
   return (
     <div className="flex items-center gap-4">
       <svg viewBox="0 0 120 120" className="w-28 h-28 flex-shrink-0">
-        {paths.map((p, i) => <path key={i} d={p.d} fill={p.color} />)}
-        <text x={cx} y={cy - 4} textAnchor="middle" className="text-lg font-bold" style={{ fontSize: 14, fontWeight: 700, fill: "#1c1c1c" }}>{total}</text>
-        <text x={cx} y={cy + 10} textAnchor="middle" style={{ fontSize: 7, fill: "#78716c" }}>tài sản</text>
+        {paths.map((p, i) => (
+          <path key={i} d={p.d} fill={p.color} />
+        ))}
+        <text
+          x={cx}
+          y={cy - 4}
+          textAnchor="middle"
+          className="text-lg font-bold"
+          style={{ fontSize: 14, fontWeight: 700, fill: "#1c1c1c" }}
+        >
+          {total}
+        </text>
+        <text
+          x={cx}
+          y={cy + 10}
+          textAnchor="middle"
+          style={{ fontSize: 7, fill: "#78716c" }}
+        >
+          tài sản
+        </text>
       </svg>
       <div className="flex-1 space-y-1.5">
         {paths.map((p, i) => (
           <div key={i} className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: p.color }} />
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm flex-shrink-0"
+                style={{ backgroundColor: p.color }}
+              />
               <span className="text-stone-600">{p.label}</span>
             </div>
             <span className="font-semibold text-ink">{p.count}</span>
@@ -3381,7 +5092,19 @@ function AssetDonutChart({ assetCounts, total }: { assetCounts: Record<string, n
   );
 }
 
-function QuickWorkItem({ icon, label, value, tone, onClick }: { icon: string; label: string; value: number; tone: "amber" | "orange" | "laundry" | "red"; onClick: () => void }) {
+function QuickWorkItem({
+  icon,
+  label,
+  value,
+  tone,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  value: number;
+  tone: "amber" | "orange" | "laundry" | "red";
+  onClick: () => void;
+}) {
   const chip = {
     amber: "bg-amber-50 text-amber-700",
     orange: "bg-orange-50 text-orange-700",
@@ -3394,25 +5117,45 @@ function QuickWorkItem({ icon, label, value, tone, onClick }: { icon: string; la
       onClick={onClick}
       className="group flex w-full items-center gap-4 rounded-lg border border-sand bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-lotus/40 hover:shadow-sm"
     >
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${chip}`}>
+      <span
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${chip}`}
+      >
         <span className="material-symbols-outlined text-[22px]">{icon}</span>
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">{label}</span>
-        <span className={`mt-0.5 block font-display text-2xl ${value > 0 ? "text-ink" : "text-stone-300"}`}>{value}</span>
+        <span className="block truncate text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+          {label}
+        </span>
+        <span
+          className={`mt-0.5 block font-display text-2xl ${value > 0 ? "text-ink" : "text-stone-300"}`}
+        >
+          {value}
+        </span>
       </span>
       {value > 0 && (
-        <span className="rounded-full bg-lotus/10 px-2.5 py-0.5 text-[11px] font-semibold text-lotus">Cần xử lý</span>
+        <span className="rounded-full bg-lotus/10 px-2.5 py-0.5 text-[11px] font-semibold text-lotus">
+          Cần xử lý
+        </span>
       )}
-      <span className="material-symbols-outlined text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus">chevron_right</span>
+      <span className="material-symbols-outlined text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus">
+        chevron_right
+      </span>
     </button>
   );
 }
 
 function SnapshotCard({
-  label, value, hint, icon, tone, progress,
+  label,
+  value,
+  hint,
+  icon,
+  tone,
+  progress,
 }: {
-  label: string; value: string; hint: string; icon: string;
+  label: string;
+  value: string;
+  hint: string;
+  icon: string;
   tone: "lotus" | "antique" | "jade" | "bronze";
   progress?: number | null;
 }) {
@@ -3421,68 +5164,120 @@ function SnapshotCard({
     <div className="relative overflow-hidden rounded-xl border border-sand bg-white p-6 shadow-xs">
       <div className="mb-4 flex items-start justify-between">
         <span className="text-sm font-semibold text-stone-500">{label}</span>
-        <span className={`material-symbols-outlined rounded-lg p-2 ${t.text} ${t.bg}`}>{icon}</span>
+        <span
+          className={`material-symbols-outlined rounded-lg p-2 ${t.text} ${t.bg}`}
+        >
+          {icon}
+        </span>
       </div>
       <div className="mb-2 font-display text-3xl text-ink">{value}</div>
       {typeof progress === "number" ? (
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-lotus/20">
-          <div className={`h-full rounded-full ${t.bar}`} style={{ width: `${progress}%` }} />
+          <div
+            className={`h-full rounded-full ${t.bar}`}
+            style={{ width: `${progress}%` }}
+          />
         </div>
       ) : (
         <div className="text-sm text-stone-500">{hint}</div>
       )}
-      {typeof progress === "number" && <div className="mt-2 text-sm text-stone-500">{hint}</div>}
+      {typeof progress === "number" && (
+        <div className="mt-2 text-sm text-stone-500">{hint}</div>
+      )}
     </div>
   );
 }
 
-const CELL_TONES: Record<string, { num: string; bg: string; border: string }> = {
-  amber:   { num: "text-amber-700",   bg: "bg-amber-50", border: "border-[#fde6c8]" },
-  purple:  { num: "text-purple-700",  bg: "bg-lotus/5", border: "border-[#e8e2ff]" },
-  lotus:   { num: "text-lotus",       bg: "bg-lotus/10", border: "border-[#f7d2cd]" },
-  orange:  { num: "text-orange-700",  bg: "bg-rose-50", border: "border-[#feddc6]" },
-  jade:    { num: "text-jade",        bg: "bg-jade/10", border: "border-[#cfe7df]" },
-};
+const CELL_TONES: Record<string, { num: string; bg: string; border: string }> =
+  {
+    amber: {
+      num: "text-amber-700",
+      bg: "bg-amber-50",
+      border: "border-[#fde6c8]",
+    },
+    purple: {
+      num: "text-purple-700",
+      bg: "bg-lotus/5",
+      border: "border-[#e8e2ff]",
+    },
+    lotus: { num: "text-lotus", bg: "bg-lotus/10", border: "border-[#f7d2cd]" },
+    orange: {
+      num: "text-orange-700",
+      bg: "bg-rose-50",
+      border: "border-[#feddc6]",
+    },
+    jade: { num: "text-jade", bg: "bg-jade/10", border: "border-[#cfe7df]" },
+  };
 
-function StatusCell({ label, value, tone }: { label: string; value: number; tone: keyof typeof CELL_TONES }) {
+function StatusCell({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: keyof typeof CELL_TONES;
+}) {
   const t = CELL_TONES[tone];
   return (
-    <div className={`flex flex-col items-center justify-center rounded-lg border p-4 ${t.bg} ${t.border}`}>
+    <div
+      className={`flex flex-col items-center justify-center rounded-lg border p-4 ${t.bg} ${t.border}`}
+    >
       <span className={`font-display text-2xl ${t.num}`}>{value}</span>
-      <span className={`mt-1 text-center text-xs font-semibold uppercase ${t.num}`}>{label}</span>
+      <span
+        className={`mt-1 text-center text-xs font-semibold uppercase ${t.num}`}
+      >
+        {label}
+      </span>
     </div>
   );
 }
 
 function ShortcutButton({
-  icon, label, badge, tone, onClick,
+  icon,
+  label,
+  badge,
+  tone,
+  onClick,
 }: {
-  icon: string; label: string; badge?: number;
+  icon: string;
+  label: string;
+  badge?: number;
   tone: "bronze" | "jade" | "antique";
   onClick: () => void;
 }) {
-  const hover = { bronze: "hover:border-bronze", jade: "hover:border-jade", antique: "hover:border-antique" }[tone];
+  const hover = {
+    bronze: "hover:border-bronze",
+    jade: "hover:border-jade",
+    antique: "hover:border-antique",
+  }[tone];
   return (
-    <button type="button" onClick={onClick}
-      className={`group flex w-full items-center justify-between rounded-lg border border-sand p-4 transition hover:bg-mist ${hover}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group flex w-full items-center justify-between rounded-lg border border-sand p-4 transition hover:bg-mist ${hover}`}
+    >
       <div className="flex items-center gap-3">
-        <div className={`rounded-md bg-bronze/10 p-2 ${TONE_CLASSES[tone].text} transition group-hover:bg-current`}>
+        <div
+          className={`rounded-md bg-bronze/10 p-2 ${TONE_CLASSES[tone].text} transition group-hover:bg-current`}
+        >
           <span className="material-symbols-outlined text-[20px]">{icon}</span>
         </div>
         <span className="text-sm font-semibold text-ink">{label}</span>
       </div>
       <div className="flex items-center gap-2">
         {typeof badge === "number" && badge > 0 && (
-          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-xs text-white">{badge}</span>
+          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-xs text-white">
+            {badge}
+          </span>
         )}
-        <span className="material-symbols-outlined text-stone-400 group-hover:text-current">arrow_forward</span>
+        <span className="material-symbols-outlined text-stone-400 group-hover:text-current">
+          arrow_forward
+        </span>
       </div>
     </button>
   );
 }
-
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: Refunds (Duyệt hoàn cọc)
@@ -3496,7 +5291,11 @@ function RefundCard({
 }: {
   refund: any;
   approvingId: string | null;
-  handleApproveRefund: (id: string, proofImageUrl: string, approveNote: string) => void;
+  handleApproveRefund: (
+    id: string,
+    proofImageUrl: string,
+    approveNote: string,
+  ) => void;
   handleRejectRefund: (id: string, reason: string) => void;
 }) {
   const [proofImageUrl, setProofImageUrl] = useState("");
@@ -3505,22 +5304,31 @@ function RefundCard({
   const [proofError, setProofError] = useState<string | null>(null);
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const isBankTransfer = refund.refundMethod === "bank_transfer";
-  const bankDetailsComplete = !isBankTransfer || Boolean(refund.bankDetailsComplete);
-  const canApprove = !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
+  const bankDetailsComplete =
+    !isBankTransfer || Boolean(refund.bankDetailsComplete);
+  const canApprove =
+    !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
 
   function formatVND(amount: number) {
-    return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+    return new Intl.NumberFormat("vi-VN", {
+      style: "currency",
+      currency: "VND",
+    }).format(amount);
   }
 
   return (
     <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-ink">#{refund.bookingId.slice(0, 8).toUpperCase()}</span>
+          <span className="font-semibold text-ink">
+            #{refund.bookingId.slice(0, 8).toUpperCase()}
+          </span>
           <span className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] bg-yellow-100 text-yellow-700">
             Chờ duyệt
           </span>
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${isBankTransfer ? "bg-lotus/10 text-lotus" : "bg-jade/10 text-jade"}`}>
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${isBankTransfer ? "bg-lotus/10 text-lotus" : "bg-jade/10 text-jade"}`}
+          >
             {isBankTransfer ? "Chuyển khoản" : "Tiền mặt"}
           </span>
         </div>
@@ -3531,37 +5339,63 @@ function RefundCard({
 
       <div className="grid gap-6 p-6 sm:grid-cols-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Khách hàng</p>
-          <p className="mt-1 font-medium text-ink">{refund.booking.customerName ?? "—"}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+            Khách hàng
+          </p>
+          <p className="mt-1 font-medium text-ink">
+            {refund.booking.customerName ?? "—"}
+          </p>
           {refund.booking.customerPhone && (
-            <p className="text-sm text-stone-500">{refund.booking.customerPhone}</p>
+            <p className="text-sm text-stone-500">
+              {refund.booking.customerPhone}
+            </p>
           )}
         </div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Số tiền hoàn</p>
-          <p className="mt-1 font-display text-2xl text-jade">{formatVND(refund.amount)}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+            Số tiền hoàn
+          </p>
+          <p className="mt-1 font-display text-2xl text-jade">
+            {formatVND(refund.amount)}
+          </p>
           <p className="text-sm text-stone-500">
-            Cọc: {formatVND(refund.booking.depositTotal)} — Phạt: {formatVND(refund.booking.penaltyTotal)}
+            Cọc: {formatVND(refund.booking.depositTotal)} — Phạt:{" "}
+            {formatVND(refund.booking.penaltyTotal)}
           </p>
         </div>
       </div>
 
       {(refund.booking.items?.length ?? 0) > 0 && (
         <div className="border-t border-sand px-6 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500 mb-3">Trang phục</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500 mb-3">
+            Trang phục
+          </p>
           <div className="flex flex-wrap gap-4">
             {refund.booking.items.map((item: any) => (
-              <div key={item.id} className="flex items-center gap-3 rounded-lg border border-sand bg-mist/50 p-2 pr-4">
+              <div
+                key={item.id}
+                className="flex items-center gap-3 rounded-lg border border-sand bg-mist/50 p-2 pr-4"
+              >
                 {item.imageUrl ? (
-                  <img src={item.imageUrl} alt={item.garmentName ?? "Trang phục"} className="h-14 w-14 rounded-md object-cover" />
+                  <img
+                    src={item.imageUrl}
+                    alt={item.garmentName ?? "Trang phục"}
+                    className="h-14 w-14 rounded-md object-cover"
+                  />
                 ) : (
                   <div className="flex h-14 w-14 items-center justify-center rounded-md bg-stone-100 text-stone-400">
                     <span className="material-symbols-outlined">checkroom</span>
                   </div>
                 )}
                 <div>
-                  <p className="text-sm font-medium text-ink">{item.garmentName ?? "—"}</p>
-                  {item.sizeLabel && <p className="text-xs text-stone-500">Size: {item.sizeLabel}</p>}
+                  <p className="text-sm font-medium text-ink">
+                    {item.garmentName ?? "—"}
+                  </p>
+                  {item.sizeLabel && (
+                    <p className="text-xs text-stone-500">
+                      Size: {item.sizeLabel}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -3576,28 +5410,37 @@ function RefundCard({
           </p>
           {!bankDetailsComplete && (
             <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Chờ nhân viên bổ sung đầy đủ thông tin ngân hàng trước khi Quản lý duyệt hoàn cọc.
+              Chờ nhân viên bổ sung đầy đủ thông tin ngân hàng trước khi Quản lý
+              duyệt hoàn cọc.
             </div>
           )}
           <div className="grid gap-3 sm:grid-cols-3 text-sm">
             <div>
               <span className="text-stone-500">Ngân hàng: </span>
-              <span className="font-medium text-ink">{refund.bankName ?? "—"}</span>
+              <span className="font-medium text-ink">
+                {refund.bankName ?? "—"}
+              </span>
             </div>
             <div>
               <span className="text-stone-500">Số TK: </span>
-              <span className="font-medium text-ink">{refund.bankAccountNumber ?? "—"}</span>
+              <span className="font-medium text-ink">
+                {refund.bankAccountNumber ?? "—"}
+              </span>
             </div>
             <div>
               <span className="text-stone-500">Chủ TK: </span>
-              <span className="font-medium text-ink">{refund.bankAccountHolder ?? "—"}</span>
+              <span className="font-medium text-ink">
+                {refund.bankAccountHolder ?? "—"}
+              </span>
             </div>
           </div>
         </div>
       ) : (
         <div className="border-t border-sand bg-mist px-6 py-4">
           <p className="text-sm text-stone-500">
-            Nhân viên hoàn cọc <strong className="text-ink">tiền mặt tại quầy</strong> — duyệt để xác nhận đã chi tiền và hoàn tất đơn.
+            Nhân viên hoàn cọc{" "}
+            <strong className="text-ink">tiền mặt tại quầy</strong> — duyệt để
+            xác nhận đã chi tiền và hoàn tất đơn.
           </p>
         </div>
       )}
@@ -3609,9 +5452,17 @@ function RefundCard({
               Ảnh bill chuyển khoản
             </label>
             <div className="flex flex-wrap items-center gap-4">
-              <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof || !bankDetailsComplete ? "pointer-events-none opacity-50" : ""}`}>
-                <span className="material-symbols-outlined text-[18px]">upload</span>
-                {uploadingProof ? "Đang tải ảnh..." : proofImageUrl ? "Chọn ảnh khác" : "Tải ảnh bill từ máy"}
+              <label
+                className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof || !bankDetailsComplete ? "pointer-events-none opacity-50" : ""}`}
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  upload
+                </span>
+                {uploadingProof
+                  ? "Đang tải ảnh..."
+                  : proofImageUrl
+                    ? "Chọn ảnh khác"
+                    : "Tải ảnh bill từ máy"}
                 <input
                   type="file"
                   accept="image/*"
@@ -3624,12 +5475,8 @@ function RefundCard({
                     setProofError(null);
                     setUploadingProof(true);
                     try {
-                      const formData = new FormData();
-                      formData.append("file", file);
-                      const res = await fetch("/api/upload", { method: "POST", body: formData });
-                      const data = await res.json();
-                      if (data.success && data.url) setProofImageUrl(data.url);
-                      else setProofError(data.message ?? "Tải ảnh thất bại. Vui lòng thử lại.");
+                      const url = await uploadFile(file, "refund-proof");
+                      setProofImageUrl(url);
                     } catch {
                       setProofError("Tải ảnh thất bại. Vui lòng thử lại.");
                     } finally {
@@ -3639,12 +5486,23 @@ function RefundCard({
                 />
               </label>
               {proofImageUrl && (
-                <a href={proofImageUrl} target="_blank" rel="noreferrer" className="block">
-                  <img src={proofImageUrl} alt="Bill chuyển khoản" className="h-20 rounded-lg border border-sand object-cover" />
+                <a
+                  href={proofImageUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                >
+                  <img
+                    src={proofImageUrl}
+                    alt="Bill chuyển khoản"
+                    className="h-20 rounded-lg border border-sand object-cover"
+                  />
                 </a>
               )}
             </div>
-            {proofError && <p className="mt-2 text-sm text-red-600">{proofError}</p>}
+            {proofError && (
+              <p className="mt-2 text-sm text-red-600">{proofError}</p>
+            )}
           </div>
         )}
         <div>
@@ -3661,20 +5519,31 @@ function RefundCard({
         <div className="flex flex-wrap justify-end gap-2">
           {isBankTransfer && (
             <a
-              href={refund.booking.customerId ? `/chat?customer=${refund.booking.customerId}&booking=${refund.bookingId}` : "/chat"}
+              href={
+                refund.booking.customerId
+                  ? `/chat?customer=${refund.booking.customerId}&booking=${refund.bookingId}`
+                  : "/chat"
+              }
               className="inline-flex items-center gap-2 rounded-lg border border-sand px-5 py-3 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
             >
-              <span className="material-symbols-outlined text-[18px]">chat</span>
+              <span className="material-symbols-outlined text-[18px]">
+                chat
+              </span>
               Nhắn khách xin thông tin chuyển khoản
             </a>
           )}
           {showRejectConfirm ? (
             <div className="flex items-center gap-2">
-              <span className="text-sm text-stone-500">Từ chối yêu cầu này?</span>
+              <span className="text-sm text-stone-500">
+                Từ chối yêu cầu này?
+              </span>
               <button
                 type="button"
                 disabled={approvingId === refund.id}
-                onClick={() => { setShowRejectConfirm(false); handleRejectRefund(refund.id, approveNote); }}
+                onClick={() => {
+                  setShowRejectConfirm(false);
+                  handleRejectRefund(refund.id, approveNote);
+                }}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
               >
                 Xác nhận từ chối
@@ -3699,8 +5568,12 @@ function RefundCard({
           )}
           <button
             type="button"
-            disabled={approvingId === refund.id || uploadingProof || !canApprove}
-            onClick={() => handleApproveRefund(refund.id, proofImageUrl, approveNote)}
+            disabled={
+              approvingId === refund.id || uploadingProof || !canApprove
+            }
+            onClick={() =>
+              handleApproveRefund(refund.id, proofImageUrl, approveNote)
+            }
             className="rounded-lg bg-jade px-6 py-3 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
           >
             {approvingId === refund.id
@@ -3724,7 +5597,11 @@ function RefundsTab({
 }: {
   pendingRefunds: any[];
   loadingRefunds: boolean;
-  handleApproveRefund: (id: string, proofImageUrl: string, approveNote: string) => void;
+  handleApproveRefund: (
+    id: string,
+    proofImageUrl: string,
+    approveNote: string,
+  ) => void;
   handleRejectRefund: (id: string, reason: string) => void;
   approvingId: string | null;
 }) {
@@ -3743,7 +5620,9 @@ function RefundsTab({
       {!loadingRefunds && pendingRefunds.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[240px] max-w-md">
-            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-stone-400">search</span>
+            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-stone-400">
+              search
+            </span>
             <input
               className="w-full rounded-lg border border-sand bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique"
               placeholder="Tìm theo mã đơn hoặc tên khách..."
@@ -3757,15 +5636,20 @@ function RefundsTab({
         </div>
       )}
       {loadingRefunds ? (
-        <div className="py-20 text-center text-stone-400">Đang tải danh sách hoàn cọc...</div>
+        <div className="py-20 text-center text-stone-400">
+          Đang tải danh sách hoàn cọc...
+        </div>
       ) : pendingRefunds.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">check_circle</span>
+          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
+            check_circle
+          </span>
           Không có yêu cầu hoàn cọc nào đang chờ duyệt.
         </div>
       ) : filteredRefunds.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          Không tìm thấy yêu cầu hoàn cọc phù hợp với &ldquo;{search.trim()}&rdquo;.
+          Không tìm thấy yêu cầu hoàn cọc phù hợp với &ldquo;{search.trim()}
+          &rdquo;.
         </div>
       ) : (
         filteredRefunds.map((refund) => (
@@ -3777,6 +5661,240 @@ function RefundsTab({
             handleRejectRefund={handleRejectRefund}
           />
         ))
+      )}
+    </div>
+  );
+}
+function RejectedHandoversTab({
+  bookings,
+  allAssets,
+  showToast,
+  onRecover,
+}: {
+  bookings: StaffBookingResponse[];
+  allAssets: AssetDetail[];
+  showToast?: (type: "success" | "error", message: string) => void;
+  onRecover: (id: string, payload: HandoverRecoveryPayload) => Promise<void>;
+}) {
+  const [selectedBooking, setSelectedBooking] =
+    useState<StaffBookingResponse | null>(null);
+  const [action, setAction] = useState<"cancel" | "replace">("replace");
+  const [reason, setReason] = useState("");
+  const [replacements, setReplacements] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  const availableAssets = useMemo(
+    () => allAssets.filter((a) => a.status === "available"),
+    [allAssets],
+  );
+
+  const handleSubmit = async () => {
+    if (!selectedBooking) return;
+    if (!reason.trim())
+      return showToast?.("error", "Vui lòng nhập lý do xử lý");
+    const payload: HandoverRecoveryPayload = {
+      action,
+      reason: reason.trim(),
+      expectedDecidedAt: selectedBooking.handover?.decidedAt!,
+    };
+    if (action === "replace") {
+      const rep: { itemId: string; garmentAssetId: string }[] = [];
+      for (const item of selectedBooking.items) {
+        if (!replacements[item.id]) {
+          return showToast?.(
+            "error",
+            `Vui lòng chọn tài sản thay thế cho ${item.garmentId}`,
+          );
+        }
+        rep.push({ itemId: item.id, garmentAssetId: replacements[item.id] });
+      }
+      payload.replacements = rep;
+    }
+    setSubmitting(true);
+    await onRecover(selectedBooking.id, payload);
+    setSubmitting(false);
+    setSelectedBooking(null);
+    setReason("");
+    setReplacements({});
+  };
+
+  return (
+    <div className="space-y-6">
+      {bookings.length === 0 ? (
+        <div className="py-20 text-center text-stone-400">
+          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
+            check_circle
+          </span>
+          Không có biên bản bàn giao nào bị từ chối.
+        </div>
+      ) : (
+        bookings.map((booking) => (
+          <div
+            key={booking.id}
+            className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-display text-lg text-ink">
+                  Đơn {booking.id.split("-")[0].toUpperCase()}
+                </h3>
+                <p className="text-sm text-stone-500">
+                  Khách hàng: {booking.customerName}
+                </p>
+                <p className="text-sm text-red-600 mt-2 font-medium">
+                  Lý do từ chối: {booking.handover?.note || "Không rõ"}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  {booking.handover?.images?.map(
+                    (url: string, i: number) => (
+                      <img
+                        key={i}
+                        src={url}
+                        alt="Từ chối"
+                        className="h-20 w-20 rounded border border-sand object-cover"
+                      />
+                    ),
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedBooking(booking);
+                  setAction("replace");
+                  setReason("");
+                  setReplacements({});
+                }}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+              >
+                Xử lý
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+
+      {selectedBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-display text-xl text-ink">
+                Xử lý từ chối - Đơn{" "}
+                {selectedBooking.id.split("-")[0].toUpperCase()}
+              </h3>
+              <button
+                onClick={() => setSelectedBooking(null)}
+                className="text-stone-400 hover:text-ink"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="mb-4 space-y-3">
+              <label className="block text-sm font-medium text-ink">
+                Hướng xử lý
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={action === "replace"}
+                    onChange={() => setAction("replace")}
+                    name="action"
+                  />
+                  Thay thế sản phẩm
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={action === "cancel"}
+                    onChange={() => setAction("cancel")}
+                    name="action"
+                  />
+                  Hủy đơn (Hoàn tiền)
+                </label>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-ink mb-1">
+                Lý do/Ghi chú xử lý
+              </label>
+              <textarea
+                className="w-full rounded-lg border border-sand p-3 text-sm focus:border-lotus outline-none"
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Nhập ghi chú hoặc lý do xử lý..."
+              />
+            </div>
+
+            {action === "replace" && (
+              <div className="mb-6 space-y-4">
+                <h4 className="font-medium text-ink border-b border-sand pb-2">
+                  Chọn tài sản thay thế
+                </h4>
+                {selectedBooking.items.map((item) => {
+                  const options = availableAssets.filter(
+                    (a) =>
+                      a.garmentId === item.garmentId &&
+                      (!item.garmentSizeId ||
+                        a.garmentSizeId === item.garmentSizeId),
+                  );
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-4 p-3 border border-sand rounded-lg bg-surface"
+                    >
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">
+                          {item.garmentId} (Size:{" "}
+                          {item.garmentSizeId || "Freesize"})
+                        </p>
+                        <p className="text-xs text-stone-500">
+                          Asset bị từ chối:{" "}
+                          {item.assetCode || "Không rõ"}
+                        </p>
+                      </div>
+                      <select
+                        className="w-48 rounded border border-sand p-2 text-sm"
+                        value={replacements[item.id] || ""}
+                        onChange={(e) =>
+                          setReplacements((prev) => ({
+                            ...prev,
+                            [item.id]: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">-- Chọn asset thay thế --</option>
+                        {options.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.assetCode} ({opt.conditionNote || "Tốt"})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-sand">
+              <button
+                onClick={() => setSelectedBooking(null)}
+                className="rounded-lg border border-sand px-4 py-2 text-sm font-medium hover:bg-stone-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="rounded-lg bg-lotus px-6 py-2 text-sm font-medium text-white hover:bg-oxblood disabled:opacity-50"
+              >
+                {submitting ? "Đang xử lý..." : "Xác nhận"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { AssetStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -236,19 +236,57 @@ export class AssetsService {
   }
 
   async updateStatus(id: string, dto: UpdateAssetStatusDto) {
-    const asset = await this.prisma.garmentAsset.findUnique({ where: { id } });
-    if (!asset) throw new NotFoundException("Garment asset not found.");
+    // Physical holds are owned by booking workflows. A direct status endpoint must
+    // not race a prepare/cancel/return operation or make a reserved asset appear free.
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const asset = await tx.garmentAsset.findUnique({ where: { id } });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
 
-    this.validateAssetTransition(asset.status, dto.status as AssetStatus);
+      const nextStatus = dto.status as AssetStatus;
+      this.validateAssetTransition(asset.status, nextStatus);
+      if ([AssetStatus.reserved, AssetStatus.rented].includes(nextStatus as never) ||
+        [AssetStatus.reserved, AssetStatus.rented].includes(asset.status as never)) {
+        throw new BadRequestException(
+          "Không được thay đổi trực tiếp asset reserved/rented. Hãy dùng luồng booking để giữ, giao hoặc trả asset.",
+        );
+      }
 
-    const updated = await this.prisma.garmentAsset.update({
-      where: { id },
-      data: {
-        status: dto.status as any,
-        ...(dto.note ? { conditionNote: dto.note } : {}),
-      },
-      include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      const activeAssignment = await tx.bookingItem.findFirst({
+        where: {
+          garmentAssetId: id,
+          booking: {
+            status: {
+              notIn: [
+                "cancelled", "rejected", "completed", "refund_pending",
+                "returned", "inspection_pending",
+              ],
+            },
+          },
+        },
+        select: { bookingId: true },
+      });
+      if (activeAssignment) {
+        throw new ConflictException(
+          "Asset đang được gán cho booking hoạt động. Hãy thay đổi asset qua luồng booking tương ứng.",
+        );
+      }
+
+      const claimed = await tx.garmentAsset.updateMany({
+        where: { id, status: asset.status },
+        data: {
+          status: nextStatus,
+          ...(dto.note ? { conditionNote: dto.note } : {}),
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("Asset đã được thay đổi bởi thao tác khác. Vui lòng tải lại.");
+      }
+      return tx.garmentAsset.findUnique({
+        where: { id },
+        include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      });
     });
+    if (!updated) throw new NotFoundException("Garment asset not found.");
 
     return ok({
       id: updated.id,

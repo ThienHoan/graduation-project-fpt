@@ -11,6 +11,9 @@ const GARMENT_ID = "00000000-0000-4000-8000-000000000005";
 const ASSET_ID = "00000000-0000-4000-8000-000000000006";
 const STAFF_ID = "00000000-0000-4000-8000-000000000007";
 
+process.env.SUPABASE_URL = "https://example.supabase.co";
+const HANDOVER_IMAGE = `https://example.supabase.co/storage/v1/object/public/products/handover/${STAFF_ID}/00000000-0000-4000-8000-000000000008.jpg`;
+
 function makeBooking(startDate: string, endDate: string, overrides?: { status?: string; penaltyTotal?: number }) {
   return {
     id: BOOKING_ID,
@@ -68,9 +71,16 @@ function createService(options?: {
   const tx = {
     garmentAsset: {
       count: vi.fn().mockResolvedValue(capacity),
+      findMany: vi.fn().mockResolvedValue(
+        Array.from({ length: capacity }, (_, index) => ({ id: `asset-${index + 1}`, status: "available" })),
+      ),
+    },
+    garment_sizes: {
+      findFirst: vi.fn().mockResolvedValue({ id: SIZE_ID }),
     },
     bookingItem: {
       count: vi.fn().mockImplementation(async () => committed + successfulTransactions),
+      findMany: vi.fn().mockImplementation(async () => committed + successfulTransactions > 0 ? [{ garmentAssetId: null, booking: { id: "existing", status: "confirmed", rentalStartDate: new Date("2026-01-01"), rentalEndDate: new Date("2026-12-31") } }] : []),
     },
     booking: {
       create: vi.fn().mockImplementation(async () => {
@@ -158,7 +168,7 @@ function handoverDto(overrides?: Partial<ConfirmHandoverDto>): ConfirmHandoverDt
   return {
     handoverStatus: HandoverStatus.CONFIRMED,
     conditionBeforeRental: ConditionBeforeRental.GOOD,
-    conditionImages: ["https://example.com/handover.jpg"],
+    conditionImages: [HANDOVER_IMAGE],
     correctProductConfirmed: true,
     noDefectConfirmed: true,
     customerAgreed: true,
@@ -192,7 +202,11 @@ function createHandoverService(initialBooking = makeHandoverBooking()) {
         return { count: 1 };
       }),
     },
+    bookingItem: {
+      findMany: vi.fn().mockResolvedValue([{ id: ITEM_ID, bookingId: BOOKING_ID, garmentAssetId: ASSET_ID, booking: { id: BOOKING_ID, status: "ready_for_pickup", rentalStartDate: booking.rentalStartDate, rentalEndDate: booking.rentalEndDate } }]),
+    },
     garmentAsset: {
+      findUnique: vi.fn().mockImplementation(async () => booking.items[0].garmentAsset),
       updateMany: vi.fn().mockImplementation(async ({ data }: { data: { status?: string } }) => {
         booking = {
           ...booking,
@@ -241,9 +255,8 @@ describe("BookingsService.create availability", () => {
     );
 
     expect(tx.booking.create).not.toHaveBeenCalled();
-    const countQuery = tx.bookingItem.count.mock.calls[0][0];
-    expect(countQuery.where.booking.rentalStartDate).toEqual({ lt: new Date("2026-10-13T00:00:00.000Z") });
-    expect(countQuery.where.booking.rentalEndDate).toEqual({ gt: new Date("2026-10-11T00:00:00.000Z") });
+    expect(tx.bookingItem.findMany).toHaveBeenCalled();
+    expect(tx.garmentAsset.findMany).toHaveBeenCalled();
   });
 
   it("allows bookings that only touch at the checkout/pickup boundary", async () => {
@@ -252,9 +265,8 @@ describe("BookingsService.create availability", () => {
     await expect(service.create(CUSTOMER_ID, dto("2026-10-12", "2026-10-14"))).resolves.toBeDefined();
 
     expect(tx.booking.create).toHaveBeenCalledTimes(1);
-    const countQuery = tx.bookingItem.count.mock.calls[0][0];
-    expect(countQuery.where.booking.rentalStartDate).toEqual({ lt: new Date("2026-10-14T00:00:00.000Z") });
-    expect(countQuery.where.booking.rentalEndDate).toEqual({ gt: new Date("2026-10-12T00:00:00.000Z") });
+    expect(tx.bookingItem.findMany).toHaveBeenCalled();
+    expect(tx.garmentAsset.findMany).toHaveBeenCalled();
   });
 
   it("allows only one of two concurrent bookings when one asset is available", async () => {
@@ -283,7 +295,7 @@ describe("BookingsService handover", () => {
     expect(data.handover.correctProduct).toBe(true);
     expect(data.handover.noVisibleDefect).toBe(true);
     expect(data.handover.customerAgreed).toBe(true);
-    expect(data.handover.images).toEqual(["https://example.com/handover.jpg"]);
+    expect(data.handover.images).toEqual([HANDOVER_IMAGE]);
     expect(data.handover.note).toBe("Looks good");
     expect(data.handover.receiverName).toBe("Customer A");
     expect(data.handover.deliveryPersonName).toBe("Staff A");
@@ -303,7 +315,7 @@ describe("BookingsService handover", () => {
       }),
     }));
     expect(tx.garmentAsset.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: [ASSET_ID] }, status: "reserved" },
+      where: { id: ASSET_ID, status: "reserved" },
       data: { status: "rented" },
     });
     expect(tx.bookingStatusHistory.create).toHaveBeenCalledWith({
@@ -378,6 +390,15 @@ describe("BookingsService handover", () => {
     expect(tx.bookingStatusHistory.create).not.toHaveBeenCalled();
   });
 
+  it("requires evidence, actor names, and minor-damage description for confirmation", async () => {
+    const { service, tx } = createHandoverService();
+    await expect(service.confirmHandover(BOOKING_ID, handoverDto({ conditionImages: [] }), { id: STAFF_ID, role: "staff" })).rejects.toThrow("ảnh bàn giao");
+    await expect(service.confirmHandover(BOOKING_ID, handoverDto({ deliveredBy: "  " }), { id: STAFF_ID, role: "staff" })).rejects.toThrow("người giao");
+    await expect(service.confirmHandover(BOOKING_ID, handoverDto({ receivedBy: "  " }), { id: STAFF_ID, role: "staff" })).rejects.toThrow("người giao");
+    await expect(service.confirmHandover(BOOKING_ID, handoverDto({ conditionBeforeRental: ConditionBeforeRental.MINOR_DAMAGE, note: "  " }), { id: STAFF_ID, role: "staff" })).rejects.toThrow("mô tả lỗi nhẹ");
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
   it("blocks direct advanceStatus to renting until handover is confirmed", async () => {
     const booking = makeHandoverBooking();
     const tx = {
@@ -406,6 +427,176 @@ describe("BookingsService handover", () => {
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
     expect(tx.garmentAsset.updateMany).not.toHaveBeenCalled();
     expect(tx.bookingStatusHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService delivery workflow", () => {
+  const immutableSnapshot = {
+    version: 1 as const,
+    receiverName: "Original Receiver",
+    phone: "0900000000",
+    line1: "1 Original Street",
+    ward: "Ward 1",
+    district: "District 1",
+    city: "HCMC",
+    latitude: 10.77,
+    longitude: 106.69,
+  };
+
+  function createDeliveryService(status: "ready_for_pickup" | "renting") {
+    const createdAt = new Date("2026-10-01T00:00:00.000Z");
+    const assetStatus = status === "renting" ? "rented" : "reserved";
+    let booking: any = {
+      ...makeHandoverBooking({ status, assetStatus }),
+      pickupMethod: "delivery",
+      customerId: CUSTOMER_ID,
+      penalties: [],
+      deliveryAddress: {
+        receiverName: "Edited Receiver",
+        phone: "0999999999",
+        line1: "99 Edited Street",
+        ward: "Edited Ward",
+        district: "Edited District",
+        city: "Edited City",
+        latitude: 1,
+        longitude: 2,
+      },
+      deliveryRecords: [{
+        id: "delivery-original",
+        method: "delivery",
+        addressSnapshot: JSON.stringify(immutableSnapshot),
+        deliveredAt: null,
+        receivedAt: null,
+        note: null,
+        createdAt,
+      }],
+    };
+
+    const tx = {
+      booking: {
+        findUnique: vi.fn().mockImplementation(async () => booking),
+        findUniqueOrThrow: vi.fn().mockImplementation(async () => booking),
+        updateMany: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+          booking = { ...booking, ...data };
+          return { count: 1 };
+        }),
+        update: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+          booking = { ...booking, ...data };
+          return booking;
+        }),
+      },
+      bookingItem: {
+        findMany: vi.fn().mockImplementation(async () => booking.items.map((item: any) => ({
+          id: item.id,
+          bookingId: BOOKING_ID,
+          garmentAssetId: item.garmentAssetId,
+          booking: {
+            id: BOOKING_ID,
+            status: booking.status,
+            rentalStartDate: booking.rentalStartDate,
+            rentalEndDate: booking.rentalEndDate,
+          },
+        }))),
+      },
+      garmentAsset: {
+        findUnique: vi.fn().mockImplementation(async () => booking.items[0].garmentAsset),
+        updateMany: vi.fn().mockImplementation(async ({ data }: { data: { status: string } }) => {
+          booking = {
+            ...booking,
+            items: booking.items.map((item: any) => ({
+              ...item,
+              garmentAsset: { ...item.garmentAsset, status: data.status },
+            })),
+          };
+          return { count: 1 };
+        }),
+      },
+      deliveryRecord: {
+        create: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+          const record = {
+            id: `delivery-${booking.deliveryRecords.length + 1}`,
+            deliveredAt: null,
+            receivedAt: null,
+            note: null,
+            ...data,
+            createdAt: new Date("2026-10-08T00:00:00.000Z"),
+          };
+          booking = { ...booking, deliveryRecords: [record, ...booking.deliveryRecords] };
+          return record;
+        }),
+      },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "history-1" }) },
+      penalty: { create: vi.fn(), update: vi.fn() },
+    };
+    const realtime = {
+      bookingChanged: vi.fn(),
+      bookingChangedForCustomer: vi.fn(),
+      assetChanged: vi.fn(),
+      inspectionChanged: vi.fn(),
+      refundChanged: vi.fn(),
+      laundryChanged: vi.fn(),
+      maintenanceChanged: vi.fn(),
+      notificationCreated: vi.fn(),
+    };
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      { effectiveDailyPrice: vi.fn().mockResolvedValue(100) } as never,
+      realtime as never,
+    );
+    return { service, tx, realtime, getBooking: () => booking };
+  }
+
+  it("marks a delivery in progress without replacing the immutable address snapshot", async () => {
+    const { service, tx, realtime } = createDeliveryService("ready_for_pickup");
+
+    const result = await service.markDelivered(BOOKING_ID, { note: "  Handed to courier  " }, STAFF_ID);
+
+    expect(result.data).toBeDefined();
+    expect(result.data!.status).toBe("delivering");
+    expect(result.data!.deliverySnapshot).toEqual(immutableSnapshot);
+    expect(tx.deliveryRecord.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: BOOKING_ID,
+        method: "delivery",
+        addressSnapshot: JSON.stringify(immutableSnapshot),
+        note: "Handed to courier",
+      }),
+    });
+    expect(tx.bookingStatusHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fromStatus: "ready_for_pickup",
+        toStatus: "delivering",
+        changedBy: STAFF_ID,
+      }),
+    });
+    expect(realtime.bookingChangedForCustomer).toHaveBeenCalledWith(CUSTOMER_ID, expect.objectContaining({ status: "delivering" }));
+  });
+
+  it("transitions rented assets before marking a booking returned", async () => {
+    const { service, tx, realtime, getBooking } = createDeliveryService("renting");
+
+    const result = await service.markReturned(BOOKING_ID, { note: "  Returned at store  " }, STAFF_ID);
+
+    expect(result.data).toBeDefined();
+    expect(result.data!.status).toBe("returned");
+    expect(result.data!.deliverySnapshot).toEqual(immutableSnapshot);
+    expect(getBooking().items[0].garmentAsset.status).toBe("inspection_pending");
+    expect(tx.garmentAsset.updateMany.mock.invocationCallOrder[0]).toBeLessThan(tx.booking.updateMany.mock.invocationCallOrder[0]);
+    expect(tx.deliveryRecord.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: BOOKING_ID,
+        method: "return",
+        addressSnapshot: JSON.stringify(immutableSnapshot),
+        note: "Returned at store",
+      }),
+    });
+    expect(realtime.assetChanged).toHaveBeenCalledWith({ bookingId: BOOKING_ID });
+    expect(realtime.bookingChangedForCustomer).toHaveBeenCalledWith(CUSTOMER_ID, expect.objectContaining({ status: "returned" }));
   });
 });
 
@@ -442,10 +633,10 @@ describe("BookingsService overdue reporting", () => {
     return spy.serializeBooking(booking);
   }
 
-  // today = 2026-10-07 theo giờ VN (vnTodayStr cộng VN_UTC_OFFSET_MS).
+  // Freeze the Vietnam business date for deterministic overdue assertions.
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-07T05:00:00.000Z"));
+    vi.setSystemTime(new Date("2026-10-01T05:00:00.000Z"));
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -453,7 +644,7 @@ describe("BookingsService overdue reporting", () => {
 
   it("reports how many days overdue a renting booking is", () => {
     const { service } = createService({ committed: 0, capacity: 5 });
-    const serialized = serializeWith(service, makeBooking("2026-09-30", "2026-10-04", { status: "renting" }));
+    const serialized = serializeWith(service, makeBooking("2026-09-24", "2026-09-28", { status: "renting" }));
 
     expect(serialized.overdueDays).toBe(3);
     expect(serialized.overdueFeePerDay).toBe(10_000);

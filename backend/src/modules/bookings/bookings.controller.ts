@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -11,6 +11,8 @@ import { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { MarkPaidDto } from "./dto/mark-paid.dto";
+import { MarkDeliveryDto } from "./dto/mark-delivery.dto";
+import { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 
 @Controller("bookings")
@@ -65,12 +67,16 @@ export class BookingsController {
   @Get("staff/all")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")
-  findAllForStaff() { return this.bookingsService.findAllForStaff(); }
+  findAllForStaff(
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("cursor") cursor?: string,
+  ) { return this.bookingsService.findAllForStaff(search, status, cursor); }
 
   @Get("staff/returns")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")
-  findReturnQueue() { return this.bookingsService.findReturnQueue(); }
+  findReturnQueue(@Query("search") search?: string) { return this.bookingsService.findReturnQueue(search); }
 
   @Get("staff/completed-refunds")
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -102,13 +108,20 @@ export class BookingsController {
    */
   @Post(":id/confirm-handover")
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("staff", "manager_owner", "admin")
+  @Roles("customer", "staff", "manager_owner", "admin")
   confirmHandover(
     @CurrentUser() user: AuthenticatedUser,
     @Param("id", ParseUUIDPipe) id: string,
     @Body() dto: ConfirmHandoverDto,
   ) {
     return this.bookingsService.confirmHandover(id, dto, user);
+  }
+
+  @Post(":id/recover-handover")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  recoverHandover(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string, @Body() dto: RecoverHandoverDto) {
+    return this.bookingsService.recoverHandover(id, dto, user);
   }
 
   @Patch(":id/mark-paid")
@@ -118,17 +131,31 @@ export class BookingsController {
     return this.bookingsService.markPaid(id, dto, user.id);
   }
 
-  @Get("staff/:id")
+  @Patch(":id/mark-delivered")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")
-  findOneForStaff(@Param("id", ParseUUIDPipe) id: string) {
-    return this.bookingsService.findOneForStaff(id);
+  markDelivered(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string, @Body() dto: MarkDeliveryDto) {
+    return this.bookingsService.markDelivered(id, dto, user.id);
+  }
+
+  @Patch(":id/mark-returned")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  markReturned(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string, @Body() dto: MarkDeliveryDto) {
+    return this.bookingsService.markReturned(id, dto, user.id);
   }
 
   @Get("staff/assets-needed")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("manager_owner", "admin")
   findBookingsNeedingAssets() { return this.bookingsService.findBookingsNeedingAssets(); }
+
+  @Get("staff/:id")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  findOneForStaff(@Param("id", ParseUUIDPipe) id: string) {
+    return this.bookingsService.findOneForStaff(id);
+  }
 
   @Post("cancel-expired-payments")
   @UseGuards(JwtAuthGuard, RolesGuard)

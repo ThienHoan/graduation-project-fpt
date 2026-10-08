@@ -4,17 +4,16 @@ import { useEffect, useRef, useState } from "react";
 
 type DeliveryTrackData = {
   bookingId: string;
-  status: "preparing" | "in_transit" | "arrived";
-  progress: number;
+  status: "preparing" | "in_transit" | "delivered";
+  shipperLocationAvailable: boolean;
   storeLat: number;
   storeLng: number;
   customerLat: number;
   customerLng: number;
-  shipperLat: number;
-  shipperLng: number;
+  deliveredAt: string | null;
+  handoverConfirmed: boolean;
   customerName: string;
   customerAddress: string;
-  estimatedDelivery: string;
 };
 
 let cssInjected = false;
@@ -30,19 +29,20 @@ function injectCss() {
   cssInjected = true;
 }
 
-const STATUS_MAP = {
-  preparing: { label: "Đang chuẩn bị", color: "bg-lotus/10 text-lotus", icon: "📦" },
-  in_transit: { label: "Đang giao", color: "bg-amber-50 text-amber-700", icon: "🛵" },
-  arrived: { label: "Đã đến", color: "bg-jade/10 text-jade", icon: "check_circle" },
-} as const;
+const STEPS = [
+  { key: "preparing", label: "Đang chuẩn bị", icon: "📦" },
+  { key: "in_transit", label: "Đang giao", icon: "🛵" },
+  { key: "delivered", label: "Đã nhận hàng", icon: "✅" },
+] as const;
 
 export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const shipperMarkerRef = useRef<any>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
+
+  const currentIdx = STEPS.findIndex((s) => s.key === data.status);
 
   useEffect(() => {
     if (!mounted) return;
@@ -64,7 +64,7 @@ export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
         container._leaflet_id = null;
       }
 
-      const { storeLat, storeLng, customerLat, customerLng, shipperLat, shipperLng } = data;
+      const { storeLat, storeLng, customerLat, customerLng } = data;
 
       const map = L.map(containerRef.current);
       mapRef.current = map;
@@ -107,19 +107,6 @@ export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
         { color: "#8B0000", weight: 2, opacity: 0.4, dashArray: "6 6" },
       ).addTo(map);
 
-      // Shipper marker (animated)
-      const shipperIcon = L.divIcon({
-        html: `<div style="background:#e37400;color:white;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid white;box-shadow:0 3px 10px rgba(0,0,0,0.4);animation:pulse 2s infinite">🛵</div>`,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
-        className: "",
-      });
-
-      const sm = L.marker([shipperLat, shipperLng], { icon: shipperIcon })
-        .addTo(map)
-        .bindPopup(`<b>Shipper</b><br>${STATUS_MAP[data.status].label}`);
-      shipperMarkerRef.current = sm;
-
       // Fit bounds
       const bounds = L.latLngBounds([
         [storeLat, storeLng],
@@ -139,47 +126,54 @@ export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
     };
   }, [mounted, data]);
 
-  // Animate shipper position updates when status changes
-  useEffect(() => {
-    if (!shipperMarkerRef.current) return;
-    const L = (window as any).L;
-    if (!L) return;
-    shipperMarkerRef.current.setLatLng([data.shipperLat, data.shipperLng]);
-  }, [data.shipperLat, data.shipperLng]);
-
-  const s = STATUS_MAP[data.status];
-
   return (
     <div className="space-y-4">
-      {/* Progress bar */}
+      {/* Step progress */}
       <div className="rounded-xl border border-sand bg-white p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-semibold text-ink flex items-center gap-2">
-            {s.icon} {s.label}
-          </span>
-          <span className="text-xs text-stone-500">{data.progress}%</span>
+        <div className="flex items-center justify-between">
+          {STEPS.map((step, idx) => {
+            const done = idx <= currentIdx;
+            return (
+              <div key={step.key} className="flex flex-col items-center flex-1">
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center text-lg border-2 transition-all ${
+                    done
+                      ? "border-jade bg-jade/10 text-jade"
+                      : "border-stone-200 bg-stone-50 text-stone-400"
+                  }`}
+                >
+                  {step.icon}
+                </div>
+                <span className={`text-xs mt-1 font-medium ${done ? "text-jade" : "text-stone-400"}`}>
+                  {step.label}
+                </span>
+              </div>
+            );
+          })}
         </div>
-        <div className="h-2 w-full rounded-full bg-stone-100 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-1000 ${s.color}`}
-            style={{ width: `${data.progress}%` }}
-          />
+        {/* Connector line */}
+        <div className="flex items-center mt-1 px-5">
+          <div className="flex-1 h-0.5 rounded bg-jade" />
+          <div className={`flex-1 h-0.5 rounded ${currentIdx >= 1 ? "bg-jade" : "bg-stone-200"}`} />
         </div>
-        <div className="flex justify-between mt-2 text-xs text-stone-400">
-          <span>Atelier</span>
-          <span>Dự kiến: {data.estimatedDelivery}</span>
-        </div>
+
+        {data.deliveredAt && (
+          <p className="text-xs text-stone-500 mt-3 text-center">
+            Giao lúc: {new Date(data.deliveredAt).toLocaleString("vi-VN")}
+          </p>
+        )}
+        {data.handoverConfirmed && (
+          <p className="text-xs text-jade mt-1 text-center font-medium">✅ Đã xác nhận nhận hàng</p>
+        )}
+        {!data.shipperLocationAvailable && data.status === "in_transit" && (
+          <p className="text-xs text-amber-600 mt-2 text-center">
+            ⚠ Vị trí shipper không khả dụng — bản đồ chỉ hiển thị điểm giao và nhận.
+          </p>
+        )}
       </div>
 
       {/* Map */}
       <div ref={containerRef} className="h-72 w-full rounded-xl border border-sand" style={{ minHeight: 288 }} />
-
-      <style jsx global>{`
-        @keyframes pulse {
-          0%, 100% { box-shadow: 0 3px 10px rgba(0,0,0,0.4); }
-          50% { box-shadow: 0 3px 20px rgba(227,116,0,0.6); }
-        }
-      `}</style>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createReview, updateReview, getMyReviews, ReviewResponse } from "@/lib/api";
+import { uploadFile } from "@/lib/upload";
 
 type ReviewModalProps = {
   bookingId?: string;
@@ -98,25 +99,11 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
     setError(null);
     
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("bucket", "reviews"); // Lưu vào bucket reviews
-      
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      
-      const data = await res.json();
-      
-      if (data.success && data.url) {
-        if (isVideo) {
-          setVideo(data.url);
-        } else {
-          setImages(prev => [...prev, data.url]);
-        }
+      const url = await uploadFile(file, "reviews");
+      if (isVideo) {
+        setVideo(url);
       } else {
-        setError(data.message || "Lỗi tải file lên.");
+        setImages(prev => [...prev, url]);
       }
     } catch (err) {
       console.error("Upload error", err);

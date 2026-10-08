@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from "@nestjs/common";
+import { CreatePaymentLinkDto } from "./dto/create-payment-link.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import type { AuthenticatedUser } from "../auth/auth-user";
@@ -12,9 +13,9 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   createPaymentLink(
     @CurrentUser() user: AuthenticatedUser,
-    @Body("bookingId") bookingId: string,
+    @Body() body: CreatePaymentLinkDto,
   ) {
-    return this.paymentsService.createPaymentLink(bookingId, user.id);
+    return this.paymentsService.createPaymentLink(body.bookingId, user.id);
   }
 
   @Post("webhook")
@@ -24,7 +25,10 @@ export class PaymentsController {
 
   @Get(":bookingId/status")
   @UseGuards(JwtAuthGuard)
-  getPaymentStatus(@Param("bookingId", ParseUUIDPipe) bookingId: string) {
-    return this.paymentsService.getPaymentStatus(bookingId);
+  getPaymentStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("bookingId", ParseUUIDPipe) bookingId: string,
+  ) {
+    return this.paymentsService.getPaymentStatus(bookingId, user);
   }
 }
