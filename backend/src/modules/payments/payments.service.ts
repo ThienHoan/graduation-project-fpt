@@ -192,6 +192,10 @@ export class PaymentsService {
 
   private async markAsPaid(paymentId: string, bookingId: string, fromStatus: BookingStatus, note: string) {
     await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+      });
+
       await tx.payment.update({
         where: { id: paymentId },
         data: { status: PaymentStatus.paid, paidAt: new Date() },
@@ -208,6 +212,33 @@ export class PaymentsService {
           note,
         },
       });
+
+      const rentalAmount = Number(payment.amount) - Number(payment.depositAmount);
+      const depositAmount = Number(payment.depositAmount);
+
+      if (rentalAmount > 0) {
+        await tx.financialTransaction.create({
+          data: {
+            bookingId,
+            paymentId: payment.id,
+            transactionType: "payment",
+            amount: rentalAmount,
+            note: "Thanh toán tiền thuê",
+          },
+        });
+      }
+
+      if (depositAmount > 0) {
+        await tx.financialTransaction.create({
+          data: {
+            bookingId,
+            paymentId: payment.id,
+            transactionType: "deposit",
+            amount: depositAmount,
+            note: "Thanh toán tiền cọc",
+          },
+        });
+      }
     });
   }
 }

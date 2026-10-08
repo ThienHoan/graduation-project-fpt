@@ -1306,12 +1306,34 @@ export class BookingsService {
       await tx.booking.update({ where: { id }, data: { status: BookingStatus.paid, paymentDueAt: null } });
       // Chỉ tạo bản ghi thu tiền khi chưa có payment thành công (tránh ghi trùng với tiền QR đã vào)
       if (!alreadyPaid) {
-        await tx.payment.create({
+        const createdPayment = await tx.payment.create({
           data: {
             bookingId: id, provider: "manual", paymentMethod,
             amount: totalAmount + depositAmount, depositAmount, status: PaymentStatus.paid, paidAt: new Date(),
           },
         });
+        if (totalAmount > 0) {
+          await tx.financialTransaction.create({
+            data: {
+              bookingId: id,
+              paymentId: createdPayment.id,
+              transactionType: "payment",
+              amount: totalAmount,
+              note: "Thanh toán tiền thuê",
+            },
+          });
+        }
+        if (depositAmount > 0) {
+          await tx.financialTransaction.create({
+            data: {
+              bookingId: id,
+              paymentId: createdPayment.id,
+              transactionType: "deposit",
+              amount: depositAmount,
+              note: "Thanh toán tiền cọc",
+            },
+          });
+        }
       }
       await tx.bookingStatusHistory.create({
         data: { bookingId: id, fromStatus: BookingStatus.awaiting_payment, toStatus: BookingStatus.paid, changedBy: staffId ?? null, note: "Đã thanh toán" },
