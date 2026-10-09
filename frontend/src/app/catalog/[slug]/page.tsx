@@ -6,7 +6,7 @@ import { use, useEffect, useMemo, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { useAuth } from "@/components/auth/auth-provider";
-import { getGarmentsGrouped, getGarmentReviews, getSizeAvailabilityCalendar, type GarmentGrouped, type GroupedGarmentAccessory, type ReviewResponse } from "@/lib/api";
+import { getGarmentsGrouped, getGarmentReviews, getSizeAvailabilityCalendar, trackGarmentView, type GarmentGrouped, type GroupedGarmentAccessory, type ReviewResponse } from "@/lib/api";
 import { RentalDateCalendar } from "@/components/customer/rental-date-calendar";
 import { addToCart, cartCount } from "@/lib/cart";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
@@ -63,6 +63,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
             
             // Lấy reviews
             if (g.garmentId) {
+              trackGarmentView(g.garmentId);
               getGarmentReviews(g.garmentId).then((revRes) => {
                 if (revRes.success && revRes.data) {
                   setReviewsData(revRes.data);

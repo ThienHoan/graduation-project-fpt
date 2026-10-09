@@ -6,7 +6,18 @@ import { Suspense, useEffect, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { createBooking, createPaymentLink, getMyAddresses, type CustomerAddress } from "@/lib/api";
+import {
+  createBooking,
+  createPaymentLink,
+  getAvailableVouchers,
+  getMyAddresses,
+  getRentalQuote,
+  validateVoucher,
+  type CustomerAddress,
+  type RentalQuote,
+  type VoucherPublic,
+  type VoucherValidation,
+} from "@/lib/api";
 import { getCart, clearCart, type CartItem } from "@/lib/cart";
 
 function formatVND(amount: number) {
@@ -62,9 +73,54 @@ function BookingReviewInner() {
     setCartItems(getCart());
   }, []);
   const days = startDate && endDate ? daysBetween(startDate, endDate) : 0;
-  const rentalTotal = cartItems.reduce((sum, item) => sum + item.dailyPrice * days, 0);
+
+  // Giá thuê do backend tính theo luật giá tự động (Tết, lễ, sale đôi, cuối tuần...).
+  const [quotes, setQuotes] = useState<Map<string, RentalQuote>>(new Map());
+  useEffect(() => {
+    if (cartItems.length === 0 || !startDate || !endDate) return;
+    getRentalQuote(cartItems.map((i) => i.garmentSizeId), startDate, endDate).then((res) => {
+      if (res.success && res.data) setQuotes(new Map(res.data.map((q) => [q.sizeId, q])));
+    });
+  }, [cartItems, startDate, endDate]);
+  const lineTotal = (item: CartItem) => quotes.get(item.garmentSizeId)?.rentalTotal ?? item.dailyPrice * days;
+
+  // Voucher — chỉ là xem trước; backend kiểm tra lại khi tạo booking.
+  const [voucherInput, setVoucherInput] = useState("");
+  const [voucherResult, setVoucherResult] = useState<VoucherValidation | null>(null);
+  const [voucherError, setVoucherError] = useState<string | null>(null);
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [availableVouchers, setAvailableVouchers] = useState<VoucherPublic[]>([]);
+  useEffect(() => {
+    getAvailableVouchers().then((res) => {
+      if (res.success && res.data) setAvailableVouchers(res.data);
+    });
+  }, []);
+
+  async function applyVoucher(code?: string) {
+    const c = (code ?? voucherInput).trim().toUpperCase();
+    if (!c || cartItems.length === 0) return;
+    setVoucherInput(c);
+    setVoucherLoading(true);
+    setVoucherError(null);
+    const res = await validateVoucher({
+      code: c,
+      garmentSizeIds: cartItems.map((i) => i.garmentSizeId),
+      startDate,
+      endDate,
+    });
+    setVoucherLoading(false);
+    if (res.success && res.data) {
+      setVoucherResult(res.data);
+    } else {
+      setVoucherResult(null);
+      setVoucherError(res.message ?? "Voucher không hợp lệ.");
+    }
+  }
+
+  const rentalTotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0);
+  const discountTotal = voucherResult?.discountAmount ?? 0;
   const depositTotal = cartItems.reduce((sum, item) => sum + item.depositAmount, 0);
-  const grandTotal = rentalTotal + depositTotal + shippingFee;
+  const grandTotal = rentalTotal - discountTotal + depositTotal + shippingFee;
 
   useEffect(() => {
     if (pickupMethod !== "delivery" || !deliveryAddressId) {
@@ -100,6 +156,7 @@ function BookingReviewInner() {
       deliveryAddressId: pickupMethod === "delivery" ? deliveryAddressId : undefined,
       shippingFee: pickupMethod === "delivery" && shippingFee > 0 ? shippingFee : undefined,
       paymentMethod,
+      voucherCode: voucherResult?.voucher.code,
     });
     if (!res.success || !res.data) {
       setSubmitting(false);
@@ -175,10 +232,29 @@ function BookingReviewInner() {
                     <h3 className="font-medium text-ink">{item.name}</h3>
                     <p className="text-xs text-stone-500">
                       {item.sizeLabel ? `Size ${item.sizeLabel} · ` : ""}
-                      {formatVND(item.dailyPrice)}/ngày
+                      {(() => {
+                        const q = quotes.get(item.garmentSizeId);
+                        if (!q || q.discountPrice === q.basePrice) return `${formatVND(q?.basePrice ?? item.dailyPrice)}/ngày`;
+                        return (
+                          <>
+                            <span className="line-through">{formatVND(q.basePrice)}</span>{" "}
+                            <span className="font-medium text-lotus">{formatVND(q.discountPrice)}/ngày (TB)</span>
+                          </>
+                        );
+                      })()}
                     </p>
+                    {(quotes.get(item.garmentSizeId)?.appliedRules ?? []).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {quotes.get(item.garmentSizeId)!.appliedRules.map((r) => (
+                          <span key={r.id} className="rounded-full bg-lotus/10 px-2 py-0.5 text-[11px] font-semibold text-lotus">
+                            {r.name}
+                            {r.percentage ? ` ${r.percentage > 0 ? "+" : ""}${r.percentage}%` : ""} · {r.days} ngày
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-1 flex gap-4 text-xs">
-                      <span className="text-stone-500">Thuê {days} ngày: <span className="font-medium text-ink">{formatVND(item.dailyPrice * days)}</span></span>
+                      <span className="text-stone-500">Thuê {days} ngày: <span className="font-medium text-ink">{formatVND(lineTotal(item))}</span></span>
                       <span className="text-stone-500">Cọc: <span className="font-medium text-ink">{formatVND(item.depositAmount)}</span></span>
                     </div>
                   </div>
@@ -237,13 +313,19 @@ function BookingReviewInner() {
               {cartItems.map((item) => (
                 <div key={item.garmentSizeId} className="flex items-center justify-between text-stone-500">
                   <span className="truncate max-w-[180px]">{item.name}</span>
-                  <span>{formatVND(item.dailyPrice * days)}</span>
+                  <span>{formatVND(lineTotal(item))}</span>
                 </div>
               ))}
               <div className="flex items-center justify-between border-t border-sand pt-3">
                 <span className="text-stone-500">Tiền thuê ({days} ngày)</span>
                 <span className="text-ink">{formatVND(rentalTotal)}</span>
               </div>
+              {discountTotal > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-500">Voucher {voucherResult?.voucher.code}</span>
+                  <span className="font-medium text-jade">-{formatVND(discountTotal)}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-stone-500">Làm sạch chuyên biệt</span>
                 <span className="font-medium text-jade">Đã bao gồm</span>
@@ -252,6 +334,63 @@ function BookingReviewInner() {
                 <div className="flex items-center justify-between">
                   <span className="text-stone-500">Phí giao hàng</span>
                   <span className="text-ink">{formatVND(shippingFee)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 border-t border-sand pt-6">
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">Mã giảm giá</h3>
+              <div className="flex gap-2">
+                <input
+                  value={voucherInput}
+                  onChange={(e) => {
+                    setVoucherInput(e.target.value.toUpperCase());
+                    if (voucherResult) setVoucherResult(null);
+                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") applyVoucher(); }}
+                  placeholder="Nhập mã voucher"
+                  className="min-w-0 flex-1 rounded-lg border border-sand px-3 py-2 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-lotus/30"
+                />
+                {voucherResult ? (
+                  <button
+                    type="button"
+                    onClick={() => { setVoucherResult(null); setVoucherInput(""); }}
+                    className="rounded-lg border border-sand px-4 py-2 text-sm font-semibold text-stone-600 hover:border-lotus hover:text-lotus"
+                  >
+                    Bỏ
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!voucherInput.trim() || voucherLoading}
+                    onClick={() => applyVoucher()}
+                    className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                  >
+                    {voucherLoading ? "..." : "Áp dụng"}
+                  </button>
+                )}
+              </div>
+              {voucherError && <p className="mt-2 text-xs text-red-500">{voucherError}</p>}
+              {voucherResult && (
+                <p className="mt-2 text-xs text-jade">
+                  Đã áp dụng “{voucherResult.voucher.name}” — giảm {formatVND(voucherResult.discountAmount)}
+                </p>
+              )}
+              {!voucherResult && availableVouchers.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {availableVouchers.slice(0, 4).map((v) => (
+                    <button
+                      key={v.code}
+                      type="button"
+                      onClick={() => applyVoucher(v.code)}
+                      title={v.description ?? v.name}
+                      className="rounded-full border border-dashed border-lotus/50 px-3 py-1 text-xs font-semibold text-lotus hover:bg-lotus/5"
+                    >
+                      {v.code} ·{" "}
+                      {v.discountType === "percentage" ? `-${v.discountValue}%` : `-${formatVND(v.discountValue)}`}
+                      {v.minOrderValue > 0 ? ` (đơn từ ${formatVND(v.minOrderValue)})` : ""}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>

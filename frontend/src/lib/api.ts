@@ -250,6 +250,9 @@ export type BookingItem = {
   imageUrl?: string | null;
   sizeLabel: string | null;
   dailyPrice: number;
+  basePrice?: number;
+  discountPrice?: number;
+  appliedPriceRule?: (AppliedPriceRule & { rules?: Array<AppliedPriceRule & { days: number }> }) | null;
   depositAmount: number;
   garmentAssetId?: string | null;
   assetCode?: string | null;
@@ -296,6 +299,9 @@ export type BookingResponse = {
   rentalEndDate: string;
   days: number;
   pickupMethod: string;
+  subtotal?: number;
+  discountTotal?: number;
+  voucherCode?: string | null;
   rentalTotal: number;
   depositTotal: number;
   shippingFee?: number;
@@ -357,6 +363,7 @@ export async function createBooking(payload: {
   shippingFee?: number;
   note?: string;
   paymentMethod?: string;
+  voucherCode?: string;
 }) {
   return apiRequest<BookingResponse>("/bookings", {
     method: "POST",
@@ -2022,5 +2029,266 @@ export async function updateReview(id: string, payload: { rating?: number; comme
   return apiRequest<ReviewResponse>(`/reviews/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+// ---------- Luật giá tự động (price_rules) ----------
+
+export type PriceRuleType = "tet" | "holiday" | "double_sale" | "weekend" | "peak_season" | "store_program";
+
+export type PriceRule = {
+  id: string;
+  name: string;
+  ruleType: PriceRuleType;
+  ruleTypeLabel: string;
+  startDate: string | null;
+  endDate: string | null;
+  recurringYearly: boolean;
+  daysOfWeek: number[];
+  percentage: number | null;
+  fixedAmount: number | null;
+  priority: number;
+  categoryIds: string[];
+  garmentIds: string[];
+  isActive: boolean;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PriceRulePayload = {
+  name: string;
+  ruleType: PriceRuleType;
+  startDate?: string | null;
+  endDate?: string | null;
+  recurringYearly?: boolean;
+  daysOfWeek?: number[];
+  percentage?: number | null;
+  fixedAmount?: number | null;
+  priority?: number;
+  categoryIds?: string[];
+  garmentIds?: string[];
+  isActive?: boolean;
+  note?: string | null;
+};
+
+export type AppliedPriceRule = {
+  id: string;
+  name: string;
+  ruleType: PriceRuleType;
+  percentage: number | null;
+  fixedAmount: number | null;
+  priority: number;
+};
+
+export type RentalQuote = {
+  sizeId: string;
+  basePrice: number;
+  discountPrice: number;
+  rentalTotal: number;
+  days: number;
+  appliedPriceRule: AppliedPriceRule | null;
+  appliedRules: Array<AppliedPriceRule & { days: number }>;
+  breakdown: Array<{ date: string; price: number; rule: AppliedPriceRule | null }>;
+};
+
+export async function getPriceRules(query?: { activeOnly?: boolean; ruleType?: string }) {
+  const params = new URLSearchParams();
+  if (query?.activeOnly) params.set("activeOnly", "true");
+  if (query?.ruleType) params.set("ruleType", query.ruleType);
+  const qs = params.toString();
+  return apiRequest<PriceRule[]>(`/pricing/rules${qs ? `?${qs}` : ""}`);
+}
+
+export async function createPriceRule(payload: PriceRulePayload) {
+  return apiRequest<PriceRule>("/pricing/rules", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updatePriceRule(id: string, payload: Partial<PriceRulePayload>) {
+  return apiRequest<PriceRule>(`/pricing/rules/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function togglePriceRule(id: string, isActive: boolean) {
+  return apiRequest<PriceRule>(`/pricing/rules/${id}/toggle`, { method: "PATCH", body: JSON.stringify({ isActive }) });
+}
+
+export async function deletePriceRule(id: string) {
+  return apiRequest<{ id: string }>(`/pricing/rules/${id}`, { method: "DELETE" });
+}
+
+export async function getRentalQuote(garmentSizeIds: string[], startDate: string, endDate: string) {
+  return apiRequest<RentalQuote[]>("/pricing/quote", {
+    method: "POST",
+    body: JSON.stringify({ garmentSizeIds, startDate, endDate }),
+  });
+}
+
+// ---------- Voucher & khuyến mãi ----------
+
+export type VoucherDiscountType = "percentage" | "fixed";
+
+export type VoucherPublic = {
+  code: string;
+  name: string;
+  description: string | null;
+  discountType: VoucherDiscountType;
+  discountValue: number;
+  maxDiscountAmount: number | null;
+  minOrderValue: number;
+  startAt: string;
+  endAt: string;
+  categoryIds: string[];
+  garmentIds: string[];
+};
+
+export type Voucher = VoucherPublic & {
+  id: string;
+  usageLimit: number | null;
+  usedCount: number;
+  perUserLimit: number | null;
+  isActive: boolean;
+  status: "active" | "upcoming" | "expired" | "inactive" | "exhausted";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VoucherPayload = {
+  code: string;
+  name: string;
+  description?: string | null;
+  discountType: VoucherDiscountType;
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minOrderValue?: number;
+  usageLimit?: number | null;
+  perUserLimit?: number | null;
+  startAt: string;
+  endAt: string;
+  categoryIds?: string[];
+  garmentIds?: string[];
+  isActive?: boolean;
+};
+
+export type VoucherValidation = {
+  voucher: VoucherPublic;
+  orderSubtotal: number;
+  eligibleSubtotal: number;
+  discountAmount: number;
+  totalAfterDiscount: number;
+};
+
+export async function getVouchers(query?: { search?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  const qs = params.toString();
+  return apiRequest<Voucher[]>(`/vouchers${qs ? `?${qs}` : ""}`);
+}
+
+export async function createVoucher(payload: VoucherPayload) {
+  return apiRequest<Voucher>("/vouchers", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateVoucher(id: string, payload: Partial<Omit<VoucherPayload, "code">>) {
+  return apiRequest<Voucher>(`/vouchers/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteVoucher(id: string) {
+  return apiRequest<{ id: string; deleted?: boolean; deactivated?: boolean }>(`/vouchers/${id}`, { method: "DELETE" });
+}
+
+export async function getAvailableVouchers() {
+  return apiRequest<VoucherPublic[]>("/vouchers/available");
+}
+
+export async function validateVoucher(payload: { code: string; garmentSizeIds: string[]; startDate: string; endDate: string }) {
+  return apiRequest<VoucherValidation>("/vouchers/validate", { method: "POST", body: JSON.stringify(payload) });
+}
+
+// ---------- Thống kê sản phẩm HOT / ít được thuê ----------
+
+export type ProductRecommendation = {
+  action: "discount" | "promote" | "discontinue_review" | "reduce_stock" | "quality_check";
+  message: string;
+};
+
+export type ProductStat = {
+  garmentId: string;
+  name: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  imageUrl: string | null;
+  isActive: boolean;
+  minDailyPrice: number;
+  assetCount: number;
+  rentCount: number;
+  revenue: number;
+  occupancyRate: number;
+  conversionRate: number | null;
+  cancelCount: number;
+  cancelRate: number;
+  bookedDays: number;
+  availableDays: number;
+  views: number;
+  tryons: number;
+  avgRating: number | null;
+  reviewCount: number;
+  lastRentedAt: string | null;
+  classification: "HOT" | "LOW_DEMAND" | "NORMAL" | "NEW";
+  hotRank: number | null;
+  recommendations: ProductRecommendation[];
+};
+
+export type ProductStatsResponse = {
+  period: { from: string; to: string };
+  summary: {
+    garmentCount: number;
+    totalRentals: number;
+    totalRevenue: number;
+    avgOccupancyRate: number;
+    cancelRate: number;
+    totalViews: number;
+    totalTryons: number;
+    hotCount: number;
+    lowDemandCount: number;
+  };
+  note: string;
+  hot: ProductStat[];
+  lowDemand: ProductStat[];
+  items: ProductStat[];
+};
+
+export async function getProductStats(query: {
+  from?: string;
+  to?: string;
+  sortBy?: "revenue" | "bookings";
+  hotLimit?: number;
+  lowDemandMaxRentals?: number;
+  minAgeDays?: number;
+  categoryId?: string;
+}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const qs = params.toString();
+  return apiRequest<ProductStatsResponse>(`/analytics/products${qs ? `?${qs}` : ""}`);
+}
+
+/** Ghi nhận lượt xem sản phẩm (ẩn danh, chống trùng 30 phút ở server). Không chặn UI nếu lỗi. */
+export function trackGarmentView(garmentId: string) {
+  if (typeof window === "undefined") return;
+  let visitorKey = "";
+  try {
+    visitorKey = localStorage.getItem("heritage-visitor-key") ?? "";
+    if (!visitorKey) {
+      visitorKey = crypto.randomUUID();
+      localStorage.setItem("heritage-visitor-key", visitorKey);
+    }
+  } catch {
+    visitorKey = `anon-${Math.random().toString(36).slice(2)}`;
+  }
+  void apiRequest("/analytics/views", {
+    method: "POST",
+    body: JSON.stringify({ garmentId, visitorKey }),
+    authToken: null,
   });
 }

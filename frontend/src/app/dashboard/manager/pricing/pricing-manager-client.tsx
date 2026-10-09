@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { statusBadgeClass } from "@/lib/status-labels";
+import { PriceRulesTab } from "./price-rules-tab";
 
 const OCCASION_LABELS: Record<string, string> = {
   holiday: "Ngày lễ",
@@ -213,13 +214,14 @@ function PaginationRow({
   );
 }
 
-type PricingTab = "calendar" | "suggestions" | "periods";
+type PricingTab = "rules" | "calendar" | "suggestions" | "periods";
 
 export function PricingManagerClient() {
-  const [tab, setTab] = useState<PricingTab>("calendar");
+  const [tab, setTab] = useState<PricingTab>("rules");
   const { toast, show } = useToasts();
 
   const tabs: Array<{ key: PricingTab; label: string; icon: string }> = [
+    { key: "rules", label: "Luật giá tự động", icon: "auto_mode" },
     { key: "calendar", label: "Lịch sự kiện", icon: "event" },
     { key: "suggestions", label: "Đề xuất giá", icon: "lightbulb" },
     { key: "periods", label: "Khoảng giá hiệu lực", icon: "price_change" },
@@ -243,6 +245,7 @@ export function PricingManagerClient() {
         ))}
       </div>
 
+      {tab === "rules" && <PriceRulesTab showToast={show} />}
       {tab === "calendar" && <CalendarTab showToast={show} />}
       {tab === "suggestions" && <SuggestionsTab showToast={show} />}
       {tab === "periods" && <PeriodsTab showToast={show} />}

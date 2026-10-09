@@ -36,6 +36,7 @@ model UserAccount {
   staffReportedReviews                                   Review[]                @relation("StaffReportedReviews")
   staffRepliedReviews                                    Review[]                @relation("StaffRepliedReviews")
   tryonRequests                                          TryonRequest[]
+  voucher_usages                                         voucher_usages[]
 
   @@map("user_accounts")
 }
@@ -132,6 +133,7 @@ model Garment {
   category            GarmentCategory?      @relation(fields: [categoryId], references: [id])
   reviews             Review[]              @relation("GarmentReviews")
   tryonRequests       TryonRequest[]
+  views               garment_views[]
 
   @@map("garments")
 }
@@ -190,6 +192,12 @@ model Booking {
   confirmedBy           String?                @map("confirmed_by") @db.Uuid
   conditionBeforeRental String?                @map("condition_before_rental")
   conditionImages       Json?                  @map("condition_images")
+  subtotal              Decimal                @default(0) @map("subtotal") @db.Decimal(12, 2)
+  discountTotal         Decimal                @default(0) @map("discount_total") @db.Decimal(12, 2)
+  voucherId             String?                @map("voucher_id") @db.Uuid
+  voucherCode           String?                @map("voucher_code")
+  voucher               vouchers?              @relation(fields: [voucherId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  voucherUsages         voucher_usages[]
   items                 BookingItem[]
   statusHistory         BookingStatusHistory[]
   customer              UserAccount            @relation("BookingCustomer", fields: [customerId], references: [id])
@@ -213,6 +221,9 @@ model BookingItem {
   garmentAssetId  String?        @map("garment_asset_id") @db.Uuid
   dailyPrice      Decimal        @default(0) @map("daily_price") @db.Decimal(12, 2)
   depositAmount   Decimal        @default(0) @map("deposit_amount") @db.Decimal(12, 2)
+  basePrice       Decimal        @default(0) @map("base_price") @db.Decimal(12, 2)
+  discountPrice   Decimal        @default(0) @map("discount_price") @db.Decimal(12, 2)
+  appliedPriceRule Json?         @map("applied_price_rule")
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   garment_size_id String?        @db.Uuid
   booking         Booking        @relation(fields: [bookingId], references: [id])
@@ -814,4 +825,102 @@ enum price_suggestion_status {
 enum price_suggestion_source {
   ai
   owner
+}
+
+/// Luật giá tự động theo ngày đặc biệt. Không sửa giá gốc (garment_sizes.daily_price):
+/// giá cuối = basePrice * (1 + percentage/100) + fixed_amount, chỉ áp dụng 1 rule
+/// có priority cao nhất khớp với từng ngày thuê.
+model price_rules {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  rule_type     price_rule_type
+  start_date    DateTime?       @db.Date
+  end_date      DateTime?       @db.Date
+  /// Lặp lại hằng năm theo ngày/tháng của start_date..end_date (vd. Sale 9/9, 30/4)
+  recurring_yearly Boolean      @default(false)
+  /// 0=CN ... 6=T7. Rỗng = mọi ngày. Dùng cho rule cuối tuần.
+  days_of_week  Int[]           @default([])
+  /// Âm = giảm giá, dương = tăng giá (vd. -20 = giảm 20%, 30 = tăng 30%)
+  percentage    Decimal?        @db.Decimal(5, 2)
+  fixed_amount  Decimal?        @db.Decimal(12, 2)
+  priority      Int             @default(0)
+  /// Rỗng = áp dụng mọi sản phẩm
+  category_ids  String[]        @default([]) @db.Uuid
+  garment_ids   String[]        @default([]) @db.Uuid
+  is_active     Boolean         @default(true)
+  note          String?
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+
+  @@index([is_active, rule_type])
+}
+
+model vouchers {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String               @unique
+  name                String
+  description         String?
+  discount_type       voucher_discount_type
+  discount_value      Decimal              @db.Decimal(12, 2)
+  max_discount_amount Decimal?             @db.Decimal(12, 2)
+  min_order_value     Decimal              @default(0) @db.Decimal(12, 2)
+  usage_limit         Int?
+  used_count          Int                  @default(0)
+  per_user_limit      Int?                 @default(1)
+  start_at            DateTime             @db.Timestamptz(6)
+  end_at              DateTime             @db.Timestamptz(6)
+  /// Rỗng = áp dụng mọi sản phẩm
+  category_ids        String[]             @default([]) @db.Uuid
+  garment_ids         String[]             @default([]) @db.Uuid
+  is_active           Boolean              @default(true)
+  created_at          DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime             @default(now()) @db.Timestamptz(6)
+  bookings            Booking[]
+  usages              voucher_usages[]
+
+  @@index([is_active, start_at, end_at])
+}
+
+model voucher_usages {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  voucher_id      String      @db.Uuid
+  customer_id     String      @db.Uuid
+  booking_id      String      @db.Uuid
+  discount_amount Decimal     @db.Decimal(12, 2)
+  /// Bị huỷ khi booking huỷ/từ chối → trả lại lượt dùng
+  is_released     Boolean     @default(false)
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  voucher         vouchers    @relation(fields: [voucher_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer        UserAccount @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  booking         Booking     @relation(fields: [booking_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([booking_id])
+  @@index([voucher_id, customer_id])
+}
+
+enum price_rule_type {
+  tet
+  holiday
+  double_sale
+  weekend
+  peak_season
+  store_program
+}
+
+enum voucher_discount_type {
+  percentage
+  fixed
+}
+
+/// Lượt xem trang chi tiết sản phẩm (đã chống đếm trùng 30 phút / người xem).
+model garment_views {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garment_id  String   @db.Uuid
+  visitor_key String
+  viewer_id   String?  @db.Uuid
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  garment     Garment  @relation(fields: [garment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([garment_id, created_at])
+  @@index([garment_id, visitor_key, created_at])
 }

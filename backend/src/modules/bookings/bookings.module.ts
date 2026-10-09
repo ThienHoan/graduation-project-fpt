@@ -4,12 +4,13 @@ import { LocationsModule } from "../locations/locations.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { PricingModule } from "../pricing/pricing.module";
 import { RealtimeModule } from "../realtime/realtime.module";
+import { VouchersModule } from "../vouchers/vouchers.module";
 import { BookingsController } from "./bookings.controller";
 import { BookingsScheduler } from "./bookings.scheduler";
 import { BookingsService } from "./bookings.service";
 
 @Module({
-  imports: [AuthModule, NotificationsModule, LocationsModule, PricingModule, RealtimeModule],
+  imports: [AuthModule, NotificationsModule, LocationsModule, PricingModule, RealtimeModule, VouchersModule],
   controllers: [BookingsController],
   providers: [BookingsService, BookingsScheduler],
 })

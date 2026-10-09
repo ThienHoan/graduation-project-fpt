@@ -11,7 +11,7 @@ import { bookingFlowSteps } from "@/lib/heritage-mock-data";
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 type StaffNavKey = "overview" | "inspection"| "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing";
+type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "vouchers" | "product-stats";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -231,6 +231,8 @@ export function ManagerPortalShell({
     { key: "reviews", label: "Đánh giá", icon: "reviews", href: "/dashboard/manager/reviews" },
     { key: "refunds", label: "Duyệt hoàn cọc", icon: "currency_exchange", href: "/dashboard/manager#refunds" },
     { key: "pricing", label: "Điều chỉnh giá", icon: "price_change", href: "/dashboard/manager/pricing" },
+    { key: "product-stats", label: "Hiệu quả sản phẩm", icon: "insights", href: "/dashboard/manager/product-stats" },
+    { key: "vouchers", label: "Voucher & KM", icon: "confirmation_number", href: "/dashboard/manager/vouchers" },
     { key: "chat", label: "CSKH", icon: "chat", href: "/chat" },
   ] as const;
 

@@ -21,6 +21,8 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { ChatModule } from "./modules/chat/chat.module";
 import { RealtimeModule } from "./modules/realtime/realtime.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
+import { VouchersModule } from "./modules/vouchers/vouchers.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
 
 @Module({
   imports: [
@@ -46,6 +48,8 @@ import { ReviewsModule } from "./modules/reviews/reviews.module";
     ChatModule,
     RealtimeModule,
     ReviewsModule,
+    VouchersModule,
+    AnalyticsModule,
   ],
 })
 export class AppModule {}

@@ -104,7 +104,7 @@ function createService(options?: {
     prisma as never,
     { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
     {} as never,
-    { effectiveDailyPrice: vi.fn().mockResolvedValue(100) } as never,
+    { effectiveDailyPrice: vi.fn().mockResolvedValue(100), quoteRental: vi.fn().mockResolvedValue(new Map()) } as never,
     { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn(), inspectionChanged: vi.fn(), refundChanged: vi.fn(), laundryChanged: vi.fn(), maintenanceChanged: vi.fn(), notificationCreated: vi.fn() } as never,
   );
 
@@ -217,7 +217,7 @@ function createHandoverService(initialBooking = makeHandoverBooking()) {
     prisma as never,
     { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
     {} as never,
-    { effectiveDailyPrice: vi.fn().mockResolvedValue(100) } as never,
+    { effectiveDailyPrice: vi.fn().mockResolvedValue(100), quoteRental: vi.fn().mockResolvedValue(new Map()) } as never,
     realtime as never,
   );
 
@@ -395,7 +395,7 @@ describe("BookingsService handover", () => {
       prisma as never,
       { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
       {} as never,
-      { effectiveDailyPrice: vi.fn().mockResolvedValue(100) } as never,
+      { effectiveDailyPrice: vi.fn().mockResolvedValue(100), quoteRental: vi.fn().mockResolvedValue(new Map()) } as never,
       { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn(), inspectionChanged: vi.fn(), refundChanged: vi.fn(), laundryChanged: vi.fn(), maintenanceChanged: vi.fn(), notificationCreated: vi.fn() } as never,
     );
 

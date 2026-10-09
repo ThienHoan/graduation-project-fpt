@@ -32,6 +32,11 @@ export class CreateBookingDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(32)
+  voucherCode?: string;
+
+  @IsOptional()
+  @IsString()
   @IsIn(["cash", "qr_code"])
   paymentMethod?: string;
 }

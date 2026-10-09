@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { AppRole, AssetStatus, BookingStatus, InspectionStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -6,6 +6,7 @@ import { PricingService } from "../pricing/pricing.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { LocationsService } from "../locations/locations.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { VouchersService, type VoucherOrderLine } from "../vouchers/vouchers.service";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
 import type { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
@@ -126,6 +127,7 @@ export class BookingsService {
     private readonly locations: LocationsService,
     private readonly pricing: PricingService,
     private readonly realtime: RealtimeService,
+    @Optional() private readonly vouchers?: VouchersService,
   ) { }
 
   private parseDateRange(startDate: string, endDate: string) {
@@ -323,7 +325,7 @@ export class BookingsService {
       include: { garments: true },
     });
 
-    if (sizes.length !== dto.garmentSizeIds.length) {
+    if (sizes.length !== new Set(dto.garmentSizeIds).size) {
       const found = new Set(sizes.map((s) => s.id));
       const missing = dto.garmentSizeIds.filter((id) => !found.has(id));
       throw new NotFoundException(`Không tìm thấy size: ${missing.join(", ")}`);
@@ -369,23 +371,47 @@ export class BookingsService {
     }
 
     const sizeMap = new Map(sizes.map((s) => [s.id, s]));
-    let rentalTotal = 0;
+    // Giá tính theo TỪNG NGÀY thuê: giá chốt thủ công (price_periods) → luật giá tự động
+    // (price_rules, ưu tiên cao nhất) → giá gốc. Không sửa giá gốc của sản phẩm.
+    const quotes = await this.pricing.quoteRental(dto.garmentSizeIds, startDay, endDay);
+    let subtotal = 0;
     let depositTotal = 0;
+    const voucherLines: VoucherOrderLine[] = [];
     const itemsData: Array<{
       garmentId: string;
       garment_size_id: string;
       dailyPrice: number;
+      basePrice: number;
+      discountPrice: number;
+      appliedPriceRule: Prisma.InputJsonValue | typeof Prisma.JsonNull;
       depositAmount: number;
     }> = [];
     for (const sizeId of dto.garmentSizeIds) {
       const size = sizeMap.get(sizeId)!;
-      // Giá theo ngày TẠO booking (booking.createdAt): price_period active chứa
-      // ngày hôm nay, fallback về giá cơ sở. Không tính theo từng ngày thuê.
-      const dp = await this.pricing.effectiveDailyPrice(sizeId);
+      const quote = quotes.get(sizeId);
+      const basePrice = Number(size.daily_price ?? 0);
+      const lineTotal = quote?.rentalTotal ?? basePrice * days;
+      const dp = quote?.discountPrice ?? basePrice;
       const da = Number(size.deposit_amount ?? 0);
-      rentalTotal += dp * days;
+      subtotal += lineTotal;
       depositTotal += da;
-      itemsData.push({ garmentId: size.garment_id, garment_size_id: sizeId, dailyPrice: dp, depositAmount: da });
+      voucherLines.push({ garmentId: size.garment_id, categoryId: size.garments.categoryId ?? null, amount: lineTotal });
+      itemsData.push({
+        garmentId: size.garment_id,
+        garment_size_id: sizeId,
+        dailyPrice: dp,
+        basePrice,
+        discountPrice: dp,
+        appliedPriceRule: quote?.appliedPriceRule
+          ? ({ ...quote.appliedPriceRule, rules: quote.appliedRules } as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        depositAmount: da,
+      });
+    }
+
+    const voucherCode = dto.voucherCode?.trim();
+    if (voucherCode && !this.vouchers) {
+      throw new BadRequestException("Hệ thống voucher chưa sẵn sàng.");
     }
 
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
@@ -407,10 +433,21 @@ export class BookingsService {
           }
         }
 
-        return tx.booking.create({
+        // Voucher được kiểm tra lại HOÀN TOÀN ở backend trong cùng transaction.
+        const voucherEval = voucherCode
+          ? await this.vouchers!.evaluate(tx, voucherCode, customerId, voucherLines)
+          : null;
+        const discountTotal = voucherEval?.discountAmount ?? 0;
+        const rentalTotal = subtotal - discountTotal;
+
+        const created = await tx.booking.create({
           data: {
             customerId,
             status: BookingStatus.pending_confirmation,
+            subtotal,
+            discountTotal,
+            voucherId: voucherEval?.voucher.id ?? null,
+            voucherCode: voucherEval?.voucher.code ?? null,
             rentalStartDate: startDay,
             rentalEndDate: endDay,
             pickupMethod: dto.pickupMethod ?? "store_pickup",
@@ -438,6 +475,10 @@ export class BookingsService {
             deliveryAddress: true,
           },
         });
+        if (voucherEval) {
+          await this.vouchers!.consume(tx, voucherEval, customerId, created.id);
+        }
+        return created;
       });
     await this.notificationsService.sendBookingNotification({
       userId: booking.customerId,
@@ -544,6 +585,7 @@ export class BookingsService {
           note: "Khách hàng tự hủy đơn",
         },
       });
+      await this.vouchers?.releaseForBooking(tx, id);
       return tx.booking.findUniqueOrThrow({
         where: { id },
         include: {
@@ -942,6 +984,10 @@ export class BookingsService {
             throw new ConflictException("Some assets are no longer reserved for this booking.");
           }
         }
+      }
+
+      if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
+        await this.vouchers?.releaseForBooking(tx, id);
       }
 
       await tx.bookingStatusHistory.create({
@@ -1394,6 +1440,7 @@ export class BookingsService {
           where: { id: booking.id, status: BookingStatus.awaiting_payment },
           data: { status: BookingStatus.cancelled },
         });
+        if (claimed.count === 1) await this.vouchers?.releaseForBooking(tx, booking.id);
         return claimed.count === 1;
       });
       if (!cancelled) continue;
@@ -1662,6 +1709,9 @@ export class BookingsService {
       rentalEndDate: end.toISOString().slice(0, 10),
       days: computedDays,
       pickupMethod: booking.pickupMethod,
+      subtotal: Number(booking.subtotal ?? booking.rentalTotal),
+      discountTotal: Number(booking.discountTotal ?? 0),
+      voucherCode: booking.voucherCode ?? null,
       rentalTotal: Number(booking.rentalTotal),
       depositTotal: Number(booking.depositTotal),
       shippingFee: Number(booking.shippingFee ?? 0),
@@ -1693,6 +1743,9 @@ export class BookingsService {
         imageUrl: item.garment_sizes?.garments?.images?.[0]?.imageUrl ?? null,
         sizeLabel: item.garment_sizes?.size_label ?? null,
         dailyPrice: Number(item.dailyPrice),
+        basePrice: Number(item.basePrice ?? item.dailyPrice),
+        discountPrice: Number(item.discountPrice ?? item.dailyPrice),
+        appliedPriceRule: item.appliedPriceRule ?? null,
         depositAmount: Number(item.depositAmount),
         garmentAssetId: item.garmentAssetId ?? item.garmentAsset?.id ?? null,
         assetCode: item.garmentAsset?.assetCode ?? null,
