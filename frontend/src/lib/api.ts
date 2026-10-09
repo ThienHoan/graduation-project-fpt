@@ -141,6 +141,7 @@ export type GarmentGrouped = {
     dailyPrice: number;
     depositAmount: number;
     measurements: GarmentMeasurements | null;
+    accessories: GroupedGarmentAccessory[];
   }>;
   accessories: GroupedGarmentAccessory[];
 };

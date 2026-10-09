@@ -3160,7 +3160,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
       note?: string;
     },
     link?: GarmentAccessoryLink | null,
-  ) {
+  ): Promise<string | null> {
     setSaving(true);
     const res = link
       ? await updateGarmentAccessory(garmentId, link.accessory.id, {
@@ -3178,9 +3178,9 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
       setModalOpen(false);
       setEditing(null);
       await load();
-    } else {
-      setError(res.message ?? "Không thể lưu. Vui lòng thử lại.");
+      return null;
     }
+    return res.message ?? "Không thể lưu. Vui lòng thử lại.";
   }
 
   async function handleRemove(link: GarmentAccessoryLink) {
@@ -3327,7 +3327,7 @@ function GarmentAccessoryLinkModal({
       note?: string;
     },
     link?: GarmentAccessoryLink | null,
-  ) => void;
+  ) => Promise<string | null>;
 }) {
   const [options, setOptions] = useState<AccessoryItem[]>([]);
   const [accessoryId, setAccessoryId] = useState(link?.accessory.id ?? "");
@@ -3345,7 +3345,7 @@ function GarmentAccessoryLinkModal({
     });
   }, []);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!link && !accessoryId) {
       setError("Vui lòng chọn phụ kiện.");
@@ -3362,7 +3362,7 @@ function GarmentAccessoryLinkModal({
       return;
     }
     setError(null);
-    onSubmit(
+    const saveError = await onSubmit(
       {
         accessoryId: link ? link.accessory.id : accessoryId,
         quantity: qty,
@@ -3372,6 +3372,7 @@ function GarmentAccessoryLinkModal({
       },
       link,
     );
+    if (saveError) setError(saveError);
   }
 
   return (
