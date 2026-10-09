@@ -487,6 +487,10 @@ export async function getStaffPendingBookings() {
   return apiRequest<StaffBookingResponse[]>("/bookings/staff/pending");
 }
 
+export async function getBookingsNeedingAssets() {
+  return apiRequest<StaffBookingResponse[]>("/bookings/staff/assets-needed");
+}
+
 export async function getStaffAllBookings(params?: { search?: string; status?: string; cursor?: string }) {
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);

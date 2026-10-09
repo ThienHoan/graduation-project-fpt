@@ -9,6 +9,7 @@ import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import {
   getStaffAllBookings,
+  getBookingsNeedingAssets,
   getStaffCompletedRefundBookings,
   getAvailableAssets,
   assignAssetToBookingItem,
@@ -246,6 +247,7 @@ export default function ManagerDashboardPage() {
   const [currentDateLabel, setCurrentDateLabel] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
   const [bookings, setBookings] = useState<StaffBookingResponse[]>([]);
+  const [bookingsNeedingAssets, setBookingsNeedingAssets] = useState<StaffBookingResponse[]>([]);
   // Đơn completed còn cọc (kèm trạng thái refund) — dùng để tính "tiền cọc đang giữ"
   const [completedRefundBookings, setCompletedRefundBookings] = useState<
     StaffBookingResponse[]
@@ -390,6 +392,9 @@ export default function ManagerDashboardPage() {
     Promise.all([
       getStaffAllBookings().then((res) => {
         if (res.success && res.data) setBookings(res.data);
+      }),
+      getBookingsNeedingAssets().then((res) => {
+        if (res.success && res.data) setBookingsNeedingAssets(res.data);
       }),
       getStaffCompletedRefundBookings().then((res) => {
         if (res.success && res.data) setCompletedRefundBookings(res.data);
@@ -818,9 +823,14 @@ export default function ManagerDashboardPage() {
   // ── Realtime: refetch REST snapshot khi có thay đổi ở server ──
   const refreshBookings = useCallback(
     () =>
-      getStaffAllBookings().then((res) => {
-        if (res.success && res.data) setBookings(res.data);
-      }),
+      Promise.all([
+        getStaffAllBookings().then((res) => {
+          if (res.success && res.data) setBookings(res.data);
+        }),
+        getBookingsNeedingAssets().then((res) => {
+          if (res.success && res.data) setBookingsNeedingAssets(res.data);
+        }),
+      ]),
     [],
   );
   const refreshCompletedRefunds = useCallback(
@@ -898,12 +908,9 @@ export default function ManagerDashboardPage() {
   const activeBookings = bookings.filter((b) =>
     ACTIVE_STATUSES.includes(b.status),
   );
-  const bookingsNeedingAssets = activeBookings.filter(
-    (b) =>
-      ["confirmed", "awaiting_payment", "paid", "preparing"].includes(
-        b.status,
-      ) && b.items.some((item) => !item.garmentAssetId),
-  );
+  // bookingsNeedingAssets is loaded from the server-side dedicated API
+  // (GET /bookings/staff/assets-needed) instead of being derived client-side
+  // from the paginated bookings list, which may miss older entries.
   const totalRentalRevenue = bookings
     .filter((b) => REVENUE_STATUSES.includes(b.status))
     .reduce((sum, b) => sum + b.rentalTotal, 0);
