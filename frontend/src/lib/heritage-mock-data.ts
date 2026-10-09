@@ -138,7 +138,7 @@ export const bookingSelection = {
 
 export const logisticsMethods = [
   {
-    key: "pickup",
+    key: "store_pickup",
     title: "Nhận tại xưởng",
     description: "Bao gồm buổi thử nhanh và bàn giao trực tiếp với nhân viên.",
     icon: "storefront",

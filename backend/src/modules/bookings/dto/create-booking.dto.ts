@@ -1,9 +1,10 @@
-import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from "class-validator";
+import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, Matches, MaxLength, Min } from "class-validator";
+import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export class CreateBookingDto {
   @IsArray()
   @ArrayMinSize(1)
-  @IsUUID("4", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true })
   garmentSizeIds!: string[];
 
   @IsDateString()
@@ -13,11 +14,11 @@ export class CreateBookingDto {
   endDate!: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(["store_pickup", "delivery"])
   pickupMethod?: string;
 
   @IsOptional()
-  @IsUUID("4")
+  @Matches(CANONICAL_UUID_REGEX)
   deliveryAddressId?: string;
 
   @IsOptional()

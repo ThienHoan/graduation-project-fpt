@@ -82,15 +82,8 @@ export class FinancialService {
       }),
       this.prisma.booking.aggregate({
         where: {
-          status: {
-            notIn: [
-              BookingStatus.draft,
-              BookingStatus.pending_confirmation,
-              BookingStatus.cancelled,
-              BookingStatus.rejected,
-              BookingStatus.awaiting_payment,
-            ],
-          },
+          status: { in: DEPOSIT_HOLDING_STATUSES },
+          payments: { some: { status: PaymentStatus.paid } },
           ...bookingDateFilter,
           ...paymentMethodFilter,
         },
@@ -597,7 +590,11 @@ export class FinancialService {
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 20;
 
-    const where: Prisma.FinancialTransactionWhereInput = {};
+    const where: Prisma.FinancialTransactionWhereInput = {
+      transactionType: {
+        notIn: ["refund_cash_pending", "refund_bank_transfer_pending", "refund_rejected"],
+      },
+    };
 
     if (range) {
       where.createdAt = { gte: range.gte, lte: range.lte };
@@ -605,7 +602,11 @@ export class FinancialService {
 
     if (query.transactionStatus) {
       if (query.transactionStatus === "REFUND") {
-        where.transactionType = { startsWith: "refund" };
+        where.AND = [
+          { transactionType: { startsWith: "refund" } },
+          { transactionType: { notIn: ["refund_cash_pending", "refund_bank_transfer_pending", "refund_rejected"] } }
+        ];
+        delete where.transactionType;
       } else if (query.transactionStatus === "RENTAL") {
         where.transactionType = "payment";
       } else if (query.transactionStatus === "DEPOSIT") {

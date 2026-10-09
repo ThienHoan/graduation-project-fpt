@@ -13,6 +13,21 @@ export type ApiRequestOptions = RequestInit & {
   authToken?: string | null;
 };
 
+export type PickupMethod = "store_pickup" | "delivery";
+
+export type HandoverRecoveryPayload = {
+  action: "replace" | "cancel";
+  expectedDecidedAt: string;
+  reason: string;
+  replacements?: Array<{ itemId: string; garmentAssetId: string }>;
+};
+
+export function normalizePickupMethod(value: string | null | undefined): PickupMethod | null {
+  if (value === "pickup" || value === "store_pickup") return "store_pickup";
+  if (value === "delivery") return "delivery";
+  return null;
+}
+
 function buildHeaders(init?: ApiRequestOptions) {
   const headers = new Headers(init?.headers);
 
@@ -223,17 +238,16 @@ export async function getDeliveryMap() {
 
 export type DeliveryTrackData = {
   bookingId: string;
-  status: "preparing" | "in_transit" | "arrived";
-  progress: number;
+  status: "preparing" | "in_transit" | "delivered";
+  shipperLocationAvailable: boolean;
   storeLat: number;
   storeLng: number;
   customerLat: number;
   customerLng: number;
-  shipperLat: number;
-  shipperLng: number;
+  deliveredAt: string | null;
+  handoverConfirmed: boolean;
   customerName: string;
   customerAddress: string;
-  estimatedDelivery: string;
 };
 
 export async function getDeliveryTrack(bookingId: string) {
@@ -277,6 +291,7 @@ export type BookingHandover = {
   decidedAt: string | null;
   receivedAt: string | null;
   confirmedBy: string | null;
+  history: unknown[];
 };
 
 export type ConfirmHandoverPayload = {
@@ -290,6 +305,18 @@ export type ConfirmHandoverPayload = {
   deliveredBy?: string;
   receivedBy?: string;
   receiverPhone?: string;
+};
+
+export type DeliveryAddressSnapshot = {
+  version: 1;
+  receiverName: string;
+  phone: string;
+  line1: string;
+  ward: string | null;
+  district: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 export type BookingResponse = {
@@ -316,6 +343,7 @@ export type BookingResponse = {
   note: string | null;
   deliveryAddressId?: string | null;
   deliveryAddress?: Omit<CustomerAddress, "isDefault" | "createdAt"> | null;
+  deliverySnapshot?: DeliveryAddressSnapshot | null;
   createdAt: string;
   items: BookingItem[];
   handover?: BookingHandover | null;
@@ -358,11 +386,11 @@ export async function createBooking(payload: {
   garmentSizeIds: string[];
   startDate: string;
   endDate: string;
-  pickupMethod?: string;
+  pickupMethod?: PickupMethod;
   deliveryAddressId?: string;
   shippingFee?: number;
   note?: string;
-  paymentMethod?: string;
+  paymentMethod?: "cash" | "qr_code";
   voucherCode?: string;
 }) {
   return apiRequest<BookingResponse>("/bookings", {
@@ -417,6 +445,27 @@ export async function confirmBookingHandover(id: string, payload: ConfirmHandove
   });
 }
 
+export async function recoverBookingHandover(id: string, payload: HandoverRecoveryPayload) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/recover-handover`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markBookingDelivered(id: string, note?: string) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/mark-delivered`, {
+    method: "PATCH",
+    body: JSON.stringify(note ? { note } : {}),
+  });
+}
+
+export async function markBookingReturned(id: string, note?: string) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/mark-returned`, {
+    method: "PATCH",
+    body: JSON.stringify(note ? { note } : {}),
+  });
+}
+
 // ---------- Staff Booking types ----------
 
 export type StaffRefundSummary = {
@@ -445,8 +494,24 @@ export async function getStaffPendingBookings() {
   return apiRequest<StaffBookingResponse[]>("/bookings/staff/pending");
 }
 
-export async function getStaffAllBookings() {
-  return apiRequest<StaffBookingResponse[]>("/bookings/staff/all");
+export async function getBookingsNeedingAssets() {
+  return apiRequest<StaffBookingResponse[]>("/bookings/staff/assets-needed");
+}
+
+export async function getStaffAllBookings(params?: { search?: string; status?: string; cursor?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.cursor) qs.set("cursor", params.cursor);
+  const query = qs.toString();
+  const res = await apiRequest<{ data: StaffBookingResponse[]; nextCursor: string | null }>(
+    `/bookings/staff/all${query ? `?${query}` : ""}`,
+  );
+  // Unwrap paginated response for backward compatibility with existing callers
+  if (res.success && res.data) {
+    return { ...res, data: res.data.data, nextCursor: res.data.nextCursor };
+  }
+  return { ...res, data: undefined as StaffBookingResponse[] | undefined, nextCursor: null };
 }
 
 export async function advanceBookingStatus(id: string, status: string, note?: string) {
@@ -603,8 +668,11 @@ export type AvailableAsset = {
 
 // ---------- Asset API functions ----------
 
-export async function getAvailableAssets(garmentId: string, garmentSizeId?: string) {
-  const query = garmentSizeId ? `?garmentSizeId=${encodeURIComponent(garmentSizeId)}` : "";
+export async function getAvailableAssets(garmentId: string, garmentSizeId?: string, bookingId?: string) {
+  const params = new URLSearchParams();
+  if (garmentSizeId) params.set("garmentSizeId", garmentSizeId);
+  if (bookingId) params.set("bookingId", bookingId);
+  const query = params.size ? `?${params.toString()}` : "";
   return apiRequest<AvailableAsset[]>(`/garments/${garmentId}/assets/available${query}`);
 }
 
@@ -995,6 +1063,7 @@ export async function getAssetsNeedingProcessing() {
 export type AssetDetail = {
   id: string;
   garmentId: string;
+  garmentSizeId?: string | null;
   garmentName: string;
   sizeLabel: string | null;
   dailyPrice: number;

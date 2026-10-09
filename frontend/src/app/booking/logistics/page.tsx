@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { apiRequest, getShippingFee, getStoreInfo, type ShippingFeeEstimate, type StoreInfo } from "@/lib/api";
+import { apiRequest, getShippingFee, getStoreInfo, normalizePickupMethod, type PickupMethod, type ShippingFeeEstimate, type StoreInfo } from "@/lib/api";
 import { logisticsMethods } from "@/lib/heritage-mock-data";
 import { ShippingMap } from "@/components/location/shipping-map";
 
@@ -40,9 +40,10 @@ function BookingLogisticsInner() {
   const startDate = searchParams.get("startDate") ?? "";
   const endDate = searchParams.get("endDate") ?? "";
 
-  const isInvalid = !startDate || !endDate || endDate < startDate;
-
-  const [pickupMethod, setPickupMethod] = useState<string>(searchParams.get("pickupMethod") ?? logisticsMethods[0].key);
+  const requestedPickupMethod = normalizePickupMethod(searchParams.get("pickupMethod"));
+  const hasInvalidPickupMethod = searchParams.has("pickupMethod") && requestedPickupMethod === null;
+  const isInvalid = !startDate || !endDate || endDate < startDate || hasInvalidPickupMethod;
+  const [pickupMethod, setPickupMethod] = useState<PickupMethod>(requestedPickupMethod ?? "store_pickup");
 
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -159,7 +160,7 @@ function BookingLogisticsInner() {
                     checked={pickupMethod === item.key}
                     name="delivery_method"
                     type="radio"
-                    onChange={() => setPickupMethod(item.key)}
+                    onChange={() => setPickupMethod(normalizePickupMethod(item.key) ?? "store_pickup")}
                   />
                   <div className="h-full rounded-xl border border-sand bg-white p-5 transition peer-checked:border-antique peer-checked:bg-parchment hover:border-antique/60">
                     <div className="mb-3 flex items-start justify-between">

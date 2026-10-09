@@ -11,6 +11,7 @@ function createMockPrisma() {
     },
     garmentAsset: {
       count: vi.fn(),
+      findMany: vi.fn(),
     },
     bookingItem: {
       findMany: vi.fn(),
@@ -37,10 +38,15 @@ describe("BookingsService.getSizeAvailabilityCalendar", () => {
 
   it("sweeps each day with the same overlap rule as checkAvailability", async () => {
     prisma.garment_sizes.findFirst.mockResolvedValue({ id: SIZE_ID });
-    prisma.garmentAsset.count.mockResolvedValue(2);
+    prisma.garmentAsset.findMany.mockResolvedValue([
+      { id: "a1", status: "available" },
+      { id: "a2", status: "available" },
+    ]);
     prisma.bookingItem.findMany.mockResolvedValue([
       {
+        garmentAssetId: null,
         booking: {
+          id: "b1", status: "confirmed",
           rentalStartDate: new Date("2026-10-10T00:00:00.000Z"),
           rentalEndDate: new Date("2026-10-11T00:00:00.000Z"),
         },
@@ -63,10 +69,12 @@ describe("BookingsService.getSizeAvailabilityCalendar", () => {
 
   it("marks days with zero availability", async () => {
     prisma.garment_sizes.findFirst.mockResolvedValue({ id: SIZE_ID });
-    prisma.garmentAsset.count.mockResolvedValue(1);
+    prisma.garmentAsset.findMany.mockResolvedValue([{ id: "a1", status: "available" }]);
     prisma.bookingItem.findMany.mockResolvedValue([
       {
+        garmentAssetId: null,
         booking: {
+          id: "b1", status: "confirmed",
           rentalStartDate: new Date("2026-10-10T00:00:00.000Z"),
           rentalEndDate: new Date("2026-10-10T00:00:00.000Z"),
         },

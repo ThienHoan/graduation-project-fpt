@@ -90,11 +90,14 @@ export class GarmentsController {
   findOne(@Param("id") id: string) { return this.garmentsService.findOne(id); }
 
   @Get(":id/assets/available")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
   findAvailableAssets(
     @Param("id", ParseUUIDPipe) id: string,
     @Query("garmentSizeId", new ParseUUIDPipe({ optional: true })) garmentSizeId?: string,
+    @Query("bookingId", new ParseUUIDPipe({ optional: true })) bookingId?: string,
   ) {
-    return this.garmentsService.findAvailableAssets(id, garmentSizeId);
+    return this.garmentsService.findAvailableAssets(id, garmentSizeId, bookingId);
   }
 
   // ── Manager / Owner: Garment CRUD ──────────────────────────────────────────

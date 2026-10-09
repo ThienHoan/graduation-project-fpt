@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { StaffPortalShell, ConfirmModal } from "@/components/heritage/ui";
@@ -8,12 +8,15 @@ import { HandoverConfirmationModal } from "@/components/bookings/handover-confir
 import {
   getStaffBooking,
   advanceBookingStatus,
+  markBookingDelivered,
+  markBookingReturned,
   markBookingPaid,
   createRefund,
   type BookingResponse,
   type StaffBookingResponse,
 } from "@/lib/api";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -46,20 +49,15 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
   preparing: [
     { status: "ready_for_pickup", label: "Sẵn sàng nhận", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
-  ready_for_pickup: [
-    { status: "delivering", label: "Đang giao", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  ready_for_pickup: [],
   delivering: [],
   renting: [
-    { status: "returned", label: "Khách đã trả",  style: "bg-lotus text-white hover:bg-oxblood" },
     { status: "overdue",  label: "Đánh dấu quá hạn", style: "border border-red-300 text-red-700 hover:bg-red-50" },
   ],
   returned: [
     { status: "inspection_pending", label: "Bắt đầu kiểm tra", style: "bg-lotus text-white hover:bg-oxblood" },
   ],
-  overdue: [
-    { status: "returned", label: "Khách đã trả", style: "bg-lotus text-white hover:bg-oxblood" },
-  ],
+  overdue: [],
 };
 
 const PAYMENT_METHODS: { key: string; label: string; icon: string }[] = [
@@ -110,12 +108,34 @@ export default function StaffBookingDetailPage() {
       .finally(() => setLoading(false));
   }, [bookingId]);
 
+  const refreshBooking = useCallback(async () => {
+    if (!bookingId) return;
+    const res = await getStaffBooking(bookingId);
+    if (res.success && res.data) setBooking(res.data);
+  }, [bookingId]);
+
+  useRealtimeInvalidation({ bookings: refreshBooking }, Boolean(bookingId));
+
   const CONFIRM_REQUIRED = new Set(["cancelled", "rejected", "overdue"]);
 
   function handleHandoverCompleted(updated: BookingResponse, message: string) {
     setHandoverBooking(null);
     setBooking((prev) => (prev ? { ...prev, ...updated } : prev));
     showToast("success", message);
+  }
+
+  async function handleOperationalTransition(action: "delivered" | "returned") {
+    if (!booking) return;
+    setActioning(true);
+    setActionError(null);
+    const res = action === "delivered" ? await markBookingDelivered(booking.id) : await markBookingReturned(booking.id);
+    setActioning(false);
+    if (res.success && res.data) {
+      setBooking((prev) => (prev ? { ...prev, ...res.data } : prev));
+      showToast("success", action === "delivered" ? "Đã ghi nhận bàn giao cho đơn vị vận chuyển." : "Đã ghi nhận khách trả trang phục.");
+    } else {
+      setActionError(res.message ?? "Thao tác thất bại.");
+    }
   }
 
   async function handleAction(status: string) {
@@ -392,19 +412,22 @@ export default function StaffBookingDetailPage() {
       </div>
 
       {/* Delivery address */}
-      {booking.deliveryAddress && (
-        <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-          <div className="border-b border-sand bg-stone-50 px-6 py-3">
-            <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600">Địa chỉ giao nhận</h3>
+      {(booking.deliverySnapshot ?? booking.deliveryAddress) && (() => {
+        const address = booking.deliverySnapshot ?? booking.deliveryAddress!;
+        return (
+          <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+            <div className="border-b border-sand bg-stone-50 px-6 py-3">
+              <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600">Địa chỉ giao nhận</h3>
+            </div>
+            <div className="p-6">
+              <p className="font-medium text-ink">{address.receiverName} - {address.phone}</p>
+              <p className="mt-1 text-sm text-stone-600">
+                {[address.line1, address.ward, address.district, address.city].filter(Boolean).join(", ")}
+              </p>
+            </div>
           </div>
-          <div className="p-6">
-            <p className="font-medium text-ink">{booking.deliveryAddress.receiverName} - {booking.deliveryAddress.phone}</p>
-            <p className="mt-1 text-sm text-stone-600">
-              {[booking.deliveryAddress.line1, booking.deliveryAddress.ward, booking.deliveryAddress.district, booking.deliveryAddress.city].filter(Boolean).join(", ")}
-            </p>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Notes */}
       {booking.note && (
@@ -429,7 +452,7 @@ export default function StaffBookingDetailPage() {
                 onClick={handleMarkDeliveryPaid}
                 className="rounded-lg bg-jade px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
               >
-                {actioning ? "Đang xử lý..." : `Xác nhận đã nhận tiền QR (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
+                {actioning ? "Đang xử lý..." : `Xác nhận đã nhận tiền QR (${formatVND(booking.rentalTotal + booking.depositTotal + (booking.shippingFee ?? 0))})`}
               </button>
             ) : (
               <button
@@ -438,18 +461,38 @@ export default function StaffBookingDetailPage() {
                 onClick={() => { setSelectedPaymentMethod(booking.paymentMethod === "qr_code" ? "qr_code" : "cash"); setPaymentDialog(true); }}
                 className="rounded-lg bg-jade px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
               >
-                {actioning ? "Đang xử lý..." : `Đã thanh toán (${formatVND(booking.rentalTotal + booking.depositTotal)})`}
+                {actioning ? "Đang xử lý..." : `Đã thanh toán (${formatVND(booking.rentalTotal + booking.depositTotal + (booking.shippingFee ?? 0))})`}
               </button>
             )
           )}
-          {(booking.status === "ready_for_pickup" || booking.status === "delivering") && (
+          {booking.status === "ready_for_pickup" && booking.pickupMethod === "delivery" && booking.handover?.status !== "REJECTED" && (
+            <button
+              type="button"
+              disabled={actioning}
+              onClick={() => void handleOperationalTransition("delivered")}
+              className="rounded-lg bg-jade px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+            >
+              {actioning ? "Đang xử lý..." : "Đã bàn giao cho đơn vị vận chuyển"}
+            </button>
+          )}
+          {((booking.status === "ready_for_pickup" && booking.pickupMethod === "store_pickup") || booking.status === "delivering" || booking.status === "renting") && booking.handover?.status !== "REJECTED" && (
             <button
               type="button"
               disabled={actioning}
               onClick={() => setHandoverBooking(booking)}
               className="rounded-lg bg-jade px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
             >
-              {actioning ? "Đang xử lý..." : booking.status === "delivering" ? "Xác nhận đã giao" : "Xác nhận bàn giao"}
+              {actioning ? "Đang xử lý..." : "Xác nhận bàn giao"}
+            </button>
+          )}
+          {(booking.status === "renting" || booking.status === "overdue") && (
+            <button
+              type="button"
+              disabled={actioning}
+              onClick={() => void handleOperationalTransition("returned")}
+              className="rounded-lg bg-lotus px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
+            >
+              {actioning ? "Đang xử lý..." : "Ghi nhận đã trả đồ"}
             </button>
           )}
           {actions.map((action) => {
@@ -500,7 +543,7 @@ export default function StaffBookingDetailPage() {
               </div>
               <div className="mt-3 border-t border-jade/30 pt-3 flex justify-between text-base">
                 <span className="font-semibold text-ink">Tổng thu</span>
-                <span className="font-bold text-jade">{formatVND(booking.rentalTotal + booking.depositTotal)}</span>
+                <span className="font-bold text-jade">{formatVND(booking.rentalTotal + booking.depositTotal + (booking.shippingFee ?? 0))}</span>
               </div>
             </div>
             <div className="mt-6">

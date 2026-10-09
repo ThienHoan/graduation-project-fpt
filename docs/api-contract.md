@@ -267,7 +267,7 @@ Request (`pickupMethod` and `note` optional):
 
 ```json
 {
-  "garmentId": "uuid",
+  "garmentSizeIds": ["uuid"],
   "startDate": "2024-09-14",
   "endDate": "2024-09-16",
   "pickupMethod": "store_pickup",

@@ -14,7 +14,14 @@ import type { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 import type { AssignAssetDto } from "./dto/assign-asset.dto";
 import type { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import type { MarkPaidDto } from "./dto/mark-paid.dto";
+import type { RecoverHandoverDto } from "./dto/recover-handover.dto";
+import type { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import type { AuthenticatedUser } from "../auth/auth-user";
+import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday } from "./booking-inventory";
+import { assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
+import { readBookingDeliverySnapshot, serializeAddressSnapshot } from "./booking-delivery";
+import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
+import { assertOwnedEvidenceUrls } from "../../common/validation/evidence-url";
 
 const BOOKING_STATUS_LABELS: Record<string, string> = {
   draft: "Nháp",
@@ -43,6 +50,8 @@ const OVERDUE_PENALTY_REASON = "Phí quá hạn trả đồ (10.000đ/ngày)";
 // Đã trả / đã hủy / đã hoàn tất thì ngày trễ không còn ý nghĩa nữa.
 const OVERDUE_ELIGIBLE_STATUSES: BookingStatus[] = [BookingStatus.renting, BookingStatus.overdue];
 
+// Kept as a compatibility reference while legacy booking status queries migrate to booking-inventory.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const RELEASED_STATUSES: BookingStatus[] = [
   BookingStatus.cancelled,
   BookingStatus.rejected,
@@ -81,6 +90,8 @@ const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
   [AssetStatus.lost]:            [],
 };
 
+// Kept as a compatibility reference while availability is served by booking-inventory.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const RENTABLE_CAPACITY_STATUSES: AssetStatus[] = [
   AssetStatus.available,
   AssetStatus.reserved,
@@ -129,19 +140,6 @@ export class BookingsService {
     private readonly realtime: RealtimeService,
     @Optional() private readonly vouchers?: VouchersService,
   ) { }
-
-  private parseDateRange(startDate: string, endDate: string) {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      throw new BadRequestException("Invalid rental dates.");
-    }
-    const startDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-    const endDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
-    if (endDay < startDay) throw new BadRequestException("End date must be on or after start date.");
-    const days = Math.round((endDay.getTime() - startDay.getTime()) / MS_PER_DAY) + 1;
-    return { startDay, endDay, days };
-  }
 
   // Ngày hiện tại theo giờ Việt Nam, dạng "YYYY-MM-DD"
   private vnTodayStr(): string {
@@ -209,28 +207,7 @@ export class BookingsService {
     startDay: Date,
     endDay: Date,
   ) {
-    // Capacity = số asset KHÔNG ở trạng thái không thể cho thuê (damaged/retired/lost)
-    const capacity = await client.garmentAsset.count({
-      where: {
-        garment_size_id: garmentSizeId,
-        status: { in: RENTABLE_CAPACITY_STATUSES },
-      },
-    });
-
-    const committed = await client.bookingItem.count({
-      where: {
-        garment_size_id: garmentSizeId,
-        booking: {
-          status: { notIn: RELEASED_STATUSES },
-          // Hai khoảng thời gian chỉ trùng khi start mới < end cũ
-          // và end mới > start cũ. Hai booking sát biên được phép nối tiếp.
-          rentalStartDate: { lt: endDay },
-          rentalEndDate: { gt: startDay },
-        },
-      },
-    });
-
-    return { capacity, committed, available: Math.max(0, capacity - committed) };
+    return sizeAvailability(await loadSizeInventory(client, garmentSizeId, startDay, endDay));
   }
 
   async checkAvailability(dto: CheckAvailabilityDto) {
@@ -239,7 +216,7 @@ export class BookingsService {
     });
     if (!size) throw new NotFoundException("Garment size not found.");
 
-    const { startDay, endDay } = this.parseDateRange(dto.startDate, dto.endDate);
+    const { startDay, endDay } = parseRentalDateRange(dto.startDate, dto.endDate);
 
     const { capacity, available } = await this.computeSizeAvailability(
       this.prisma,
@@ -268,7 +245,7 @@ export class BookingsService {
     });
     if (!size) throw new NotFoundException("Garment size not found.");
 
-    const { startDay, endDay, days } = this.parseDateRange(dto.fromDate, dto.toDate);
+    const { startDay, endDay, days } = parseRentalDateRange(dto.fromDate, dto.toDate);
     const MAX_CALENDAR_DAYS = 366;
     if (days > MAX_CALENDAR_DAYS) {
       throw new BadRequestException(
@@ -276,52 +253,19 @@ export class BookingsService {
       );
     }
 
-    const capacity = await this.prisma.garmentAsset.count({
-      where: {
-        garment_size_id: dto.garmentSizeId,
-        status: { notIn: [AssetStatus.retired, AssetStatus.lost] },
-      },
-    });
-
-    const items = await this.prisma.bookingItem.findMany({
-      where: {
-        garment_size_id: dto.garmentSizeId,
-        booking: {
-          status: { notIn: RELEASED_STATUSES },
-          rentalStartDate: { lte: endDay },
-          rentalEndDate: { gte: startDay },
-        },
-      },
-      select: {
-        booking: { select: { rentalStartDate: true, rentalEndDate: true } },
-      },
-    });
-
-    const spans = items.map((it) => ({
-      from: it.booking.rentalStartDate.toISOString().slice(0, 10),
-      to: it.booking.rentalEndDate.toISOString().slice(0, 10),
-    }));
-
-    const dayList: Array<{ date: string; available: boolean; availableCount: number; capacity: number }> = [];
-    const cursor = new Date(startDay.getTime());
-    for (let i = 0; i < days; i++) {
-      const dateStr = cursor.toISOString().slice(0, 10);
-      const committed = spans.filter((s) => s.from <= dateStr && dateStr <= s.to).length;
-      const availableCount = Math.max(0, capacity - committed);
-      dayList.push({ date: dateStr, available: availableCount > 0, availableCount, capacity });
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-
-    return ok({ garmentSizeId: dto.garmentSizeId, capacity, days: dayList });
+    const snapshot = await loadSizeInventory(this.prisma, dto.garmentSizeId, startDay, endDay);
+    const { capacity } = sizeAvailability(snapshot);
+    return ok({ garmentSizeId: dto.garmentSizeId, capacity, days: sizeAvailabilityCalendar(snapshot) });
   }
 
   // ── Create Booking ─────────────────────────────────────────────────────────
 
   async create(customerId: string, dto: CreateBookingDto) {
-    const { startDay, endDay, days } = this.parseDateRange(dto.startDate, dto.endDate);
+    const { startDay, endDay, days } = parseRentalDateRange(dto.startDate, dto.endDate);
+    if (startDay < vietnamToday()) throw new BadRequestException("Ngày thuê không được nằm trong quá khứ.");
 
     const sizes = await this.prisma.garment_sizes.findMany({
-      where: { id: { in: dto.garmentSizeIds }, is_active: true },
+      where: { id: { in: dto.garmentSizeIds }, is_active: true, garments: { isActive: true, deletedAt: null } },
       include: { garments: true },
     });
 
@@ -337,7 +281,7 @@ export class BookingsService {
       requestedQtyBySize.set(sizeId, (requestedQtyBySize.get(sizeId) ?? 0) + 1);
     }
 
-    let deliveryAddressSnapshot: string | null = null;
+    let deliveryAddressForRecord: any = null;
     // Phí ship luôn được tính lại ở server theo địa chỉ giao — không tin giá trị client gửi.
     let shippingFee = 0;
     if (dto.pickupMethod === "delivery") {
@@ -354,6 +298,7 @@ export class BookingsService {
       if (!address) {
         throw new BadRequestException("Địa chỉ giao nhận không hợp lệ.");
       }
+      deliveryAddressForRecord = address;
 
       try {
         const estimate = await this.locations.estimateShippingFee(dto.deliveryAddressId);
@@ -362,12 +307,6 @@ export class BookingsService {
         throw new BadRequestException("Không thể tính phí giao hàng cho địa chỉ này. Vui lòng thử lại.");
       }
 
-      deliveryAddressSnapshot = [
-        `${address.receiverName} - ${address.phone}`,
-        [address.line1, address.ward, address.district, address.city].filter(Boolean).join(", "),
-      ]
-        .filter(Boolean)
-        .join("\n");
     }
 
     const sizeMap = new Map(sizes.map((s) => [s.id, s]));
@@ -418,6 +357,11 @@ export class BookingsService {
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
     const booking = await this.prisma.runSerializable(async (tx) => {
         for (const [sizeId, requestedQty] of requestedQtyBySize) {
+          const activeSize = await tx.garment_sizes.findFirst({
+            where: { id: sizeId, is_active: true, garments: { isActive: true, deletedAt: null } },
+            select: { id: true },
+          });
+          if (!activeSize) throw new BadRequestException("Sản phẩm hoặc size không còn được cho thuê.");
           const { capacity, committed } = await this.computeSizeAvailability(
             tx,
             sizeId,
@@ -457,12 +401,14 @@ export class BookingsService {
             shippingFee,
             note: [
               dto.note,
-              deliveryAddressSnapshot ? `Địa chỉ giao/nhận:\n${deliveryAddressSnapshot}` : null,
               shippingFee ? `Phí giao hàng: ${shippingFee.toLocaleString("vi-VN")} VND` : null,
             ]
               .filter(Boolean)
               .join("\n\n") || null,
             items: { create: itemsData },
+            deliveryRecords: dto.pickupMethod === "delivery" && deliveryAddressForRecord
+              ? { create: { method: "delivery", addressSnapshot: serializeAddressSnapshot(deliveryAddressForRecord) } }
+              : undefined,
             paymentMethod: dto.pickupMethod === "delivery" ? "qr_code" : (dto.paymentMethod ?? "cash"),
           },
           include: {
@@ -473,6 +419,7 @@ export class BookingsService {
               },
             },
             deliveryAddress: true,
+            deliveryRecords: { orderBy: { createdAt: "desc" } },
           },
         });
         if (voucherEval) {
@@ -515,6 +462,7 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     return ok(bookings.map((b) => this.serializeBooking(b)));
@@ -530,6 +478,7 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     if (!booking) throw new NotFoundException("Booking not found.");
@@ -548,7 +497,7 @@ export class BookingsService {
       throw new BadRequestException("This booking can no longer be cancelled.");
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.runSerializable(async (tx) => {
       const current = await tx.booking.findUnique({
         where: { id },
         include: { items: true },
@@ -558,18 +507,8 @@ export class BookingsService {
         throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
       }
 
-      const assignedIds = current.items
-        .map((item) => item.garmentAssetId)
-        .filter((assetId): assetId is string => Boolean(assetId));
-      if (assignedIds.length > 0) {
-        const released = await tx.garmentAsset.updateMany({
-          where: { id: { in: assignedIds }, status: AssetStatus.reserved },
-          data: { status: AssetStatus.available },
-        });
-        if (released.count !== assignedIds.length) {
-          throw new ConflictException("Không thể hủy vì một asset đã được chuyển sang trạng thái vận hành khác.");
-        }
-      }
+      await releaseBookingAssets(tx, id);
+      await ensureCancellationRefunds(tx, id, undefined, "Khách hàng tự hủy đơn");
       const claimed = await tx.booking.updateMany({
         where: { id, status: current.status },
         data: { status: BookingStatus.cancelled },
@@ -595,6 +534,7 @@ export class BookingsService {
               garmentAsset: true,
             },
           },
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
         },
       });
     });
@@ -644,6 +584,7 @@ export class BookingsService {
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
         deliveryAddress: true,
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     if (!booking) throw new NotFoundException("Booking not found.");
@@ -663,16 +604,24 @@ export class BookingsService {
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     return ok(bookings.map((b) => this.serializeStaffBooking(b)));
   }
 
-  async findReturnQueue() {
+  async findReturnQueue(search?: string) {
     const bookings = await this.prisma.booking.findMany({
-      where: { status: { in: RETURN_QUEUE_STATUSES } },
+      where: {
+        status: { in: RETURN_QUEUE_STATUSES },
+        ...(search?.trim() ? {
+          OR: [
+            { customer: { profile: { fullName: { contains: search.trim(), mode: "insensitive" as const } } } },
+            { customer: { email: { contains: search.trim(), mode: "insensitive" as const } } },
+          ],
+        } : {}),
+      },
       orderBy: [{ status: "asc" }, { rentalEndDate: "asc" }],
-      take: 100,
       include: {
         items: {
           include: {
@@ -682,16 +631,31 @@ export class BookingsService {
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     return ok(bookings.map((b) => this.serializeStaffBooking(b)));
   }
 
-  async findAllForStaff() {
+  async findAllForStaff(search?: string, status?: string, cursor?: string) {
+    const EXCLUDED: BookingStatus[] = [BookingStatus.draft, BookingStatus.cancelled, BookingStatus.rejected];
+    const statusFilter: BookingStatus[] = status && Object.values(BookingStatus).includes(status as BookingStatus)
+      ? [status as BookingStatus]
+      : (Object.values(BookingStatus) as BookingStatus[]).filter(s => !EXCLUDED.includes(s));
     const bookings = await this.prisma.booking.findMany({
-      where: { status: { notIn: [BookingStatus.draft, BookingStatus.cancelled, BookingStatus.rejected] } },
+      where: {
+        status: { in: statusFilter },
+        ...(search?.trim() ? {
+          OR: [
+            { customer: { profile: { fullName: { contains: search.trim(), mode: "insensitive" as const } } } },
+            { customer: { email: { contains: search.trim(), mode: "insensitive" as const } } },
+            { customer: { profile: { phone: { contains: search.trim(), mode: "insensitive" as const } } } },
+          ],
+        } : {}),
+      },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: 50,
       include: {
         items: {
           include: {
@@ -701,9 +665,14 @@ export class BookingsService {
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
-    return ok(bookings.map((b) => this.serializeStaffBooking(b)));
+    const serialized = bookings.map((b) => this.serializeStaffBooking(b));
+    return ok({
+      data: serialized,
+      nextCursor: bookings.length === 50 ? bookings[bookings.length - 1].id : null,
+    });
   }
 
   async findBookingsNeedingAssets() {
@@ -722,6 +691,7 @@ export class BookingsService {
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     return ok(bookings.map((b) => this.serializeStaffBooking(b)));
@@ -729,7 +699,12 @@ export class BookingsService {
 
   async findCompletedWithPendingRefunds() {
     const bookings = await this.prisma.booking.findMany({
-      where: { status: { in: [BookingStatus.refund_pending, BookingStatus.completed] }, depositTotal: { gt: 0 } },
+      where: {
+        OR: [
+          { status: { in: [BookingStatus.refund_pending, BookingStatus.completed] }, depositTotal: { gt: 0 } },
+          { status: { in: [BookingStatus.cancelled, BookingStatus.rejected] }, refunds: { some: { status: { in: [PaymentStatus.pending, PaymentStatus.refunding] } } } },
+        ],
+      },
       orderBy: { updatedAt: "desc" },
       take: 100,
       include: {
@@ -742,6 +717,7 @@ export class BookingsService {
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
         refunds: { orderBy: { createdAt: "desc" }, take: 1 },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
         inspections: {
           where: { status: InspectionStatus.completed },
           select: { garmentAssetId: true },
@@ -763,6 +739,84 @@ export class BookingsService {
     })));
   }
 
+  async markDelivered(id: string, dto: MarkDeliveryDto, actorId: string) {
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id },
+        include: { deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } }, items: true },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.pickupMethod !== "delivery") throw new BadRequestException("Đơn này không sử dụng giao hàng.");
+      if (booking.status !== BookingStatus.ready_for_pickup && booking.status !== BookingStatus.delivering) {
+        throw new ConflictException("Đơn không ở trạng thái có thể xác nhận đã giao.");
+      }
+
+      const now = new Date();
+      const existing = booking.deliveryRecords.find((record) => record.method === "delivery" && record.deliveredAt);
+      if (existing) return tx.booking.findUniqueOrThrow({ where: { id }, include: { items: true, deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } } });
+      const deliverySnapshot = readBookingDeliverySnapshot(booking);
+
+      const nextStatus: BookingStatus = BookingStatus.delivering;
+      const claimed = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status: nextStatus } });
+      if (claimed.count !== 1) throw new ConflictException("Booking status was already changed by another request.");
+      await tx.deliveryRecord.create({
+        data: {
+          bookingId: id,
+          method: "delivery",
+          addressSnapshot: deliverySnapshot ? JSON.stringify(deliverySnapshot) : null,
+          deliveredAt: now,
+          note: dto.note?.trim() || null,
+        },
+      });
+      await tx.bookingStatusHistory.create({ data: { bookingId: id, fromStatus: booking.status, toStatus: nextStatus, changedBy: actorId, note: dto.note?.trim() || "Đã giao cho đơn vị vận chuyển." } });
+      return tx.booking.findUniqueOrThrow({ where: { id }, include: { items: true, deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } } });
+    });
+    this.realtime.bookingChanged({ id: updated.id, bookingId: updated.id, status: updated.status });
+    this.realtime.bookingChangedForCustomer(updated.customerId, {
+      id: updated.id,
+      bookingId: updated.id,
+      status: updated.status,
+    });
+    return ok(this.serializeBooking(updated));
+  }
+
+  async markReturned(id: string, dto: MarkDeliveryDto, actorId: string) {
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id },
+        include: { deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } }, items: true },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.status !== BookingStatus.renting && booking.status !== BookingStatus.overdue) {
+        throw new ConflictException("Đơn không ở trạng thái có thể ghi nhận trả đồ.");
+      }
+      const deliverySnapshot = readBookingDeliverySnapshot(booking);
+      await transitionBookingAssets(tx, id, AssetStatus.rented, AssetStatus.inspection_pending);
+      const claimed = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status: BookingStatus.returned } });
+      if (claimed.count !== 1) throw new ConflictException("Booking status was already changed by another request.");
+      await this.applyOverdueFeeTx(tx, id);
+      await tx.deliveryRecord.create({
+        data: {
+          bookingId: id,
+          method: "return",
+          addressSnapshot: deliverySnapshot ? JSON.stringify(deliverySnapshot) : null,
+          receivedAt: new Date(),
+          note: dto.note?.trim() || null,
+        },
+      });
+      await tx.bookingStatusHistory.create({ data: { bookingId: id, fromStatus: booking.status, toStatus: BookingStatus.returned, changedBy: actorId, note: dto.note?.trim() || "Đã nhận lại trang phục." } });
+      return tx.booking.findUniqueOrThrow({ where: { id }, include: { items: true, deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } } });
+    });
+    this.realtime.bookingChanged({ id: updated.id, bookingId: updated.id, status: updated.status });
+    this.realtime.bookingChangedForCustomer(updated.customerId, {
+      id: updated.id,
+      bookingId: updated.id,
+      status: updated.status,
+    });
+    this.realtime.assetChanged({ bookingId: updated.id });
+    return ok(this.serializeBooking(updated));
+  }
+
   async getDeliveryMap() {
     const bookings = await this.prisma.booking.findMany({
       where: {
@@ -773,6 +827,7 @@ export class BookingsService {
       take: 100,
       include: {
         deliveryAddress: true,
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
         customer: { select: { profile: { select: { fullName: true, phone: true } } } },
         items: {
           include: { garment_sizes: { include: { garments: true } } },
@@ -781,22 +836,23 @@ export class BookingsService {
     });
 
     const points = bookings
-      .filter((b) => b.deliveryAddress?.latitude != null && b.deliveryAddress?.longitude != null)
-      .map((b) => ({
+      .map((b) => ({ booking: b, snapshot: readBookingDeliverySnapshot(b) }))
+      .filter(({ snapshot }) => snapshot?.latitude != null && snapshot?.longitude != null)
+      .map(({ booking: b, snapshot }) => ({
         bookingId: b.id,
-        customerName: b.customer?.profile?.fullName ?? b.deliveryAddress?.receiverName ?? "—",
-        customerPhone: b.customer?.profile?.phone ?? b.deliveryAddress?.phone ?? "—",
+        customerName: b.customer?.profile?.fullName ?? snapshot?.receiverName ?? "—",
+        customerPhone: b.customer?.profile?.phone ?? snapshot?.phone ?? "—",
         status: b.status,
         address: [
-          b.deliveryAddress?.line1,
-          b.deliveryAddress?.ward,
-          b.deliveryAddress?.district,
-          b.deliveryAddress?.city,
+          snapshot?.line1,
+          snapshot?.ward,
+          snapshot?.district,
+          snapshot?.city,
         ]
           .filter(Boolean)
           .join(", "),
-        latitude: Number(b.deliveryAddress!.latitude),
-        longitude: Number(b.deliveryAddress!.longitude),
+        latitude: Number(snapshot!.latitude),
+        longitude: Number(snapshot!.longitude),
         garmentNames: b.items.map((i) => i.garment_sizes?.garments?.name ?? "—").join(", "),
         rentalStartDate: b.rentalStartDate.toISOString().slice(0, 10),
         rentalEndDate: b.rentalEndDate.toISOString().slice(0, 10),
@@ -808,72 +864,62 @@ export class BookingsService {
   async getDeliveryTrack(customerId: string, id: string) {
     const booking = await this.prisma.booking.findFirst({
       where: { id, customerId },
-      include: { deliveryAddress: true },
+      include: { deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } },
     });
 
     if (!booking) throw new NotFoundException("Booking not found.");
     if (booking.pickupMethod !== "delivery") {
       throw new BadRequestException("Đơn này không sử dụng giao hàng.");
     }
-    if (!booking.deliveryAddress?.latitude || !booking.deliveryAddress?.longitude) {
-      throw new BadRequestException("Địa chỉ giao hàng chưa có tọa độ.");
+    const deliverySnapshot = readBookingDeliverySnapshot(booking);
+    if (!deliverySnapshot?.latitude || !deliverySnapshot?.longitude) {
+      throw new BadRequestException("Địa chỉ giao hàng chưa có tọa độ snapshot.");
     }
 
-    // Get store coords
     const storeLatSetting = await this.prisma.systemSetting.findUnique({ where: { key: "store_lat" } });
     const storeLngSetting = await this.prisma.systemSetting.findUnique({ where: { key: "store_lng" } });
     const storeLat = Number((storeLatSetting?.value as any)?.value) || 10.7769;
     const storeLng = Number((storeLngSetting?.value as any)?.value) || 106.7009;
 
-    const customerLat = Number(booking.deliveryAddress.latitude);
-    const customerLng = Number(booking.deliveryAddress.longitude);
+    const customerLat = Number(deliverySnapshot.latitude);
+    const customerLng = Number(deliverySnapshot.longitude);
 
-    // Simulate shipper position based on time since rental start
-    const now = Date.now();
-    const startMs = new Date(booking.rentalStartDate).getTime();
-    // Delivery window: 2 hours before rental start
-    const deliveryStartMs = startMs - 2 * 60 * 60 * 1000;
-    const deliveryEndMs = startMs;
+    // Determine real delivery status from DeliveryRecord milestones
+    // (no simulated GPS — real location tracking not yet implemented)
+    const deliveryRecord = booking.deliveryRecords.find((r) => r.method === "delivery");
+    const isHandoverConfirmed = booking.handoverStatus === "CONFIRMED";
+    const hasDeliveredAt = Boolean(deliveryRecord?.deliveredAt);
 
-    let progress = 0;
-    let simulatedLat = storeLat;
-    let simulatedLng = storeLng;
-    let status: "preparing" | "in_transit" | "arrived" = "preparing";
-
-    if (now < deliveryStartMs) {
-      status = "preparing";
-    } else if (now >= deliveryEndMs) {
-      status = "arrived";
-      progress = 1;
-      simulatedLat = customerLat;
-      simulatedLng = customerLng;
-    } else {
+    let status: "preparing" | "in_transit" | "delivered";
+    if (isHandoverConfirmed) {
+      status = "delivered";
+    } else if (hasDeliveredAt) {
       status = "in_transit";
-      progress = (now - deliveryStartMs) / (deliveryEndMs - deliveryStartMs);
-      simulatedLat = storeLat + (customerLat - storeLat) * progress;
-      simulatedLng = storeLng + (customerLng - storeLng) * progress;
+    } else {
+      status = "preparing";
     }
 
     return ok({
       bookingId: booking.id,
       status,
-      progress: Math.round(progress * 100),
+      /** GPS tracking is not available. Positions below are store and customer
+       * destination only; shipper real-time location is not tracked. */
+      shipperLocationAvailable: false,
       storeLat,
       storeLng,
       customerLat,
       customerLng,
-      shipperLat: Math.round(simulatedLat * 1000000) / 1000000,
-      shipperLng: Math.round(simulatedLng * 1000000) / 1000000,
-      customerName: booking.deliveryAddress.receiverName,
+      deliveredAt: deliveryRecord?.deliveredAt?.toISOString() ?? null,
+      handoverConfirmed: isHandoverConfirmed,
+      customerName: deliverySnapshot.receiverName,
       customerAddress: [
-        booking.deliveryAddress.line1,
-        booking.deliveryAddress.ward,
-        booking.deliveryAddress.district,
-        booking.deliveryAddress.city,
+        deliverySnapshot.line1,
+        deliverySnapshot.ward,
+        deliverySnapshot.district,
+        deliverySnapshot.city,
       ]
         .filter(Boolean)
         .join(", "),
-      estimatedDelivery: new Date(deliveryEndMs).toLocaleString("vi-VN"),
     });
   }
 
@@ -932,6 +978,13 @@ export class BookingsService {
         .map((item) => item.garmentAssetId)
         .filter((assetId): assetId is string => Boolean(assetId));
 
+      if (targetStatus === BookingStatus.preparing) await claimBookingAssets(tx, id);
+      if (targetStatus === BookingStatus.renting) await transitionBookingAssets(tx, id, AssetStatus.reserved, AssetStatus.rented);
+      if (targetStatus === BookingStatus.returned) await transitionBookingAssets(tx, id, AssetStatus.rented, AssetStatus.inspection_pending);
+      if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
+        await releaseBookingAssets(tx, id);
+        await ensureCancellationRefunds(tx, id, changedBy, dto.note);
+      }
       const claimedBooking = await tx.booking.updateMany({
         where: { id, status: booking.status },
         data: {
@@ -948,23 +1001,7 @@ export class BookingsService {
       }
 
       if (assetIds.length > 0) {
-        if (targetStatus === BookingStatus.renting) {
-          const claimedAssets = await tx.garmentAsset.updateMany({
-            where: { id: { in: assetIds }, status: AssetStatus.reserved },
-            data: { status: AssetStatus.rented },
-          });
-          if (claimedAssets.count !== assetIds.length) {
-            throw new ConflictException("Some assets are no longer reserved for this booking.");
-          }
-        }
         if (targetStatus === BookingStatus.returned) {
-          const claimedAssets = await tx.garmentAsset.updateMany({
-            where: { id: { in: assetIds }, status: AssetStatus.rented },
-            data: { status: AssetStatus.inspection_pending },
-          });
-          if (claimedAssets.count !== assetIds.length) {
-            throw new ConflictException("Some assets are no longer rented for this booking.");
-          }
           await this.applyOverdueFeeTx(tx, booking.id);
         }
         if (targetStatus === BookingStatus.inspection_pending) {
@@ -973,15 +1010,6 @@ export class BookingsService {
           });
           if (pendingAssets !== assetIds.length) {
             throw new ConflictException("Some assets are not ready for inspection.");
-          }
-        }
-        if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
-          const claimedAssets = await tx.garmentAsset.updateMany({
-            where: { id: { in: assetIds }, status: AssetStatus.reserved },
-            data: { status: AssetStatus.available },
-          });
-          if (claimedAssets.count !== assetIds.length) {
-            throw new ConflictException("Some assets are no longer reserved for this booking.");
           }
         }
       }
@@ -1010,6 +1038,7 @@ export class BookingsService {
             },
           },
           payments: true,
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
         },
       });
       if (!saved) throw new NotFoundException("Booking not found.");
@@ -1092,46 +1121,13 @@ export class BookingsService {
           where: { id: dto.garmentAssetId },
         });
         if (!asset) throw new NotFoundException("Garment asset not found.");
-
         this.assertAssetRentable(asset.status);
-        if (asset.status !== AssetStatus.available) {
-          throw new BadRequestException(
-            `Asset '${asset.assetCode}' is not available (current: ${asset.status}).`,
-          );
-        }
-        if (asset.garmentId !== item.garmentId) {
-          throw new BadRequestException("Asset không thuộc đúng mẫu trang phục của booking item.");
-        }
-        if (asset.garment_size_id !== item.garment_size_id) {
-          throw new BadRequestException("Asset không đúng size của booking item.");
-        }
 
-        const conflictingItem = await tx.bookingItem.findFirst({
-          where: {
-            garmentAssetId: dto.garmentAssetId,
-            id: { not: itemId },
-            booking: {
-              status: { notIn: RELEASED_STATUSES },
-              rentalStartDate: { lt: booking.rentalEndDate },
-              rentalEndDate: { gt: booking.rentalStartDate },
-            },
-          },
-          select: { id: true },
+        await assertAssetScheduleAvailable(tx, {
+          assetId: asset.id, bookingId, itemId,
+          startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+          garmentId: item.garmentId, garmentSizeId: item.garment_size_id,
         });
-        if (conflictingItem) {
-          throw new BadRequestException(
-            `Asset '${asset.assetCode}' is already assigned to another overlapping booking.`,
-          );
-        }
-
-        // Claim the physical asset conditionally so concurrent managers cannot both win.
-        const claimed = await tx.garmentAsset.updateMany({
-          where: { id: dto.garmentAssetId, status: AssetStatus.available },
-          data: { status: AssetStatus.reserved },
-        });
-        if (claimed.count !== 1) {
-          throw new BadRequestException(`Asset '${asset.assetCode}' is no longer available.`);
-        }
 
         await tx.bookingItem.update({
           where: { id: itemId },
@@ -1158,6 +1154,7 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
     if (!updated) throw new NotFoundException("Booking not found.");
@@ -1187,7 +1184,10 @@ export class BookingsService {
     const updated = await this.prisma.runSerializable(async (tx) => {
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { items: { include: { garmentAsset: true } } },
+        include: {
+          items: { include: { garmentAsset: true } },
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
+        },
       });
       if (!booking) throw new NotFoundException("Booking not found.");
 
@@ -1218,6 +1218,7 @@ export class BookingsService {
             items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
             payments: true,
             deliveryAddress: true,
+            deliveryRecords: { orderBy: { createdAt: "desc" } },
           },
         });
       }
@@ -1227,6 +1228,12 @@ export class BookingsService {
       if (requestedStatus === "CONFIRMED") {
         if (dto.correctProductConfirmed !== true || dto.customerAgreed !== true) {
           throw new BadRequestException("Cần xác nhận đúng sản phẩm và người nhận đồng ý trước khi bàn giao.");
+        }
+        if (!dto.conditionImages?.length || !dto.deliveredBy?.trim() || !dto.receivedBy?.trim()) {
+          throw new BadRequestException("Cần có ảnh bàn giao, người giao và người nhận.");
+        }
+        if (dto.conditionBeforeRental === "MINOR_DAMAGE" && !dto.note?.trim()) {
+          throw new BadRequestException("Cần mô tả lỗi nhẹ trước khi bàn giao.");
         }
         if (dto.conditionBeforeRental === "MAJOR_DAMAGE") {
           throw new BadRequestException("Không thể xác nhận nhận hàng khi sản phẩm có lỗi nặng.");
@@ -1238,6 +1245,9 @@ export class BookingsService {
         throw new BadRequestException("Cần ghi rõ lý do từ chối bàn giao.");
       }
 
+      const evidenceImages = dto.conditionImages?.length
+        ? assertOwnedEvidenceUrls(dto.conditionImages, { purpose: "handover", ownerId: actor.id })
+        : [];
       const expectedAssetStatus = booking.status === BookingStatus.renting
         ? AssetStatus.rented
         : AssetStatus.reserved;
@@ -1253,8 +1263,10 @@ export class BookingsService {
         }
       }
 
+      const savedEvidence = booking.conditionImages && !Array.isArray(booking.conditionImages) && typeof booking.conditionImages === "object" ? booking.conditionImages : {};
       const evidence = {
-        images: dto.conditionImages ?? [],
+        ...(Array.isArray(savedEvidence.history) ? { history: savedEvidence.history } : {}),
+        images: evidenceImages,
         checklist: {
           correctProduct: dto.correctProductConfirmed ?? false,
           noDefectBeforeRental: dto.noDefectConfirmed ?? false,
@@ -1270,6 +1282,10 @@ export class BookingsService {
         ? BookingStatus.renting
         : booking.status;
       const now = new Date();
+      if (isConfirmed && booking.status !== BookingStatus.renting) {
+        this.validateAssetTransition(AssetStatus.reserved, AssetStatus.rented);
+        await transitionBookingAssets(tx, bookingId, AssetStatus.reserved, AssetStatus.rented);
+      }
 
       const claimed = await tx.booking.updateMany({
         where: { id: bookingId, status: booking.status, handoverStatus: currentHandoverStatus },
@@ -1286,13 +1302,6 @@ export class BookingsService {
       if (claimed.count !== 1) throw new ConflictException("Bàn giao vừa được cập nhật bởi người khác.");
 
       if (isConfirmed && booking.status !== BookingStatus.renting) {
-        const claimedAssets = await tx.garmentAsset.updateMany({
-          where: { id: { in: booking.items.map((item) => item.garmentAsset!.id) }, status: AssetStatus.reserved },
-          data: { status: AssetStatus.rented },
-        });
-        if (claimedAssets.count !== booking.items.length) {
-          throw new ConflictException("Một asset không còn ở trạng thái đã giữ.");
-        }
         statusChanged = true;
       }
 
@@ -1313,6 +1322,7 @@ export class BookingsService {
           items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
           payments: true,
           deliveryAddress: true,
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
         },
       });
     });
@@ -1330,51 +1340,161 @@ export class BookingsService {
     return ok(this.serializeBooking(updated));
   }
 
-  async markPaid(id: string, dto: MarkPaidDto, staffId?: string) {
-    const booking = await this.prisma.booking.findUnique({ where: { id }, include: { items: true, payments: true } });
-    if (!booking) throw new NotFoundException("Booking not found.");
-    if (booking.status !== BookingStatus.awaiting_payment)
-      throw new BadRequestException(`Booking must be in 'awaiting_payment' to mark as paid (current: ${booking.status}).`);
-
-    const isDelivery = booking.pickupMethod === "delivery";
-    const alreadyPaid = booking.payments.some((p) => p.status === PaymentStatus.paid);
-
-    // Đơn giao tận nơi bắt buộc khách thanh toán QR (PayOS) trước — staff không thể tự ghi nhận thu tiền.
-    if (isDelivery && !alreadyPaid) {
-      throw new BadRequestException("Đơn giao tận nơi phải được khách thanh toán qua QR trước khi xác nhận.");
+  async recoverHandover(id: string, dto: RecoverHandoverDto, actor: Pick<AuthenticatedUser, "id" | "role">) {
+    if (actor.role !== AppRole.manager_owner && actor.role !== AppRole.admin) {
+      throw new ForbiddenException("Chỉ quản lý được xử lý bàn giao bị từ chối.");
     }
-
-    const paymentMethod = dto.paymentMethod ?? booking.paymentMethod ?? "cash";
-    const totalAmount = Number(booking.rentalTotal) + Number(booking.shippingFee ?? 0);
-    const depositAmount = Number(booking.depositTotal);
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.booking.update({ where: { id }, data: { status: BookingStatus.paid, paymentDueAt: null } });
-      // Chỉ tạo bản ghi thu tiền khi chưa có payment thành công (tránh ghi trùng với tiền QR đã vào)
-      if (!alreadyPaid) {
-        await tx.payment.create({
-          data: {
-            bookingId: id, provider: "manual", paymentMethod,
-            amount: totalAmount + depositAmount, depositAmount, status: PaymentStatus.paid, paidAt: new Date(),
-          },
-        });
+    if (!dto.reason.trim()) throw new BadRequestException("Cần lý do xử lý.");
+    const saved = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id }, include: { items: true } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.handoverStatus !== "REJECTED" ||
+          ![BookingStatus.ready_for_pickup, BookingStatus.delivering, BookingStatus.renting].includes(booking.status as never) ||
+          booking.confirmedAt?.getTime() !== new Date(dto.expectedDecidedAt).getTime()) {
+        throw new ConflictException("Biên bản đã thay đổi, vui lòng tải lại đơn.");
       }
-      await tx.bookingStatusHistory.create({
-        data: { bookingId: id, fromStatus: BookingStatus.awaiting_payment, toStatus: BookingStatus.paid, changedBy: staffId ?? null, note: "Đã thanh toán" },
+      const previous = booking.conditionImages && !Array.isArray(booking.conditionImages) && typeof booking.conditionImages === "object"
+        ? booking.conditionImages : {};
+      const history = Array.isArray(previous.history) ? previous.history : [];
+      const evidence = { ...previous };
+      delete evidence.history;
+      const archived = [...history, {
+        status: booking.handoverStatus, conditionBeforeRental: booking.conditionBeforeRental,
+        decidedAt: booking.confirmedAt!.toISOString(), confirmedBy: booking.confirmedBy,
+        evidence, action: dto.action, reason: dto.reason.trim(), resolvedBy: actor.id,
+        resolvedAt: new Date().toISOString(),
+      }];
+      const replacements = dto.replacements ?? [];
+      if (dto.action === "replace") {
+        // The original condition is booking-wide; quarantine every assigned asset
+        // when damage was reported, rather than silently returning it to inventory.
+        const ids = new Set(replacements.map((row) => row.itemId));
+        if (ids.size !== booking.items.length || replacements.length !== booking.items.length ||
+            booking.items.some((item) => !ids.has(item.id)) ||
+            new Set(replacements.map((row) => row.garmentAssetId)).size !== replacements.length ||
+            replacements.some((row) => booking.items.some((item) => item.garmentAssetId === row.garmentAssetId))) {
+          throw new BadRequestException("Cần chọn asset thay thế riêng biệt cho tất cả sản phẩm.");
+        }
+        for (const row of replacements) {
+          const item = booking.items.find((candidate) => candidate.id === row.itemId)!;
+          await assertAssetScheduleAvailable(tx, {
+            assetId: row.garmentAssetId, bookingId: id, itemId: item.id,
+            garmentId: item.garmentId, garmentSizeId: item.garment_size_id ?? undefined,
+            startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+          });
+        }
+      }
+      if (booking.conditionBeforeRental === "MINOR_DAMAGE" || booking.conditionBeforeRental === "MAJOR_DAMAGE") {
+        await transitionBookingAssets(tx, id, AssetStatus.reserved, AssetStatus.rented);
+        const quarantined = await tx.garmentAsset.updateMany({
+          where: { id: { in: booking.items.map((item) => item.garmentAssetId!) }, status: AssetStatus.rented },
+          data: { status: AssetStatus.inspection_pending },
+        });
+        if (quarantined.count !== booking.items.length) throw new ConflictException("Không thể cách ly asset.");
+      } else {
+        await releaseBookingAssets(tx, id);
+      }
+      if (dto.action === "replace") {
+        for (const row of replacements) await tx.bookingItem.update({ where: { id: row.itemId }, data: { garmentAssetId: row.garmentAssetId } });
+        await claimBookingAssets(tx, id);
+      } else {
+        await ensureCancellationRefunds(tx, id, actor.id, dto.reason);
+      }
+      const nextStatus = dto.action === "replace" ? BookingStatus.preparing : BookingStatus.cancelled;
+      const claimed = await tx.booking.updateMany({
+        where: { id, status: booking.status, handoverStatus: "REJECTED", confirmedAt: booking.confirmedAt },
+        data: {
+          status: nextStatus,
+          ...(dto.action === "replace" ? { handoverStatus: "PENDING", confirmedAt: null, confirmedBy: null, conditionBeforeRental: null } : {}),
+          conditionImages: (dto.action === "replace" ? { history: archived } : { ...previous, history: archived }) as Prisma.InputJsonValue,
+        },
       });
-      return tx.booking.findUnique({
+      if (claimed.count !== 1) throw new ConflictException("Biên bản đã được người khác xử lý.");
+      await tx.bookingStatusHistory.create({ data: { bookingId: id, fromStatus: booking.status, toStatus: nextStatus, changedBy: actor.id, note: dto.reason.trim() } });
+      return tx.booking.findUniqueOrThrow({
         where: { id },
         include: {
-          items: {
-            include: {
-              garment_sizes: { include: { garments: true } },
-              garmentAsset: true,
-            },
-          },
+          items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
           payments: true,
+          deliveryAddress: true,
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
         },
       });
     });
+    this.realtime.bookingChanged({ id, bookingId: id, status: saved.status });
+    this.realtime.bookingChangedForCustomer(saved.customerId, { id, bookingId: id, status: saved.status });
+    this.realtime.assetChanged({ bookingId: id });
+    this.realtime.refundChanged({ bookingId: id });
+    return ok(this.serializeBooking(saved));
+  }
+
+  async markPaid(id: string, dto: MarkPaidDto, staffId?: string) {
+    const result = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id }, include: { items: true, payments: true } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      const include = {
+        items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
+        payments: true,
+        deliveryAddress: true,
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
+      } as const;
+      const alreadyPaid = booking.payments.some((p) => p.status === PaymentStatus.paid);
+      if (booking.status === BookingStatus.paid && alreadyPaid) {
+        return { changed: false, booking, updated: await tx.booking.findUniqueOrThrow({ where: { id }, include }) };
+      }
+      if (booking.status !== BookingStatus.awaiting_payment && booking.status !== BookingStatus.confirmed) {
+        throw new BadRequestException(`Booking must be in 'confirmed' or 'awaiting_payment' to mark as paid (current: ${booking.status}).`);
+      }
+      if (booking.pickupMethod === "delivery" && !alreadyPaid) {
+        throw new BadRequestException("Đơn giao tận nơi phải được khách thanh toán qua QR trước khi xác nhận.");
+      }
+      const paymentMethod = dto.paymentMethod ?? booking.paymentMethod ?? "cash";
+      const totalAmount = new Prisma.Decimal(booking.rentalTotal).plus(booking.shippingFee ?? 0);
+      const depositAmount = new Prisma.Decimal(booking.depositTotal);
+      const previousStatus = booking.status;
+      const claimed = await tx.booking.updateMany({
+        where: { id, status: previousStatus },
+        data: { status: BookingStatus.paid, paymentDueAt: null },
+      });
+      if (claimed.count !== 1) throw new ConflictException("Booking vừa được xử lý bởi yêu cầu khác.");
+      // Chỉ tạo bản ghi thu tiền khi chưa có payment thành công (tránh ghi trùng với tiền QR đã vào)
+      if (!alreadyPaid) {
+        const payment = await tx.payment.create({
+          data: {
+            bookingId: id, provider: "manual", paymentMethod,
+            amount: totalAmount.plus(depositAmount), depositAmount, status: PaymentStatus.paid, paidAt: new Date(),
+          },
+        });
+        if (totalAmount.gt(0)) {
+          await tx.financialTransaction.create({
+            data: {
+              bookingId: id,
+              paymentId: payment.id,
+              transactionType: "payment",
+              amount: totalAmount,
+              note: "Thanh toán tiền thuê",
+            },
+          });
+        }
+        if (depositAmount.gt(0)) {
+          await tx.financialTransaction.create({
+            data: {
+              bookingId: id,
+              paymentId: payment.id,
+              transactionType: "deposit",
+              amount: depositAmount,
+              note: "Thanh toán tiền cọc",
+            },
+          });
+        }
+      }
+      await tx.bookingStatusHistory.create({
+        data: { bookingId: id, fromStatus: previousStatus, toStatus: BookingStatus.paid, changedBy: staffId ?? null, note: "Đã thanh toán" },
+      });
+      return { changed: true, booking, updated: await tx.booking.findUniqueOrThrow({ where: { id }, include }) };
+    });
+    const { booking, updated } = result;
+    if (!result.changed) return ok(this.serializeBooking(updated));
 
     await this.notificationsService.sendBookingNotification({
       userId: booking.customerId,
@@ -1393,6 +1513,7 @@ export class BookingsService {
       garmentName: updated!.items[0]?.garment_sizes?.garments?.name ?? null,
       startDate: updated!.rentalStartDate.toISOString().slice(0, 10),
       endDate: updated!.rentalEndDate.toISOString().slice(0, 10),
+      amount: Number(booking.rentalTotal) + Number(booking.shippingFee ?? 0) + Number(booking.depositTotal),
     });
 
     this.realtime.bookingChanged({
@@ -1419,29 +1540,28 @@ export class BookingsService {
     });
     const results: { bookingId: string; released: number }[] = [];
     for (const booking of expiredBookings) {
-      const cancelled = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await this.prisma.runSerializable(async (tx) => {
         const current = await tx.booking.findUnique({
           where: { id: booking.id },
-          include: { items: true },
+          include: { items: true, payments: true },
         });
-        if (!current || current.status !== BookingStatus.awaiting_payment) return false;
+        if (!current || current.status !== BookingStatus.awaiting_payment ||
+            !current.paymentDueAt || current.paymentDueAt >= now ||
+            current.payments.some((payment) => payment.status === PaymentStatus.paid)) return false;
+        await releaseBookingAssets(tx, booking.id);
+        // Ghi nhận yêu cầu hoàn tiền nếu đơn đã thu tiền trước khi hủy tự động.
+        await ensureCancellationRefunds(tx, booking.id, undefined, "Tự động hủy đơn — quá hạn thanh toán");
+        const claimed = await tx.booking.updateMany({
+          where: { id: booking.id, status: BookingStatus.awaiting_payment, paymentDueAt: { lt: now } },
+          data: { status: BookingStatus.cancelled, paymentDueAt: null },
+        });
+        if (claimed.count !== 1) throw new ConflictException("Booking vừa được xử lý bởi yêu cầu khác.");
 
-        const assignedIds = current.items.map((i) => i.garmentAssetId).filter(Boolean) as string[];
-        if (assignedIds.length > 0) {
-          await tx.garmentAsset.updateMany({
-            where: { id: { in: assignedIds }, status: AssetStatus.reserved },
-            data: { status: AssetStatus.available },
-          });
-        }
         await tx.bookingStatusHistory.create({
           data: { bookingId: booking.id, fromStatus: BookingStatus.awaiting_payment, toStatus: BookingStatus.cancelled, note: "Tự động hủy — quá hạn thanh toán" },
         });
-        const claimed = await tx.booking.updateMany({
-          where: { id: booking.id, status: BookingStatus.awaiting_payment },
-          data: { status: BookingStatus.cancelled },
-        });
-        if (claimed.count === 1) await this.vouchers?.releaseForBooking(tx, booking.id);
-        return claimed.count === 1;
+        await this.vouchers?.releaseForBooking(tx, booking.id);
+        return true;
       });
       if (!cancelled) continue;
 
@@ -1687,6 +1807,7 @@ export class BookingsService {
       decidedAt: booking.confirmedAt?.toISOString?.() ?? null,
       receivedAt: confirmed ? booking.confirmedAt?.toISOString?.() ?? null : null,
       confirmedBy: booking.confirmedBy ?? null,
+      history: Array.isArray(evidence.history) ? evidence.history : [],
     };
   }
 
@@ -1730,6 +1851,7 @@ export class BookingsService {
         district: booking.deliveryAddress.district,
         city: booking.deliveryAddress.city,
       } : null,
+      deliverySnapshot: readBookingDeliverySnapshot(booking),
       paymentMethod: booking.paymentMethod ?? "cash",
       paidPaymentMethod:
         (booking.payments ?? []).find((p: any) => p.status === PaymentStatus.paid)?.paymentMethod ?? null,

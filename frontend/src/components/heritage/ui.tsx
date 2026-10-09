@@ -11,7 +11,7 @@ import { bookingFlowSteps } from "@/lib/heritage-mock-data";
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 type StaffNavKey = "overview" | "inspection"| "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "vouchers" | "product-stats";
+type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -227,6 +227,7 @@ export function ManagerPortalShell({
     { key: "inspection-log", label: "Nhật ký kiểm tra", icon: "fact_check", href: "/dashboard/manager#inspection-log" },
     { key: "laundry", label: "Giặt sấy", icon: "dry_cleaning", href: "/dashboard/manager#laundry" },
     { key: "damaged", label: "Hư hỏng & Mất", icon: "report_problem", href: "/dashboard/manager#damaged" },
+    { key: "rejected-handovers", label: "Từ chối bàn giao", icon: "cancel", href: "/dashboard/manager#rejected-handovers" },
     { key: "finance", label: "Tài chính", icon: "payments", href: "/dashboard/manager#finance" },
     { key: "reviews", label: "Đánh giá", icon: "reviews", href: "/dashboard/manager/reviews" },
     { key: "refunds", label: "Duyệt hoàn cọc", icon: "currency_exchange", href: "/dashboard/manager#refunds" },

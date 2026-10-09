@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { uploadFile, deleteUploadedFile } from "@/lib/upload";
 import {
   createAccessory,
   createAccessoryAsset,
@@ -683,10 +684,7 @@ function AccessoryFormModal({
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function deleteStoredFile(url: string) {
-    await fetch("/api/upload", {
-      method: "DELETE",
-      body: JSON.stringify({ url, bucket: "accessories" }),
-    }).catch(() => {});
+    await deleteUploadedFile(url, "accessories").catch(() => false);
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -699,25 +697,19 @@ function AccessoryFormModal({
     }
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("bucket", "accessories");
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.success && data.url) {
-        if (pendingUpload) await deleteStoredFile(pendingUpload);
-        setPendingUpload(data.url);
-        setImagePreview(data.url);
+      const url = await uploadFile(file, "accessories");
+      if (pendingUpload) await deleteStoredFile(pendingUpload);
+      if (url) {
+        setPendingUpload(url);
+        setImagePreview(url);
         setErrors((prev) => {
           const next = { ...prev };
           delete next.image;
           return next;
         });
-      } else {
-        setErrors((prev) => ({ ...prev, image: data.message ?? "Tải ảnh thất bại." }));
       }
-    } catch {
-      setErrors((prev) => ({ ...prev, image: "Tải ảnh thất bại. Vui lòng thử lại." }));
+    } catch (error) {
+      setErrors((prev) => ({ ...prev, image: error instanceof Error ? error.message : "Tải ảnh thất bại. Vui lòng thử lại." }));
     } finally {
       setUploading(false);
     }

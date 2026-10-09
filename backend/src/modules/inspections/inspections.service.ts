@@ -248,12 +248,21 @@ export class InspectionsService {
       });
 
       if (totalPenalty > 0) {
-        await tx.penalty.create({
+        const createdPenalty = await tx.penalty.create({
           data: {
             bookingId: session.bookingId,
             reason: dto.note ?? `Inspection findings for session ${id}`,
             amount: totalPenalty,
             createdBy: staffId,
+          },
+        });
+        await tx.financialTransaction.create({
+          data: {
+            bookingId: session.bookingId,
+            penaltyId: createdPenalty.id,
+            transactionType: "penalty",
+            amount: totalPenalty,
+            note: dto.note ?? `Khấu trừ hư hỏng sau kiểm tra.`,
           },
         });
       }

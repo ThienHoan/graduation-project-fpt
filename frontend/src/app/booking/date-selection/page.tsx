@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
@@ -58,6 +58,7 @@ function BookingDateSelectionInner() {
   const [endDate, setEndDate] = useState(searchParams.get("endDate") ?? today);
   const [availMap, setAvailMap] = useState<Record<string, ItemAvail>>({});
   const [allChecked, setAllChecked] = useState(false);
+  const availabilityRequestRef = useRef(0);
   const maxDate = useMemo(() => addDays(today, 365), [today]);
 
   // Load cart
@@ -68,8 +69,10 @@ function BookingDateSelectionInner() {
 
   // Check availability for all cart items
   useEffect(() => {
+    const requestId = ++availabilityRequestRef.current;
     if (cartItems.length === 0 || !startDate || !endDate || endDate < startDate) {
       setAllChecked(false);
+      setAvailMap({});
       return;
     }
 
@@ -97,9 +100,13 @@ function BookingDateSelectionInner() {
         })),
       ),
     ).then((results) => {
+      if (requestId !== availabilityRequestRef.current) return;
       const map: Record<string, ItemAvail> = {};
       results.forEach((r) => (map[r.garmentSizeId] = r));
       setAvailMap(map);
+      setAllChecked(true);
+    }).catch(() => {
+      if (requestId !== availabilityRequestRef.current) return;
       setAllChecked(true);
     });
   }, [cartItems, startDate, endDate]);

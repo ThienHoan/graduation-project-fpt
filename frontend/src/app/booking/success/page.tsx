@@ -160,13 +160,16 @@ function BookingSuccessInner() {
                       <dd className="text-right font-medium text-ink">{formatVND(booking.shippingFee)}</dd>
                     </div>
                   )}
-                  {booking.deliveryAddress && (
+                  {(booking.deliverySnapshot ?? booking.deliveryAddress) && (
                     <div className="flex justify-between gap-4 border-b border-sand pb-3 sm:col-span-2 sm:border-0 sm:pb-0">
                       <dt className="shrink-0 text-stone-500">Địa chỉ giao</dt>
                       <dd className="text-right font-medium text-ink">
-                        {[booking.deliveryAddress.line1, booking.deliveryAddress.ward, booking.deliveryAddress.district, booking.deliveryAddress.city]
-                          .filter(Boolean)
-                          .join(", ")}
+                        {[
+                          (booking.deliverySnapshot ?? booking.deliveryAddress)!.line1,
+                          (booking.deliverySnapshot ?? booking.deliveryAddress)!.ward,
+                          (booking.deliverySnapshot ?? booking.deliveryAddress)!.district,
+                          (booking.deliverySnapshot ?? booking.deliveryAddress)!.city,
+                        ].filter(Boolean).join(", ")}
                       </dd>
                     </div>
                   )}
