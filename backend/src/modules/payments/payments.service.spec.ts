@@ -77,6 +77,7 @@ function webhookService(options?: { bookingStatus?: BookingStatus; paymentStatus
     providerTransactionId: String(ORDER_CODE),
     paymentMethod: "qr_code",
     amount: new Prisma.Decimal(160),
+    depositAmount: new Prisma.Decimal(0),
     status: options?.paymentStatus ?? PaymentStatus.pending,
     paidAt: null,
     booking: { id: BOOKING_ID, status: options?.bookingStatus ?? BookingStatus.awaiting_payment },
