@@ -292,7 +292,7 @@ export default function StaffBookingDetailPage() {
           </span>
         </div>
 
-        <div className="grid gap-6 p-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-6 p-6 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Khách hàng</p>
             <p className="mt-1 font-medium text-ink">{booking.customerName ?? "—"}</p>
@@ -316,6 +316,10 @@ export default function StaffBookingDetailPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Trang phục</p>
             <p className="mt-1 font-medium text-ink">{booking.items.length} món</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Phụ kiện</p>
+            <p className="mt-1 font-medium text-ink">{(booking.accessories ?? []).length} món</p>
           </div>
         </div>
       </div>
@@ -374,6 +378,51 @@ export default function StaffBookingDetailPage() {
           </table>
         </div>
       </div>
+
+      {/* Accessories table */}
+      {(booking.accessories ?? []).length > 0 && (
+        <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+          <div className="border-b border-sand bg-stone-50 px-6 py-3">
+            <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600">Phụ kiện thuê kèm</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-sand text-left text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
+                  <th className="px-6 py-3">Tên phụ kiện</th>
+                  <th className="px-6 py-3">Số lượng</th>
+                  <th className="px-6 py-3">Giá thuê</th>
+                  <th className="px-6 py-3">Mã asset</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(booking.accessories ?? []).map((acc) => (
+                  <tr key={acc.id} className="border-b border-sand last:border-b-0 hover:bg-stone-50">
+                    <td className="px-6 py-3 font-medium text-ink">{acc.accessoryName ?? "—"}</td>
+                    <td className="px-6 py-3 text-stone-600">× {acc.quantity}</td>
+                    <td className="px-6 py-3 text-stone-600">
+                      {acc.isIncluded ? (
+                        <span className="font-medium text-jade">Đi kèm miễn phí</span>
+                      ) : (
+                        `${formatVND(acc.unitPrice)}/ngày`
+                      )}
+                    </td>
+                    <td className="px-6 py-3">
+                      {acc.assetCode ? (
+                        <span className="font-mono text-xs text-lotus">{acc.assetCode}</span>
+                      ) : (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                          Chưa gán
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Financial summary */}
       <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">

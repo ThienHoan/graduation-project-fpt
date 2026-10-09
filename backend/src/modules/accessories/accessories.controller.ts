@@ -31,6 +31,17 @@ export class AccessoriesController {
     return this.accessoriesService.findAll(includeInactive === "true");
   }
 
+  /**
+   * Phụ kiện cần xử lý sau kiểm tra trả đồ (giặt / sửa / hỏng / mất).
+   * Dùng cho tab Giặt sấy và tab Hư hỏng của manager.
+   * Đặt TRƯỚC các route ":id..." vì Express khớp theo thứ tự khai báo —
+   * nếu để sau, "processing/assets" sẽ bị ":id/assets" nuốt (id = "processing").
+   */
+  @Get("processing/assets")
+  findProcessingAssets() {
+    return this.accessoriesService.findProcessingAssets();
+  }
+
   @Get(":id")
   findOne(@Param("id", ParseUUIDPipe) id: string) {
     return this.accessoriesService.findOne(id);

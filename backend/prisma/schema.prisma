@@ -199,6 +199,7 @@ model Booking {
   voucher               vouchers?              @relation(fields: [voucherId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   voucherUsages         voucher_usages[]
   items                 BookingItem[]
+  accessoryItems        BookingAccessoryItem[]
   statusHistory         BookingStatusHistory[]
   customer              UserAccount            @relation("BookingCustomer", fields: [customerId], references: [id])
   deliveryAddress       Address?               @relation("DeliveryAddress", fields: [deliveryAddressId], references: [id])
@@ -230,6 +231,7 @@ model BookingItem {
   garmentAsset    GarmentAsset?  @relation(fields: [garmentAssetId], references: [id])
   garment         Garment        @relation(fields: [garmentId], references: [id])
   garment_sizes   garment_sizes? @relation(fields: [garment_size_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  accessoryItems  BookingAccessoryItem[]
 
   @@map("booking_items")
 }
@@ -655,6 +657,7 @@ model accessories {
   updated_at          DateTime              @default(now()) @db.Timestamptz(6)
   accessory_assets    accessory_assets[]
   garment_accessories garment_accessories[]
+  booking_accessory_items BookingAccessoryItem[]
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -684,6 +687,7 @@ model accessory_assets {
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
   accessory_asset_history accessory_asset_history[]
   accessories             accessories               @relation(fields: [accessory_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  booking_accessory_items BookingAccessoryItem[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -701,6 +705,40 @@ model garment_accessories {
   garments     Garment     @relation(fields: [garment_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([garment_id, accessory_id])
+}
+
+/// Phụ kiện khách chọn thuê kèm theo từng món trong booking.
+/// Snapshot giá tại lúc đặt: unit_price (extra_price/ngày) × quantity × số ngày = rental_total.
+/// accessory_asset_id để staff gán tài sản cụ thể khi chuẩn bị đơn (nullable).
+model BookingAccessoryItem {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId        String            @map("booking_id") @db.Uuid
+  bookingItemId    String            @map("booking_item_id") @db.Uuid
+  accessoryId      String            @map("accessory_id") @db.Uuid
+  accessoryAssetId String?           @map("accessory_asset_id") @db.Uuid
+  quantity         Int               @default(1)
+  unitPrice        Decimal           @default(0) @map("unit_price") @db.Decimal(12, 2)
+  isIncluded       Boolean           @default(true) @map("is_included")
+  rentalTotal      Decimal           @default(0) @map("rental_total") @db.Decimal(12, 2)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Kết quả kiểm tra khi khách trả đồ (staff/inspection).
+  // good | laundry | maintenance | damaged | lost (mất → đền theo replacement_value).
+  conditionStatus  String?           @map("condition_status")
+  conditionNote    String?           @map("condition_note")
+  inspectedAt      DateTime?         @map("inspected_at") @db.Timestamptz(6)
+  inspectedBy      String?           @map("inspected_by") @db.Uuid
+  // Phạt của riêng dòng này (hư → phiếu phạt, mất → giá đền). Cộng dồn vào penaltyTotal.
+  penaltyAmount    Decimal           @default(0) @map("penalty_amount") @db.Decimal(12, 2)
+  // Ảnh bằng chứng hư hỏng do staff tải lên lúc kiểm tra.
+  conditionImages  String[]          @default([]) @map("condition_images")
+  booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingItem      BookingItem       @relation(fields: [bookingItemId], references: [id], onDelete: Cascade)
+  accessory        accessories       @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  accessoryAsset   accessory_assets? @relation(fields: [accessoryAssetId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([bookingItemId])
+  @@map("booking_accessory_items")
 }
 
 enum AppRole {

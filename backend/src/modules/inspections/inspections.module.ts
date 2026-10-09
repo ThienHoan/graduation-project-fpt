@@ -8,5 +8,6 @@ import { InspectionsService } from "./inspections.service";
   imports: [AuthModule, RealtimeModule],
   controllers: [InspectionsController],
   providers: [InspectionsService],
+  exports: [InspectionsService],
 })
 export class InspectionsModule {}

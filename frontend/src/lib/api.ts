@@ -320,6 +320,34 @@ export type DeliveryAddressSnapshot = {
   longitude: number | null;
 };
 
+export type BookingAccessoryItem = {
+  id: string;
+  bookingItemId: string | null;
+  garmentSizeId: string | null;
+  garmentId: string | null;
+  accessoryId: string;
+  accessoryCode: string | null;
+  accessoryName: string | null;
+  imageUrl?: string | null;
+  quantity: number;
+  unitPrice: number;
+  isIncluded: boolean;
+  rentalTotal: number;
+  accessoryAssetId?: string | null;
+  assetCode?: string | null;
+  replacementValue?: number;
+  conditionStatus?: string | null;
+  conditionNote?: string | null;
+  inspectedAt?: string | null;
+  penaltyAmount?: number;
+  conditionImages?: string[];
+};
+
+export type BookingAccessorySelection = {
+  garmentSizeId: string;
+  accessoryId: string;
+};
+
 export type BookingResponse = {
   id: string;
   status: string;
@@ -347,6 +375,7 @@ export type BookingResponse = {
   deliverySnapshot?: DeliveryAddressSnapshot | null;
   createdAt: string;
   items: BookingItem[];
+  accessories?: BookingAccessoryItem[];
   handover?: BookingHandover | null;
 };
 
@@ -363,6 +392,25 @@ export async function checkAvailability(garmentSizeId: string, startDate: string
   return apiRequest<AvailabilityResponse>("/bookings/check-availability", {
     method: "POST",
     body: JSON.stringify({ garmentSizeId, startDate, endDate }),
+  });
+}
+
+export type AccessoryAvailabilityResponse = {
+  accessoryId: string;
+  available: boolean;
+  availableCount: number;
+  totalAssets: number;
+};
+
+export async function checkAccessoryAvailability(
+  accessoryId: string,
+  startDate: string,
+  endDate: string,
+  quantity = 1,
+) {
+  return apiRequest<AccessoryAvailabilityResponse>("/bookings/check-accessory-availability", {
+    method: "POST",
+    body: JSON.stringify({ accessoryId, startDate, endDate, quantity }),
   });
 }
 
@@ -393,6 +441,7 @@ export async function createBooking(payload: {
   note?: string;
   paymentMethod?: "cash" | "qr_code";
   voucherCode?: string;
+  accessories?: BookingAccessorySelection[];
 }) {
   return apiRequest<BookingResponse>("/bookings", {
     method: "POST",
@@ -686,6 +735,50 @@ export async function assignAssetToBookingItem(
     method: "PATCH",
     body: JSON.stringify({ garmentAssetId }),
   });
+}
+
+export async function assignAccessoryAssetToBookingItem(
+  bookingId: string,
+  accessoryItemId: string,
+  accessoryAssetId: string,
+) {
+  return apiRequest<BookingResponse>(`/bookings/${bookingId}/accessories/${accessoryItemId}/assign-asset`, {
+    method: "PATCH",
+    body: JSON.stringify({ accessoryAssetId }),
+  });
+}
+
+export async function inspectBookingAccessory(
+  bookingId: string,
+  accessoryItemId: string,
+  payload: {
+    conditionStatus: "good" | "laundry" | "maintenance" | "damaged" | "lost";
+    note?: string;
+    penaltyAmount?: number;
+    imageUrls?: string[];
+  },
+) {
+  return apiRequest<BookingResponse>(`/bookings/${bookingId}/accessories/${accessoryItemId}/inspect`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export type AccessoryProcessingItem = {
+  id: string;
+  accessoryId: string;
+  accessoryName: string;
+  assetCode: string;
+  status: string;
+  conditionNote: string | null;
+  replacementValue: number;
+  bookingId: string | null;
+  bookingStatus: string | null;
+  updatedAt: string;
+};
+
+export async function getAccessoriesProcessing() {
+  return apiRequest<AccessoryProcessingItem[]>("/accessories/processing/assets");
 }
 
 export async function getStaffBooking(id: string) {
@@ -1196,6 +1289,24 @@ export type InspectionLogEntry = {
 
 export async function getInspectionLog() {
   return apiRequest<InspectionLogEntry[]>("/inspections/log");
+}
+
+export type AccessoryInspectionLogEntry = {
+  id: string;
+  bookingId: string;
+  assetCode: string | null;
+  accessoryName: string;
+  quantity: number;
+  conditionStatus: string | null;
+  conditionNote: string | null;
+  penaltyAmount: number;
+  inspectorName: string | null;
+  inspectedAt: string | null;
+  imageUrls: string[];
+};
+
+export async function getAccessoryInspectionLog() {
+  return apiRequest<AccessoryInspectionLogEntry[]>("/inspections/accessory-log");
 }
 
 // ---------- Garment management (Manager) ----------

@@ -10,17 +10,26 @@ import {
   createBooking,
   createPaymentLink,
   getAvailableVouchers,
+  getGarmentAccessories,
   getMyAddresses,
   getRentalQuote,
   normalizePickupMethod,
   validateVoucher,
   type CustomerAddress,
+  type GarmentAccessoryLink,
   type PickupMethod,
   type RentalQuote,
   type VoucherPublic,
   type VoucherValidation,
 } from "@/lib/api";
 import { getCart, clearCart, type CartItem } from "@/lib/cart";
+import {
+  clearAccessorySelection,
+  flattenAccessorySelection,
+  getAccessorySelection,
+  pruneAccessorySelection,
+  type AccessorySelection,
+} from "@/lib/accessory-selection";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -78,6 +87,59 @@ function BookingReviewInner() {
   }, []);
   const days = startDate && endDate ? daysBetween(startDate, endDate) : 0;
 
+  // Phụ kiện thuê kèm đã tick ở bước chọn ngày (lưu trong localStorage theo từng món).
+  const [accBySize, setAccBySize] = useState<Record<string, GarmentAccessoryLink[]>>({});
+  const [accessorySelection, setAccessorySelection] = useState<AccessorySelection>({});
+  useEffect(() => {
+    if (cartItems.length === 0) return;
+    let cancelled = false;
+    const garmentIds = [...new Set(cartItems.map((i) => i.garmentId))];
+    Promise.all(
+      garmentIds.map((gid) =>
+        getGarmentAccessories(gid).then((res) => ({
+          gid,
+          links: res.success && res.data ? res.data : [],
+        })),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const linkMap = new Map(results.map((r) => [r.gid, r.links]));
+      const nextAcc: Record<string, GarmentAccessoryLink[]> = {};
+      const validIds: Record<string, string[]> = {};
+      cartItems.forEach((item) => {
+        const links = linkMap.get(item.garmentId) ?? [];
+        nextAcc[item.garmentSizeId] = links;
+        validIds[item.garmentSizeId] = links.map((l) => l.accessory.id);
+      });
+      setAccBySize(nextAcc);
+      setAccessorySelection(
+        pruneAccessorySelection(
+          cartItems.map((i) => i.garmentSizeId),
+          validIds,
+        ),
+      );
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [cartItems]);
+
+  const accessoryLinksById = (sizeId: string) => {
+    const map = new Map((accBySize[sizeId] ?? []).map((l) => [l.accessory.id, l]));
+    return (accessorySelection[sizeId] ?? [])
+      .map((id) => map.get(id))
+      .filter((l): l is GarmentAccessoryLink => Boolean(l));
+  };
+  const accessoryTotal = cartItems.reduce((sum, item) => {
+    return (
+      sum +
+      accessoryLinksById(item.garmentSizeId)
+        .filter((l) => !l.isIncluded)
+        .reduce((s, l) => s + l.extraPrice * l.quantity * days, 0)
+    );
+  }, 0);
+  const selectedAccessoryCount = Object.values(accessorySelection).reduce((s, ids) => s + ids.length, 0);
+
   // Giá thuê do backend tính theo luật giá tự động (Tết, lễ, sale đôi, cuối tuần...).
   const [quotes, setQuotes] = useState<Map<string, RentalQuote>>(new Map());
   useEffect(() => {
@@ -121,7 +183,7 @@ function BookingReviewInner() {
     }
   }
 
-  const rentalTotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0);
+  const rentalTotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0) + accessoryTotal;
   const discountTotal = voucherResult?.discountAmount ?? 0;
   const depositTotal = cartItems.reduce((sum, item) => sum + item.depositAmount, 0);
   const grandTotal = rentalTotal - discountTotal + depositTotal + shippingFee;
@@ -164,6 +226,7 @@ function BookingReviewInner() {
       shippingFee: pickupMethod === "delivery" && shippingFee > 0 ? shippingFee : undefined,
       paymentMethod,
       voucherCode: voucherResult?.voucher.code,
+      accessories: flattenAccessorySelection(accessorySelection),
     });
     if (!res.success || !res.data) {
       setSubmitting(false);
@@ -181,6 +244,7 @@ function BookingReviewInner() {
         return;
       }
       clearCart();
+      clearAccessorySelection();
       localStorage.setItem("heritage-payment", JSON.stringify({
         bookingId,
         amount: linkRes.data.amount,
@@ -188,6 +252,7 @@ function BookingReviewInner() {
       window.location.href = linkRes.data.checkoutUrl;
     } else {
       clearCart();
+      clearAccessorySelection();
       router.push(`/booking/success?bookingId=${bookingId}`);
     }
   }
@@ -244,11 +309,12 @@ function BookingReviewInner() {
             </h2>
             <div className="divide-y divide-sand">
               {cartItems.map((item) => (
-                <div key={item.garmentSizeId} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
-                  <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded bg-lotus/10">
-                    <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
-                  </div>
-                  <div className="flex-1">
+                <div key={item.garmentSizeId} className="py-4 first:pt-0 last:pb-0">
+                  <div className="flex items-start gap-4">
+                    <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded bg-lotus/10">
+                      <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
+                    </div>
+                    <div className="flex-1">
                     <h3 className="font-medium text-ink">{item.name}</h3>
                     <p className="text-xs text-stone-500">
                       {item.sizeLabel ? `Size ${item.sizeLabel} · ` : ""}
@@ -277,7 +343,37 @@ function BookingReviewInner() {
                       <span className="text-stone-500">Thuê {days} ngày: <span className="font-medium text-ink">{formatVND(lineTotal(item))}</span></span>
                       <span className="text-stone-500">Cọc: <span className="font-medium text-ink">{formatVND(item.depositAmount)}</span></span>
                     </div>
+                    </div>
                   </div>
+                  {(() => {
+                    const accLinks = accessoryLinksById(item.garmentSizeId);
+                    if (accLinks.length === 0) return null;
+                    return (
+                      <div className="mt-2 ml-16 rounded-lg border border-sand bg-mist/60 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                          Phụ kiện thuê kèm ({accLinks.length})
+                        </p>
+                        <ul className="mt-1.5 space-y-1">
+                          {accLinks.map((l) => (
+                            <li key={l.accessory.id} className="flex items-center justify-between gap-3 text-xs">
+                              <span className="truncate text-stone-600">
+                                ✓ {l.accessory.name} <span className="text-stone-400">× {l.quantity}</span>
+                              </span>
+                              <span className={l.isIncluded ? "font-medium text-jade" : "font-medium text-ink"}>
+                                {l.isIncluded ? "Miễn phí" : `+${formatVND(l.extraPrice * l.quantity * days)}`}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <Link
+                          href={`/booking/date-selection?${new URLSearchParams({ startDate, endDate }).toString()}`}
+                          className="mt-1.5 inline-block text-[11px] font-semibold text-lotus hover:underline"
+                        >
+                          Đổi phụ kiện
+                        </Link>
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -340,6 +436,14 @@ function BookingReviewInner() {
                 <span className="text-stone-500">Tiền thuê ({days} ngày)</span>
                 <span className="text-ink">{formatVND(rentalTotal)}</span>
               </div>
+              {selectedAccessoryCount > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-500">Phụ kiện thuê kèm ({selectedAccessoryCount})</span>
+                  <span className={accessoryTotal === 0 ? "font-medium text-jade" : "text-ink"}>
+                    {accessoryTotal === 0 ? "Miễn phí" : `+${formatVND(accessoryTotal)}`}
+                  </span>
+                </div>
+              )}
               {discountTotal > 0 && (
                 <div className="flex items-center justify-between">
                   <span className="text-stone-500">Voucher {voucherResult?.voucher.code}</span>

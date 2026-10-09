@@ -596,7 +596,7 @@ export default function StaffDashboardPage() {
                 </div>
 
                 {/* Cảnh báo: item chưa có asset — staff không có quyền gán, phải báo manager */}
-                {tab !== "refunds" && ASSET_NEEDED_STATUSES.includes(booking.status) && booking.items.some((item) => !item.garmentAssetId) && (
+                {tab !== "refunds" && ASSET_NEEDED_STATUSES.includes(booking.status) && (booking.items.some((item) => !item.garmentAssetId) || (booking.accessories ?? []).some((acc) => !acc.accessoryAssetId)) && (
                   <div className="border-t border-amber-200 bg-amber-50/70 px-6 py-4">
                     <div className="flex items-start gap-3">
                       <span className="material-symbols-outlined mt-0.5 text-amber-600 text-xl">warning</span>
@@ -615,6 +615,13 @@ export default function StaffDashboardPage() {
                               <span className="material-symbols-outlined text-[14px]">inventory_2</span>
                               {item.garmentName ?? "Trang phục"}
                               {item.sizeLabel ? ` (${item.sizeLabel})` : ""}
+                            </li>
+                          ))}
+                          {(booking.accessories ?? []).filter((acc) => !acc.accessoryAssetId).map((acc) => (
+                            <li key={acc.id} className="text-xs text-amber-600 flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[14px]">diamond</span>
+                              {acc.accessoryName ?? "Phụ kiện"} (phụ kiện
+                              {acc.quantity > 1 ? ` × ${acc.quantity}` : ""})
                             </li>
                           ))}
                         </ul>

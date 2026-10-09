@@ -194,6 +194,23 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
                 </li>
               ))}
             </ul>
+            {(booking.accessories ?? []).length > 0 && (
+              <div className="mt-3">
+                <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-stone-500">
+                  <span className="material-symbols-outlined text-[14px]">diamond</span>
+                  Phụ kiện bàn giao kèm ({(booking.accessories ?? []).length})
+                </h4>
+                <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {(booking.accessories ?? []).map((acc) => (
+                    <li key={acc.id} className="rounded-lg bg-white px-3 py-2 text-sm text-ink">
+                      <span className="font-semibold">{acc.accessoryName ?? "Phụ kiện"}</span>
+                      <span className="text-stone-500"> · SL {acc.quantity}</span>
+                      <span className="block font-mono text-xs text-lotus">Asset: {acc.assetCode ?? "Chưa gán"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
 
           <section>

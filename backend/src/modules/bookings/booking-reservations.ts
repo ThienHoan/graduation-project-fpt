@@ -43,6 +43,51 @@ export interface AssetScheduleRequest {
   now?: Date;
 }
 
+export interface AccessoryAssetScheduleRequest {
+  assetId: string;
+  bookingId: string;
+  accessoryItemId?: string;
+  accessoryId?: string;
+  startDay: Date;
+  endDay: Date;
+  now?: Date;
+}
+
+/** Bản sao của assertAssetScheduleAvailable cho phụ kiện (accessory_assets).
+ * Kiểm tra lịch trùng ngày với các đơn khác đang giữ cùng accessory asset. */
+export async function assertAccessoryAssetScheduleAvailable(
+  client: Prisma.TransactionClient,
+  request: AccessoryAssetScheduleRequest,
+): Promise<void> {
+  const { startDay, endDay } = parseRentalDateRange(request.startDay, request.endDay);
+  const asset = await client.accessory_assets.findUnique({ where: { id: request.assetId } });
+  if (!asset) throw new BadRequestException("Accessory asset not found.");
+  if (!RENTABLE_ASSET_STATUSES.includes(asset.status)) throw new ConflictException("Asset không thể cho thuê.");
+  if (request.accessoryId && asset.accessory_id !== request.accessoryId) {
+    throw new ConflictException("Asset không thuộc phụ kiện của booking.");
+  }
+  const assignments = await client.bookingAccessoryItem.findMany({
+    where: { accessoryAssetId: asset.id, booking: { status: { notIn: INVENTORY_RELEASED_STATUSES } } },
+    select: {
+      id: true,
+      bookingId: true,
+      booking: { select: { id: true, status: true, rentalStartDate: true, rentalEndDate: true } },
+    },
+  });
+
+  const today = vietnamToday(request.now);
+  for (const assignment of assignments) {
+    if (assignment.id === request.accessoryItemId) continue;
+    if (assignment.bookingId === request.bookingId) {
+      throw new ConflictException("Không được gán cùng một accessory asset cho hai món trong một booking.");
+    }
+    const booking = assignment.booking;
+    if (isUnreturnedOverdue(booking, today) || (booking.rentalStartDate <= endDay && booking.rentalEndDate >= startDay)) {
+      throw new ConflictException("Accessory asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày.");
+    }
+  }
+}
+
 /** Run inside the assignment write's Serializable transaction. This validates
  * schedules only; never changes an asset's physical status. Same-day boundaries
  * overlap. A future schedule may reuse a normally held asset after its due date,

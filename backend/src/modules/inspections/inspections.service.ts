@@ -69,6 +69,21 @@ export class InspectionsService {
       const assignedToBooking = booking.items.some((item) => item.garmentAssetId === dto.garmentAssetId);
       if (!assignedToBooking) throw new BadRequestException("Asset is not assigned to this booking.");
 
+      // Món đã có phiên hoàn tất thì không tạo phiên mới (tránh staff tưởng chưa kiểm tra).
+      const completedSession = await tx.inspectionSession.findFirst({
+        where: { bookingId: dto.bookingId, garmentAssetId: dto.garmentAssetId, status: InspectionStatus.completed },
+        select: { id: true, completedAt: true },
+      });
+      if (completedSession) {
+        const when = completedSession.completedAt
+          ? new Date(completedSession.completedAt).toLocaleString("vi-VN")
+          : "trước đó";
+        throw new BadRequestException(
+          `Món này đã kiểm tra xong (hoàn tất lúc ${when}). Không cần tạo phiên mới.` +
+          ` Nếu đơn vẫn ở hàng chờ, hãy kiểm tra nốt các món/phụ kiện còn lại rồi dùng "Hoàn tất kiểm tra đơn".`,
+        );
+      }
+
       if (booking.status === BookingStatus.returned) {
         const claimed = await tx.booking.updateMany({
           where: { id: dto.bookingId, status: BookingStatus.returned },
@@ -315,6 +330,40 @@ export class InspectionsService {
     return ok(this.serialize(updated));
   }
 
+  /**
+   * Đóng đơn kiểm tra khi mọi thứ đã xong (trang phục + phụ kiện).
+   * Dùng khi không còn hành động hoàn tất nào để bấm (vd. phiên trang phục
+   * xong trước, phụ kiện xong sau) hoặc để gỡ kẹt đơn tồn hàng chờ.
+   * Chạy transaction riêng — gọi SAU khi transaction gọi nó đã commit.
+   */
+  async tryFinalizeBookingInspection(bookingId: string, staffId: string) {
+    const result = await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.status !== BookingStatus.returned && booking.status !== BookingStatus.inspection_pending) {
+        return { finalized: false as const, status: booking.status, customerId: booking.customerId };
+      }
+      if (!(await this.isBookingFullyInspected(tx, bookingId))) {
+        return { finalized: false as const, status: booking.status, customerId: booking.customerId };
+      }
+      await this.finalizeBookingInspection(tx, {
+        bookingId,
+        bookingStatus: booking.status,
+        depositTotal: Number(booking.depositTotal),
+        penaltyTotal: Number(booking.penaltyTotal),
+        staffId,
+      });
+      const done = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      return { finalized: true as const, status: done.status, customerId: done.customerId };
+    });
+
+    if (result.finalized) {
+      this.realtime.bookingChanged({ id: bookingId, bookingId, status: result.status });
+      this.realtime.bookingChangedForCustomer(result.customerId, { id: bookingId, bookingId, status: result.status });
+    }
+    return ok(result);
+  }
+
   async markAssetReady(assetId: string, staffId: string) {
     void staffId;
     const asset = await this.prisma.garmentAsset.findUnique({
@@ -332,9 +381,11 @@ export class InspectionsService {
       if (asset.status === AssetStatus.maintenance && asset.maintenanceJobs[0]) {
         await tx.maintenanceJob.update({ where: { id: asset.maintenanceJobs[0].id }, data: { status: "completed", completedAt: new Date() } });
       }
+      // Giặt/sửa xong là sẵn sàng cho thuê lại ngay: về available thẳng thay vì
+      // dừng ở cleaned (cleaned không được tính vào tồn kho khả dụng).
       const claimed = await tx.garmentAsset.updateMany({
         where: { id: assetId, status: asset.status },
-        data: { status: AssetStatus.cleaned, conditionNote: null },
+        data: { status: AssetStatus.available, conditionNote: null },
       });
       if (claimed.count !== 1) {
         throw new BadRequestException("Asset status changed while processing.");
@@ -407,6 +458,52 @@ export class InspectionsService {
     );
   }
 
+  // ── Accessory inspection log ───────────────────────────────────────────
+
+  /**
+   * Nhật ký kiểm tra phụ kiện (ghi nhận lúc trả đồ): mỗi dòng đã có kết quả
+   * là 1 entry — ai kiểm tra, kết quả, ghi chú, phạt, đơn nào.
+   */
+  async findAccessoryLog() {
+    const rows = await this.prisma.bookingAccessoryItem.findMany({
+      where: { conditionStatus: { not: null } },
+      orderBy: { inspectedAt: "desc" },
+      take: 200,
+      include: {
+        accessory: { select: { name: true } },
+        accessoryAsset: { select: { asset_code: true } },
+        booking: { select: { id: true } },
+      },
+    });
+    const inspectorIds = [...new Set(rows.map((r) => r.inspectedBy).filter((v): v is string => Boolean(v)))];
+    const inspectors = inspectorIds.length > 0
+      ? await this.prisma.userAccount.findMany({
+        where: { id: { in: inspectorIds } },
+        select: { id: true, email: true, profile: { select: { fullName: true } } },
+      })
+      : [];
+    const inspectorById = new Map(inspectors.map((u) => [u.id, u]));
+
+    return ok(
+      rows.map((r) => {
+        const inspector = r.inspectedBy ? inspectorById.get(r.inspectedBy) ?? null : null;
+        return {
+          id: r.id,
+          bookingId: r.bookingId,
+          assetCode: r.accessoryAsset?.asset_code ?? null,
+          accessoryName: r.accessory.name,
+          quantity: r.quantity,
+          conditionStatus: r.conditionStatus,
+          conditionNote: r.conditionNote,
+          penaltyAmount: Number(r.penaltyAmount ?? 0),
+          inspectorName: inspector?.profile?.fullName ?? inspector?.email ?? null,
+          inspectedAt: r.inspectedAt?.toISOString() ?? null,
+          imageUrls: r.conditionImages ?? [],
+        };
+      }),
+    );
+  }
+
   // ── Laundry queue ──────────────────────────────────────────────────────────
 
   async findAllLaundry() {
@@ -457,7 +554,7 @@ export class InspectionsService {
 
       const claimed = await tx.garmentAsset.updateMany({
         where: { id: ticket.garmentAssetId, status: AssetStatus.laundry },
-        data: { status: AssetStatus.cleaned },
+        data: { status: AssetStatus.available, conditionNote: null },
       });
       if (claimed.count !== 1) {
         throw new BadRequestException("Asset is no longer in laundry status.");
@@ -474,7 +571,7 @@ export class InspectionsService {
     this.realtime.assetChanged({
       id: updated.garmentAssetId,
       assetId: updated.garmentAssetId,
-      status: AssetStatus.cleaned,
+      status: AssetStatus.available,
     });
 
     return ok({
@@ -537,13 +634,13 @@ export class InspectionsService {
       if (claimedJob.count !== 1) throw new ConflictException("Maintenance job was already processed.");
 
       const nextAssetStatus = targetStatus === MaintenanceStatus.completed
-        ? AssetStatus.cleaned
+        ? AssetStatus.available
         : AssetStatus.damaged;
       const claimedAsset = await tx.garmentAsset.updateMany({
         where: { id: job.garmentAssetId, status: AssetStatus.maintenance },
         data: {
           status: nextAssetStatus,
-          ...(nextAssetStatus === AssetStatus.cleaned ? { conditionNote: null } : {}),
+          ...(nextAssetStatus === AssetStatus.available ? { conditionNote: null } : {}),
         },
       });
       if (claimedAsset.count !== 1) {
@@ -561,7 +658,7 @@ export class InspectionsService {
     this.realtime.assetChanged({
       id: updated.garmentAssetId,
       assetId: updated.garmentAssetId,
-      status: targetStatus === MaintenanceStatus.completed ? AssetStatus.cleaned : AssetStatus.damaged,
+      status: targetStatus === MaintenanceStatus.completed ? AssetStatus.available : AssetStatus.damaged,
     });
 
     return ok({
@@ -607,7 +704,16 @@ export class InspectionsService {
       select: { garmentAssetId: true },
     });
     const inspectedAssetIds = new Set(completedSessions.map((session) => session.garmentAssetId));
-    return inspectedAssetIds.size === distinctAssetIds.size;
+    if (inspectedAssetIds.size !== distinctAssetIds.size) return false;
+
+    // Phụ kiện thuê kèm phải được kiểm tra hết thì đơn mới được đóng —
+    // nếu không đơn biến khỏi hàng chờ trong khi phụ kiện chưa ai kiểm tra.
+    // Mirror trang phục: dòng nào cũng phải đã gán asset + có kết quả kiểm tra.
+    const accessoryRows = await tx.bookingAccessoryItem.findMany({
+      where: { bookingId },
+      select: { accessoryAssetId: true, conditionStatus: true },
+    });
+    return accessoryRows.every((row) => row.accessoryAssetId && row.conditionStatus);
   }
 
   private async finalizeBookingInspection(

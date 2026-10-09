@@ -13,6 +13,8 @@ import {
   getStaffCompletedRefundBookings,
   getAvailableAssets,
   assignAssetToBookingItem,
+  getAccessoryAssets,
+  assignAccessoryAssetToBookingItem,
   getPendingManagerRefunds,
   approveRefund,
   rejectRefund,
@@ -40,6 +42,9 @@ import {
   updateGarmentAccessory,
   removeGarmentAccessory,
   getAccessories,
+  getAccessoriesProcessing,
+  getAccessoryInspectionLog,
+  updateAccessoryAssetStatus,
   getCanonicalOccasions,
   createGarmentCategory,
   createGarmentSize,
@@ -47,7 +52,11 @@ import {
   getAllAssets,
   updateAssetStatus,
   type StaffBookingResponse,
+  type BookingResponse,
   type AvailableAsset,
+  type BookingAccessoryItem,
+  type AccessoryProcessingItem,
+  type AccessoryInspectionLogEntry,
   type GarmentSummary,
   type GarmentDetail,
   type GarmentCategory,
@@ -306,10 +315,12 @@ export default function ManagerDashboardPage() {
   const [assetsLoading, setAssetsLoading] = useState(false);
 
   // Asset assignment state (gán tài sản)
+  // Dùng chung cho cả trang phục (AvailableAsset) và phụ kiện (AccessoryAsset):
+  // picker chỉ cần id / assetCode / conditionNote.
   type AssetAssignState = Record<
     string,
     {
-      assets: AvailableAsset[];
+      assets: { id: string; assetCode: string; conditionNote: string | null }[];
       loading: boolean;
       selected: string;
       open: boolean;
@@ -319,6 +330,20 @@ export default function ManagerDashboardPage() {
     {},
   );
   const [actioningId, setActioningId] = useState<string | null>(null);
+  // Dòng nào đang gán (theo itemKey) — để chỉ dòng được nhấn mới hiện "...",
+  // các dòng khác trong cùng đơn không bị ảnh hưởng.
+  const [assigningKey, setAssigningKey] = useState<string | null>(null);
+  // Lỗi gán theo từng dòng (vd. asset đã bị gán trùng) — hiện ngay dưới dòng đó.
+  const [assignError, setAssignError] = useState<Record<string, string>>({});
+
+  function clearAssignError(itemKey: string) {
+    setAssignError((prev) => {
+      if (!prev[itemKey]) return prev;
+      const next = { ...prev };
+      delete next[itemKey];
+      return next;
+    });
+  }
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetDetail | null>(null);
   const [assetHistory, setAssetHistory] = useState<AssetInspectionHistory[]>(
@@ -329,6 +354,7 @@ export default function ManagerDashboardPage() {
   // Inspection log state
   const [inspectionLog, setInspectionLog] = useState<InspectionLogEntry[]>([]);
   const [inspectionLogLoading, setInspectionLogLoading] = useState(false);
+  const [accInspectionLog, setAccInspectionLog] = useState<AccessoryInspectionLogEntry[]>([]);
 
   // Laundry state
   const [laundryTickets, setLaundryTickets] = useState<LaundryTicketResponse[]>(
@@ -341,6 +367,11 @@ export default function ManagerDashboardPage() {
     MaintenanceJobResponse[]
   >([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+
+  // Accessory processing state (phụ kiện cần giặt / sửa / hỏng / mất sau kiểm tra)
+  const [accProcessing, setAccProcessing] = useState<AccessoryProcessingItem[]>(
+    [],
+  );
 
   // Garment management state
   const [categories, setCategories] = useState<GarmentCategory[]>([]);
@@ -671,12 +702,45 @@ export default function ManagerDashboardPage() {
 
   // ── Asset assignment helpers ──
 
+  // Đồng bộ ngay tab "cần gán" sau mỗi lần gán (trang phục hoặc phụ kiện):
+  // đơn gán đủ thì biến khỏi danh sách, chưa đủ thì cập nhật tại chỗ.
+  function syncNeedingAssetsAfterAssign(updated: BookingResponse) {
+    setBookings((prev) =>
+      prev.map((booking) => {
+        if (booking.id !== updated.id) return booking;
+        return {
+          ...booking,
+          ...updated,
+          customerName: booking.customerName,
+          customerPhone: booking.customerPhone,
+        };
+      }),
+    );
+    setBookingsNeedingAssets((prev) => {
+      const stillNeeds =
+        (updated.items ?? []).some((i) => !i.garmentAssetId) ||
+        (updated.accessories ?? []).some((a) => !a.accessoryAssetId);
+      if (!stillNeeds) return prev.filter((b) => b.id !== updated.id);
+      return prev.map((b) =>
+        b.id === updated.id
+          ? {
+              ...b,
+              ...updated,
+              customerName: b.customerName,
+              customerPhone: b.customerPhone,
+            }
+          : b,
+      );
+    });
+  }
+
   async function openAssetPicker(
     itemKey: string,
     bookingId: string,
     garmentId: string,
     garmentSizeId: string,
   ) {
+    clearAssignError(itemKey);
     setAssetAssignState((prev) => ({
       ...prev,
       [itemKey]: { assets: [], loading: true, selected: "", open: true },
@@ -708,14 +772,15 @@ export default function ManagerDashboardPage() {
   ) {
     const state = assetAssignState[itemKey];
     if (!state?.selected) return;
-    setActioningId(bookingId);
+    setAssigningKey(itemKey);
+    clearAssignError(itemKey);
     setErrorMsg(null);
     const res = await assignAssetToBookingItem(
       bookingId,
       itemId,
       state.selected,
     );
-    setActioningId(null);
+    setAssigningKey(null);
     if (res.success) {
       setAssetAssignState((prev) => {
         const next = { ...prev };
@@ -723,19 +788,7 @@ export default function ManagerDashboardPage() {
         return next;
       });
       const bookingCode = bookingId.slice(0, 8).toUpperCase();
-      if (res.data) {
-        setBookings((prev) =>
-          prev.map((booking) => {
-            if (booking.id !== bookingId) return booking;
-            return {
-              ...booking,
-              ...res.data,
-              customerName: booking.customerName,
-              customerPhone: booking.customerPhone,
-            };
-          }),
-        );
-      }
+      if (res.data) syncNeedingAssetsAfterAssign(res.data);
       await refreshAllAssets();
       showSuccessAssign(
         bookingId,
@@ -743,15 +796,112 @@ export default function ManagerDashboardPage() {
       );
     } else {
       setErrorMsg(res.message ?? "Không thể gán tài sản.");
+      setAssignError((prev) => ({
+        ...prev,
+        [itemKey]: res.message ?? "Không thể gán tài sản.",
+      }));
     }
   }
 
   function closeAssetPicker(itemKey: string) {
+    clearAssignError(itemKey);
     setAssetAssignState((prev) => {
       const next = { ...prev };
       delete next[itemKey];
       return next;
     });
+  }
+
+  async function openAccessoryPicker(
+    itemKey: string,
+    bookingId: string,
+    accessoryId: string,
+    excludeAssetIds: string[] = [],
+  ) {
+    clearAssignError(itemKey);
+    setAssetAssignState((prev) => ({
+      ...prev,
+      [itemKey]: { assets: [], loading: true, selected: "", open: true },
+    }));
+    const res = await getAccessoryAssets(accessoryId);
+    // Chỉ hiện asset còn trống: bỏ asset đã gán cho dòng khác trong cùng đơn
+    // (mỗi đơn vị phụ kiện cần 1 asset riêng, backend cũng chặn gán trùng).
+    const excluded = new Set(excludeAssetIds);
+    const available =
+      res.success && res.data
+        ? res.data.filter(
+            (a) => a.status === "available" && !excluded.has(a.id),
+          )
+        : [];
+    setAssetAssignState((prev) => ({
+      ...prev,
+      [itemKey]: {
+        assets: available,
+        loading: false,
+        selected: available.length > 0 ? available[0].id : "",
+        open: true,
+      },
+    }));
+  }
+
+  async function handleAssignAccessoryAsset(
+    bookingId: string,
+    accessoryItemId: string,
+    itemKey: string,
+  ) {
+    const state = assetAssignState[itemKey];
+    if (!state?.selected) return;
+    setAssigningKey(itemKey);
+    clearAssignError(itemKey);
+    setErrorMsg(null);
+    const res = await assignAccessoryAssetToBookingItem(
+      bookingId,
+      accessoryItemId,
+      state.selected,
+    );
+    setAssigningKey(null);
+    if (res.success) {
+      setAssetAssignState((prev) => {
+        const next = { ...prev };
+        delete next[itemKey];
+        return next;
+      });
+      const bookingCode = bookingId.slice(0, 8).toUpperCase();
+      if (res.data) syncNeedingAssetsAfterAssign(res.data);
+      await refreshAllAssets();
+      showSuccessAssign(
+        bookingId,
+        `Đơn #${bookingCode} đã gắn tài sản phụ kiện thành công.`,
+      );
+    } else {
+      setErrorMsg(res.message ?? "Không thể gán tài sản phụ kiện.");
+      setAssignError((prev) => ({
+        ...prev,
+        [itemKey]: res.message ?? "Không thể gán tài sản phụ kiện.",
+      }));
+    }
+  }
+
+  // ── Accessory processing actions (tab Giặt sấy / Hư hỏng) ──
+  // Phụ kiện không có ticket riêng như trang phục: đổi trạng thái asset trực tiếp.
+  async function handleAccessoryProcessingAction(
+    assetId: string,
+    status: string,
+    successMsg: string,
+  ) {
+    setActioningId(`acc-${assetId}`);
+    const res = await updateAccessoryAssetStatus(assetId, { status });
+    setActioningId(null);
+    if (res.success) {
+      const refresh = await getAccessoriesProcessing();
+      if (refresh.success && refresh.data) setAccProcessing(refresh.data);
+      showToast("success", successMsg);
+    } else {
+      showToast(
+        "error",
+        res.message ?? "Không thể cập nhật trạng thái phụ kiện.",
+      );
+    }
   }
 
   // ── Load assets when garment selected ──
@@ -789,9 +939,10 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (tab !== "inspection-log") return;
     setInspectionLogLoading(true);
-    getInspectionLog()
-      .then((res) => {
-        if (res.success && res.data) setInspectionLog(res.data);
+    Promise.all([getInspectionLog(), getAccessoryInspectionLog()])
+      .then(([logRes, accRes]) => {
+        if (logRes.success && logRes.data) setInspectionLog(logRes.data);
+        if (accRes.success && accRes.data) setAccInspectionLog(accRes.data);
       })
       .finally(() => setInspectionLogLoading(false));
   }, [tab]);
@@ -800,9 +951,10 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (tab !== "laundry") return;
     setLaundryLoading(true);
-    getLaundryTickets()
-      .then((res) => {
-        if (res.success && res.data) setLaundryTickets(res.data);
+    Promise.all([getLaundryTickets(), getAccessoriesProcessing()])
+      .then(([ticketsRes, accRes]) => {
+        if (ticketsRes.success && ticketsRes.data) setLaundryTickets(ticketsRes.data);
+        if (accRes.success && accRes.data) setAccProcessing(accRes.data);
       })
       .finally(() => setLaundryLoading(false));
   }, [tab]);
@@ -811,11 +963,12 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (tab !== "damaged") return;
     setMaintenanceLoading(true);
-    Promise.all([getMaintenanceJobs(), getAllAssets()])
-      .then(([maintenanceRes, assetsRes]) => {
+    Promise.all([getMaintenanceJobs(), getAllAssets(), getAccessoriesProcessing()])
+      .then(([maintenanceRes, assetsRes, accRes]) => {
         if (maintenanceRes.success && maintenanceRes.data)
           setMaintenanceJobs(maintenanceRes.data);
         if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
+        if (accRes.success && accRes.data) setAccProcessing(accRes.data);
       })
       .finally(() => setMaintenanceLoading(false));
   }, [tab]);
@@ -849,23 +1002,30 @@ export default function ManagerDashboardPage() {
   }, [tab]);
   const refreshInspectionLog = useCallback(() => {
     if (tab !== "inspection-log") return Promise.resolve();
-    return getInspectionLog().then((res) => {
-      if (res.success && res.data) setInspectionLog(res.data);
-    });
+    return Promise.all([getInspectionLog(), getAccessoryInspectionLog()]).then(
+      ([logRes, accRes]) => {
+        if (logRes.success && logRes.data) setInspectionLog(logRes.data);
+        if (accRes.success && accRes.data) setAccInspectionLog(accRes.data);
+      },
+    );
   }, [tab]);
   const refreshLaundry = useCallback(() => {
     if (tab !== "laundry") return Promise.resolve();
-    return getLaundryTickets().then((res) => {
-      if (res.success && res.data) setLaundryTickets(res.data);
-    });
+    return Promise.all([getLaundryTickets(), getAccessoriesProcessing()]).then(
+      ([ticketsRes, accRes]) => {
+        if (ticketsRes.success && ticketsRes.data) setLaundryTickets(ticketsRes.data);
+        if (accRes.success && accRes.data) setAccProcessing(accRes.data);
+      },
+    );
   }, [tab]);
   const refreshMaintenanceAndAssets = useCallback(() => {
     if (tab !== "damaged") return Promise.resolve();
-    return Promise.all([getMaintenanceJobs(), getAllAssets()]).then(
-      ([maintenanceRes, assetsRes]) => {
+    return Promise.all([getMaintenanceJobs(), getAllAssets(), getAccessoriesProcessing()]).then(
+      ([maintenanceRes, assetsRes, accRes]) => {
         if (maintenanceRes.success && maintenanceRes.data)
           setMaintenanceJobs(maintenanceRes.data);
         if (assetsRes.success && assetsRes.data) setAllAssets(assetsRes.data);
+        if (accRes.success && accRes.data) setAccProcessing(accRes.data);
       },
     );
   }, [tab]);
@@ -1040,18 +1200,22 @@ export default function ManagerDashboardPage() {
         <AssetsAssignTab
           bookingsNeedingAssets={bookingsNeedingAssets}
           assetAssignState={assetAssignState}
-          actioningId={actioningId}
+          assigningKey={assigningKey}
+          assignError={assignError}
           successAssignId={successAssignId}
           successAssignMsg={successAssignMsg}
           onOpenPicker={openAssetPicker}
           onAssign={handleAssignAsset}
           onClosePicker={closeAssetPicker}
-          onSelectChange={(itemKey, value) =>
+          onSelectChange={(itemKey, value) => {
+            clearAssignError(itemKey);
             setAssetAssignState((prev) => ({
               ...prev,
               [itemKey]: { ...prev[itemKey], selected: value },
-            }))
-          }
+            }));
+          }}
+          onOpenAccessoryPicker={openAccessoryPicker}
+          onAssignAccessory={handleAssignAccessoryAsset}
         />
       ) : tab === "inventory" ? (
         <InventoryTab
@@ -1095,12 +1259,20 @@ export default function ManagerDashboardPage() {
           }
         />
       ) : tab === "inspection-log" ? (
-        <InspectionLogTab log={inspectionLog} loading={inspectionLogLoading} />
+        <InspectionLogTab log={inspectionLog} loading={inspectionLogLoading} accLog={accInspectionLog} />
       ) : tab === "laundry" ? (
         <LaundryTab
           tickets={laundryTickets}
           loading={laundryLoading}
           actioningId={actioningId}
+          accLaundry={accProcessing.filter((a) => a.status === "laundry")}
+          onCompleteAccessory={(id) =>
+            handleAccessoryProcessingAction(
+              id,
+              "available",
+              "Phụ kiện đã giặt xong, sẵn sàng cho thuê.",
+            )
+          }
           onComplete={async (id) => {
             setActioningId(id);
             const res = await completeLaundryTicket(id);
@@ -1129,6 +1301,23 @@ export default function ManagerDashboardPage() {
           )}
           loading={maintenanceLoading}
           actioningId={actioningId}
+          accDamaged={accProcessing.filter((a) =>
+            ["maintenance", "damaged", "lost"].includes(a.status),
+          )}
+          onAccCompleteMaintenance={(id) =>
+            handleAccessoryProcessingAction(
+              id,
+              "available",
+              "Phụ kiện đã bảo trì xong, sẵn sàng cho thuê.",
+            )
+          }
+          onAccToMaintenance={(id) =>
+            handleAccessoryProcessingAction(
+              id,
+              "maintenance",
+              "Đã chuyển phụ kiện sang bảo trì.",
+            )
+          }
           onComplete={async (id, status) => {
             setActioningId(id);
             const res = await completeMaintenanceJob(id, status);
@@ -1268,28 +1457,146 @@ export default function ManagerDashboardPage() {
 // TAB: Assets Assignment (Gán tài sản)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+type AssignPickerState = {
+  assets: { id: string; assetCode: string; conditionNote: string | null }[];
+  loading: boolean;
+  selected: string;
+  open: boolean;
+};
+
+// Một dòng "món chưa gán" dùng chung cho cả trang phục và phụ kiện:
+// bên trái là thông tin món, bên phải là nút mở picker / dropdown chọn asset.
+function UnassignedAssetRow({
+  title,
+  subtitle,
+  itemKey,
+  state,
+  actioning,
+  error,
+  onOpen,
+  onAssign,
+  onClose,
+  onSelectChange,
+}: {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  itemKey: string;
+  state: AssignPickerState | undefined;
+  actioning: boolean;
+  error?: string | null;
+  onOpen: () => void;
+  onAssign: () => void;
+  onClose: (itemKey: string) => void;
+  onSelectChange: (itemKey: string, value: string) => void;
+}) {
+  return (
+    <div
+      key={itemKey}
+      className="rounded-lg border border-amber-200 bg-amber-50/50 p-4"
+    >
+      <div className="flex items-center gap-4">
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-ink">{title}</p>
+        {subtitle && (
+          <div className="mt-1 flex gap-4 text-xs text-stone-500">
+            {subtitle}
+          </div>
+        )}
+      </div>
+      {!state?.open ? (
+        <button
+          type="button"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
+          onClick={onOpen}
+        >
+          <span className="material-symbols-outlined mr-1 align-middle text-[16px]">
+            add
+          </span>
+          Gán tài sản
+        </button>
+      ) : state.loading ? (
+        <span className="text-sm text-stone-400">Đang tải...</span>
+      ) : state.assets.length === 0 ? (
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-red-600">
+            Hết tài sản khả dụng
+          </span>
+          <button
+            type="button"
+            className="text-sm text-stone-500 underline"
+            onClick={() => onClose(itemKey)}
+          >
+            Đóng
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <select
+            className="min-w-[200px] rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+            value={state.selected}
+            onChange={(e) => onSelectChange(itemKey, e.target.value)}
+            aria-label="Chọn tài sản"
+          >
+            {state.assets.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.assetCode}{" "}
+                {a.conditionNote ? `— ${a.conditionNote}` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={actioning || !state.selected}
+            className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+            onClick={onAssign}
+            title={
+              state.assets.find((a) => a.id === state.selected)?.assetCode
+                ? `Gán ${state.assets.find((a) => a.id === state.selected)?.assetCode} cho món này`
+                : "Chọn tài sản để gán"
+            }
+          >
+            {actioning
+              ? "..."
+              : `Xác nhận gán${state.assets.find((a) => a.id === state.selected)?.assetCode ? ` ${state.assets.find((a) => a.id === state.selected)?.assetCode}` : ""}`}
+          </button>
+          <button
+            type="button"
+            className="text-sm text-stone-500 underline"
+            onClick={() => onClose(itemKey)}
+          >
+            Hủy
+          </button>
+        </div>
+      )}
+      </div>
+      {error && (
+        <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-700">
+          <span className="material-symbols-outlined text-[15px]">error</span>
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AssetsAssignTab({
   bookingsNeedingAssets,
   assetAssignState,
-  actioningId,
+  assigningKey,
+  assignError,
   successAssignId,
   successAssignMsg,
   onOpenPicker,
   onAssign,
   onClosePicker,
   onSelectChange,
+  onOpenAccessoryPicker,
+  onAssignAccessory,
 }: {
   bookingsNeedingAssets: StaffBookingResponse[];
-  assetAssignState: Record<
-    string,
-    {
-      assets: AvailableAsset[];
-      loading: boolean;
-      selected: string;
-      open: boolean;
-    }
-  >;
-  actioningId: string | null;
+  assetAssignState: Record<string, AssignPickerState>;
+  assigningKey: string | null;
+  assignError: Record<string, string>;
   successAssignId: string | null;
   successAssignMsg: string | null;
   onOpenPicker: (
@@ -1301,6 +1608,17 @@ function AssetsAssignTab({
   onAssign: (bookingId: string, itemId: string, itemKey: string) => void;
   onClosePicker: (itemKey: string) => void;
   onSelectChange: (itemKey: string, value: string) => void;
+  onOpenAccessoryPicker: (
+    itemKey: string,
+    bookingId: string,
+    accessoryId: string,
+    excludeAssetIds: string[],
+  ) => void;
+  onAssignAccessory: (
+    bookingId: string,
+    accessoryItemId: string,
+    itemKey: string,
+  ) => void;
 }) {
   return (
     <div className="space-y-6">
@@ -1320,6 +1638,11 @@ function AssetsAssignTab({
           const unassignedItems = booking.items.filter(
             (item) => !item.garmentAssetId,
           );
+          const unassignedAccessories = (booking.accessories ?? []).filter(
+            (acc) => !acc.accessoryAssetId,
+          );
+          const totalUnassigned =
+            unassignedItems.length + unassignedAccessories.length;
           return (
             <div key={booking.id}>
               {successAssignId === booking.id && (
@@ -1353,107 +1676,131 @@ function AssetsAssignTab({
                     <span className="material-symbols-outlined text-[16px]">
                       warning
                     </span>
-                    {unassignedItems.length} item chưa gán tài sản
+                    {totalUnassigned} món chưa gán tài sản
+                    {unassignedAccessories.length > 0 && (
+                      <span className="normal-case tracking-normal">
+                        ({unassignedItems.length} trang phục ·{" "}
+                        {unassignedAccessories.length} phụ kiện)
+                      </span>
+                    )}
                   </p>
                   {unassignedItems.map((item) => {
                     const itemKey = `${booking.id}-${item.id}`;
                     const state = assetAssignState[itemKey];
                     return (
-                      <div
+                      <UnassignedAssetRow
                         key={itemKey}
-                        className="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50/50 p-4"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-ink">
+                        title={
+                          <>
                             {item.garmentName ?? "Trang phục"}
                             {item.sizeLabel && (
                               <span className="ml-1 text-stone-500">
                                 ({item.sizeLabel})
                               </span>
                             )}
-                          </p>
-                          <div className="mt-1 flex gap-4 text-xs text-stone-500">
-                            <span>{formatVND(item.dailyPrice)}/ngày</span>
-                            <span>Cọc: {formatVND(item.depositAmount)}</span>
-                          </div>
-                        </div>
-                        {!state?.open ? (
-                          <button
-                            type="button"
-                            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
-                            onClick={() =>
-                              item.garmentSizeId &&
-                              onOpenPicker(
-                                itemKey,
-                                booking.id,
-                                item.garmentId,
-                                item.garmentSizeId,
-                              )
-                            }
-                          >
-                            <span className="material-symbols-outlined mr-1 align-middle text-[16px]">
-                              add
+                          </>
+                        }
+                        subtitle={
+                          <>
+                            <span>
+                              {formatVND(item.dailyPrice)}/ngày
                             </span>
-                            Gán tài sản
-                          </button>
-                        ) : state.loading ? (
-                          <span className="text-sm text-stone-400">
-                            Đang tải...
-                          </span>
-                        ) : state.assets.length === 0 ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-red-600">
-                              Hết tài sản khả dụng
+                            <span>
+                              Cọc: {formatVND(item.depositAmount)}
                             </span>
-                            <button
-                              type="button"
-                              className="text-sm text-stone-500 underline"
-                              onClick={() => onClosePicker(itemKey)}
-                            >
-                              Đóng
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <select
-                              className="min-w-[200px] rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
-                              value={state.selected}
-                              onChange={(e) =>
-                                onSelectChange(itemKey, e.target.value)
-                              }
-                              aria-label="Chọn tài sản"
-                            >
-                              {state.assets.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.assetCode}{" "}
-                                  {a.conditionNote
-                                    ? `— ${a.conditionNote}`
-                                    : ""}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              disabled={actioningId === booking.id}
-                              className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
-                              onClick={() =>
-                                onAssign(booking.id, item.id, itemKey)
-                              }
-                            >
-                              {actioningId === booking.id
-                                ? "..."
-                                : "Xác nhận gán"}
-                            </button>
-                            <button
-                              type="button"
-                              className="text-sm text-stone-500 underline"
-                              onClick={() => onClosePicker(itemKey)}
-                            >
-                              Hủy
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          </>
+                        }
+                        itemKey={itemKey}
+                        state={state}
+                        actioning={assigningKey === itemKey}
+                        error={assignError[itemKey]}
+                        onOpen={() =>
+                          item.garmentSizeId &&
+                          onOpenPicker(
+                            itemKey,
+                            booking.id,
+                            item.garmentId,
+                            item.garmentSizeId,
+                          )
+                        }
+                        onAssign={() =>
+                          onAssign(booking.id, item.id, itemKey)
+                        }
+                        onClose={onClosePicker}
+                        onSelectChange={onSelectChange}
+                      />
+                    );
+                  })}
+                  {unassignedAccessories.length > 0 && (
+                    <div className="pt-1">
+                      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                        <span className="material-symbols-outlined text-[16px]">
+                          diamond
+                        </span>
+                        Phụ kiện chưa gán tài sản
+                      </p>
+                      <p className="mt-1 text-[11px] leading-5 text-stone-500">
+                        Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
+                        khác trong đơn sẽ không hiện trong danh sách chọn —
+                        nếu hết asset trống, dòng đó sẽ báo "Hết tài sản khả
+                        dụng", cần nhập kho thêm.
+                      </p>
+                    </div>
+                  )}
+                  {unassignedAccessories.map((acc) => {
+                    const itemKey = `${booking.id}-acc-${acc.id}`;
+                    const state = assetAssignState[itemKey];
+                    const assignedInBooking = (booking.accessories ?? [])
+                      .map((a) => a.accessoryAssetId)
+                      .filter((id): id is string => Boolean(id));
+                    return (
+                      <UnassignedAssetRow
+                        key={itemKey}
+                        title={
+                          <>
+                            <span className="material-symbols-outlined mr-1 align-middle text-[16px] text-amber-600">
+                              diamond
+                            </span>
+                            {acc.accessoryName ?? "Phụ kiện"}
+                            {acc.quantity > 1 && (
+                              <span className="ml-1 text-stone-500">
+                                × {acc.quantity}
+                              </span>
+                            )}
+                          </>
+                        }
+                        subtitle={
+                          <>
+                            {acc.assetCode ? (
+                              <span>Mã: {acc.assetCode}</span>
+                            ) : (
+                              <span>Chưa gán asset</span>
+                            )}
+                            <span>
+                              {acc.isIncluded
+                                ? "Đi kèm miễn phí"
+                                : `Thuê kèm ${formatVND(acc.unitPrice)}/ngày`}
+                            </span>
+                          </>
+                        }
+                        itemKey={itemKey}
+                        state={state}
+                        actioning={assigningKey === itemKey}
+                        error={assignError[itemKey]}
+                        onOpen={() =>
+                          onOpenAccessoryPicker(
+                            itemKey,
+                            booking.id,
+                            acc.accessoryId,
+                            assignedInBooking,
+                          )
+                        }
+                        onAssign={() =>
+                          onAssignAccessory(booking.id, acc.id, itemKey)
+                        }
+                        onClose={onClosePicker}
+                        onSelectChange={onSelectChange}
+                      />
                     );
                   })}
                 </div>
@@ -3725,13 +4072,18 @@ const INSPECTION_STATUS_META: Record<string, { label: string; color: string }> =
 function InspectionLogTab({
   log,
   loading,
+  accLog,
 }: {
   log: InspectionLogEntry[];
   loading: boolean;
+  accLog: AccessoryInspectionLogEntry[];
 }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [penaltyFilter, setPenaltyFilter] = useState("all");
+  const [accStatusFilter, setAccStatusFilter] = useState("all");
+  const [subTab, setSubTab] = useState<"garments" | "accessories">("garments");
+  const [viewingImages, setViewingImages] = useState<{ title: string; images: string[] } | null>(null);
 
   const filteredLog = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3753,18 +4105,64 @@ function InspectionLogTab({
     });
   }, [log, search, statusFilter, penaltyFilter]);
 
+  const accConditionMeta: Record<string, { label: string; color: string }> = {
+    good: { label: "Tốt", color: "bg-jade/10 text-jade" },
+    laundry: { label: "Cần giặt sấy", color: "bg-amber-100 text-amber-700" },
+    maintenance: { label: "Cần bảo trì", color: "bg-orange-100 text-orange-700" },
+    damaged: { label: "Hư hỏng", color: "bg-red-100 text-red-700" },
+    lost: { label: "Mất", color: "bg-red-200 text-red-800" },
+  };
+  const filteredAccLog = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return accLog.filter((entry) => {
+      const byText = q
+        ? [entry.assetCode, entry.accessoryName, entry.inspectorName].some((v) =>
+            v?.toLowerCase().includes(q),
+          )
+        : true;
+      const byStatus =
+        accStatusFilter === "all" ? true : entry.conditionStatus === accStatusFilter;
+      const byPenalty =
+        penaltyFilter === "all"
+          ? true
+          : penaltyFilter === "with"
+            ? entry.penaltyAmount > 0
+            : entry.penaltyAmount === 0;
+      return byText && byStatus && byPenalty;
+    });
+  }, [accLog, search, accStatusFilter, penaltyFilter]);
+
   return (
     <div className="space-y-4">
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
-      ) : log.length === 0 ? (
-        <div className="py-20 text-center text-stone-400">
-          Chưa có phiên kiểm tra nào.
-        </div>
       ) : (
         <>
-          <div className="flex flex-wrap gap-2">
-            <div className="relative min-w-[220px] flex-1">
+          <div className="flex gap-2 rounded-xl border border-sand bg-white p-1.5 shadow-sm">
+            {(
+              [
+                { key: "garments", label: `Trang phục (${log.length})`, icon: "checkroom" },
+                { key: "accessories", label: `Phụ kiện (${accLog.length})`, icon: "diamond" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setSubTab(t.key)}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${
+                  subTab === t.key
+                    ? "bg-lotus text-white shadow"
+                    : "text-stone-500 hover:bg-mist"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full sm:w-64">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
                 search
               </span>
@@ -3772,9 +4170,43 @@ function InspectionLogTab({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
-                placeholder="Tìm mã tài sản, trang phục, người kiểm tra..."
+                placeholder={
+                  subTab === "garments"
+                    ? "Tìm mã tài sản, trang phục, người kiểm tra..."
+                    : "Tìm mã tài sản, phụ kiện, người kiểm tra..."
+                }
               />
             </div>
+            <select
+              value={penaltyFilter}
+              onChange={(e) => setPenaltyFilter(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+              aria-label="Lọc theo phạt"
+            >
+              <option value="all">Tất cả phạt</option>
+              <option value="with">Có phạt</option>
+              <option value="without">Không phạt</option>
+            </select>
+            {subTab === "accessories" && (
+              <select
+                value={accStatusFilter}
+                onChange={(e) => setAccStatusFilter(e.target.value)}
+                className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                aria-label="Lọc kết quả kiểm tra phụ kiện"
+              >
+                <option value="all">Tất cả kết quả</option>
+                <option value="good">Tốt</option>
+                <option value="laundry">Cần giặt sấy</option>
+                <option value="maintenance">Cần bảo trì</option>
+                <option value="damaged">Hư hỏng</option>
+                <option value="lost">Mất</option>
+              </select>
+            )}
+          </div>
+
+          {subTab === "garments" ? (
+          <>
+          <div className="flex flex-wrap gap-2">
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -3788,21 +4220,11 @@ function InspectionLogTab({
                 </option>
               ))}
             </select>
-            <select
-              value={penaltyFilter}
-              onChange={(e) => setPenaltyFilter(e.target.value)}
-              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
-              aria-label="Lọc theo phạt"
-            >
-              <option value="all">Tất cả phạt</option>
-              <option value="with">Có phạt</option>
-              <option value="without">Không phạt</option>
-            </select>
           </div>
 
           {filteredLog.length === 0 ? (
             <div className="py-20 text-center text-stone-400">
-              Không tìm thấy phiên kiểm tra phù hợp.
+              {log.length === 0 ? "Chưa có phiên kiểm tra nào." : "Không tìm thấy phiên kiểm tra phù hợp."}
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
@@ -3860,7 +4282,140 @@ function InspectionLogTab({
               </table>
             </div>
           )}
+          </>
+          ) : (
+          <>
+          {/* Accessory inspection log */}
+          <div>
+            {filteredAccLog.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-sand bg-white py-10 text-center text-sm text-stone-400">
+                Chưa có lượt kiểm tra phụ kiện nào.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-mist text-xs uppercase tracking-[0.14em] text-stone-500">
+                    <tr>
+                      <th className="px-6 py-3">Mã tài sản</th>
+                      <th className="px-6 py-3">Phụ kiện</th>
+                      <th className="px-6 py-3">Kết quả</th>
+                      <th className="px-6 py-3">Người kiểm tra</th>
+                      <th className="px-6 py-3">Ghi chú</th>
+                      <th className="px-6 py-3">Phạt</th>
+                      <th className="px-6 py-3">Ảnh</th>
+                      <th className="px-6 py-3">Đơn</th>
+                      <th className="px-6 py-3">Ngày kiểm tra</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-sand">
+                    {filteredAccLog.map((entry) => {
+                      const meta = accConditionMeta[entry.conditionStatus ?? ""] ?? {
+                        label: entry.conditionStatus ?? "—",
+                        color: "bg-stone-100 text-stone-600",
+                      };
+                      return (
+                        <tr key={entry.id} className="transition hover:bg-mist">
+                          <td className="px-6 py-4 font-semibold text-ink">
+                            {entry.assetCode ?? "—"}
+                          </td>
+                          <td className="px-6 py-4 text-stone-600">
+                            {entry.accessoryName}
+                            {entry.quantity > 1 ? ` × ${entry.quantity}` : ""}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
+                              {meta.label}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-stone-600">
+                            {entry.inspectorName ?? "—"}
+                          </td>
+                          <td className="max-w-[220px] truncate px-6 py-4 text-stone-600" title={entry.conditionNote ?? ""}>
+                            {entry.conditionNote ?? "—"}
+                          </td>
+                          <td className="px-6 py-4 text-red-700">
+                            {entry.penaltyAmount > 0 ? formatVND(entry.penaltyAmount) : "—"}
+                          </td>
+                          <td className="px-6 py-4">
+                            {entry.conditionStatus === "damaged" && (entry.imageUrls ?? []).length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setViewingImages({
+                                    title: `${entry.accessoryName} (${entry.assetCode ?? "—"})`,
+                                    images: entry.imageUrls ?? [],
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-parchment"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">imagesmode</span>
+                                Xem ảnh ({(entry.imageUrls ?? []).length})
+                              </button>
+                            ) : (
+                              <span className="text-stone-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-xs text-stone-500">
+                            #{entry.bookingId.slice(0, 8).toUpperCase()}
+                          </td>
+                          <td className="px-6 py-4 text-stone-500">
+                            {entry.inspectedAt ? entry.inspectedAt.slice(0, 10) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          </>
+          )}
         </>
+      )}
+
+      {viewingImages && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setViewingImages(null)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-semibold text-ink">
+                Ảnh hư hỏng — {viewingImages.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setViewingImages(null)}
+                className="rounded-full p-1.5 text-stone-400 transition hover:bg-mist hover:text-ink"
+                aria-label="Đóng"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="grid max-h-[70vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+              {viewingImages.images.map((url, idx) => (
+                <a
+                  key={`${url}-${idx}`}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block overflow-hidden rounded-lg border border-sand bg-mist"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt={`Ảnh hư hỏng ${idx + 1}`}
+                    className="aspect-square w-full object-cover transition hover:scale-105"
+                  />
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3875,17 +4430,21 @@ function LaundryTab({
   loading,
   actioningId,
   onComplete,
+  accLaundry,
+  onCompleteAccessory,
 }: {
   tickets: LaundryTicketResponse[];
   loading: boolean;
   actioningId: string | null;
   onComplete: (id: string) => Promise<void>;
+  accLaundry: AccessoryProcessingItem[];
+  onCompleteAccessory: (assetId: string) => Promise<void>;
 }) {
   return (
     <div className="space-y-4">
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
-      ) : tickets.length === 0 ? (
+      ) : tickets.length === 0 && accLaundry.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
           Không có đồ cần giặt sấy.
         </div>
@@ -3920,6 +4479,45 @@ function LaundryTab({
               </div>
             </div>
           ))}
+          {accLaundry.map((a) => (
+            <div
+              key={`acc-${a.id}`}
+              className="rounded-xl border border-antique/40 bg-parchment/40 p-5 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-1.5 font-semibold text-ink">
+                    <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                    {a.assetCode}
+                  </p>
+                  <p className="mt-0.5 text-sm text-stone-500">
+                    Phụ kiện: {a.accessoryName}
+                  </p>
+                </div>
+                <span className="rounded-full bg-state-laundry/10 text-state-laundry px-2 py-0.5 text-xs font-semibold">
+                  Chờ giặt
+                </span>
+              </div>
+              {a.conditionNote && (
+                <p className="mt-2 text-xs text-stone-500">{a.conditionNote}</p>
+              )}
+              {a.bookingId && (
+                <p className="mt-1 text-xs text-stone-400">
+                  Đơn #{a.bookingId.slice(0, 8).toUpperCase()}
+                </p>
+              )}
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  disabled={actioningId === `acc-${a.id}`}
+                  onClick={() => onCompleteAccessory(a.id)}
+                  className="rounded-lg bg-jade px-4 py-2 text-xs font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                >
+                  {actioningId === `acc-${a.id}` ? "..." : "Hoàn tất giặt"}
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -3936,12 +4534,18 @@ function DamagedTab({
   loading,
   actioningId,
   onComplete,
+  accDamaged,
+  onAccCompleteMaintenance,
+  onAccToMaintenance,
 }: {
   jobs: MaintenanceJobResponse[];
   damagedAssets: AssetDetail[];
   loading: boolean;
   actioningId: string | null;
   onComplete: (id: string, status: CompleteMaintenanceStatus) => Promise<void>;
+  accDamaged: AccessoryProcessingItem[];
+  onAccCompleteMaintenance: (assetId: string) => Promise<void>;
+  onAccToMaintenance: (assetId: string) => Promise<void>;
 }) {
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -3953,11 +4557,16 @@ function DamagedTab({
   const directDamagedAssets = damagedAssets.filter(
     (asset) => !maintenanceAssetIds.has(asset.id),
   );
+  const accStatusMeta: Record<string, { label: string; color: string }> = {
+    maintenance: { label: "Cần bảo trì", color: "bg-orange-100 text-orange-700" },
+    damaged: { label: "Hư hỏng", color: "bg-red-100 text-red-700" },
+    lost: { label: "Mất — đã tính đền", color: "bg-red-200 text-red-800" },
+  };
   return (
     <div className="space-y-4">
       {loading ? (
         <div className="py-20 text-center text-stone-400">Đang tải...</div>
-      ) : jobs.length === 0 && directDamagedAssets.length === 0 ? (
+      ) : jobs.length === 0 && directDamagedAssets.length === 0 && accDamaged.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
           Không có tài sản hư hỏng hoặc bảo trì.
         </div>
@@ -4062,6 +4671,69 @@ function DamagedTab({
               </p>
             </div>
           ))}
+          {accDamaged.map((a) => {
+            const meta = accStatusMeta[a.status] ?? {
+              label: a.status,
+              color: "bg-stone-100 text-stone-600",
+            };
+            return (
+              <div
+                key={`acc-${a.id}`}
+                className="rounded-xl border border-antique/40 bg-parchment/40 p-5 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="flex items-center gap-1.5 font-semibold text-ink">
+                      <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                      {a.assetCode}
+                    </p>
+                    <p className="mt-0.5 text-sm text-stone-500">
+                      Phụ kiện: {a.accessoryName}
+                    </p>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
+                    {meta.label}
+                  </span>
+                </div>
+                {a.conditionNote && (
+                  <p className="mt-2 text-xs text-stone-500">{a.conditionNote}</p>
+                )}
+                {a.status === "lost" && (
+                  <p className="mt-2 text-xs font-semibold text-red-700">
+                    Đền {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(a.replacementValue)} — đã trừ vào cọc
+                  </p>
+                )}
+                {a.bookingId && (
+                  <p className="mt-1 text-xs text-stone-400">
+                    Đơn #{a.bookingId.slice(0, 8).toUpperCase()}
+                  </p>
+                )}
+                {a.status !== "lost" && (
+                  <div className="mt-4 flex gap-2 justify-end">
+                    {a.status === "maintenance" ? (
+                      <button
+                        type="button"
+                        disabled={actioningId === `acc-${a.id}`}
+                        onClick={() => onAccCompleteMaintenance(a.id)}
+                        className="rounded-lg bg-jade px-3 py-2 text-xs font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                      >
+                        {actioningId === `acc-${a.id}` ? "..." : "Hoàn tất"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={actioningId === `acc-${a.id}`}
+                        onClick={() => onAccToMaintenance(a.id)}
+                        className="rounded-lg border border-orange-300 px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-50 disabled:opacity-50"
+                      >
+                        {actioningId === `acc-${a.id}` ? "..." : "Chuyển bảo trì"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

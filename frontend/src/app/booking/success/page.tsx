@@ -133,6 +133,31 @@ function BookingSuccessInner() {
                   ))}
                 </div>
 
+                {(booking.accessories ?? []).length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
+                      <span className="material-symbols-outlined text-[15px]">diamond</span>
+                      Phụ kiện thuê kèm ({(booking.accessories ?? []).length})
+                    </h3>
+                    <div className="mt-3 space-y-3">
+                      {(booking.accessories ?? []).map((acc) => (
+                        <div
+                          key={acc.id}
+                          className="flex items-center justify-between gap-4 rounded-lg border border-sand bg-mist/60 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-ink">{acc.accessoryName ?? "Phụ kiện"}</p>
+                            <p className="text-xs text-stone-500">Số lượng: {acc.quantity}</p>
+                          </div>
+                          <p className={`shrink-0 text-sm font-medium ${acc.isIncluded ? "text-jade" : "text-stone-600"}`}>
+                            {acc.isIncluded ? "Đi kèm miễn phí" : `${formatVND(acc.unitPrice)}/ngày`}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <dl className="mt-6 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
                   <div className="flex justify-between gap-4 border-b border-sand pb-3 sm:border-0 sm:pb-0">
                     <dt className="text-stone-500">Thời gian thuê</dt>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { StaffPortalShell } from "@/components/heritage/ui";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { uploadFile } from "@/lib/upload";
 import {
   getStaffReturnBookings,
   getBookingInspections,
@@ -10,9 +11,11 @@ import {
   addInspectionFinding,
   addInspectionPhoto,
   completeInspection,
+  inspectBookingAccessory,
   type StaffBookingResponse,
   type InspectionSessionResponse,
   type BookingItem,
+  type BookingAccessoryItem,
 } from "@/lib/api";
 
 // ── Helpers ──
@@ -29,6 +32,28 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "completed";
+
+type AccInspectionState = "missing_asset" | "not_started" | "good" | "laundry" | "maintenance" | "damaged" | "lost";
+
+const ACC_STATE_META: Record<AccInspectionState, { label: string; color: string; icon: string }> = {
+  missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: "warning" },
+  not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: "radio_button_unchecked" },
+  good: { label: "Tốt", color: "bg-jade/10 text-jade", icon: "check_circle" },
+  laundry: { label: "Cần giặt sấy", color: "bg-amber-100 text-amber-700", icon: "dry_cleaning" },
+  maintenance: { label: "Cần bảo trì", color: "bg-orange-100 text-orange-700", icon: "build_circle" },
+  damaged: { label: "Hư hỏng", color: "bg-red-100 text-red-700", icon: "error" },
+  lost: { label: "Mất — đã tính đền", color: "bg-red-200 text-red-800", icon: "search_off" },
+};
+
+const ACC_CONDITION_OPTIONS = [
+  { key: "good", label: "Tốt — sẵn sàng cho thuê lại" },
+  { key: "laundry", label: "Cần giặt sấy" },
+  { key: "maintenance", label: "Cần bảo trì" },
+  { key: "damaged", label: "Hư hỏng — nhập phiếu phạt" },
+  { key: "lost", label: "Mất — đền theo giá trị" },
+] as const;
+
+const ACC_INSPECTABLE_STATUSES = ["returned", "inspection_pending"];
 
 const ITEM_STATE_META: Record<ItemInspectionState, { label: string; color: string; icon: string }> = {
   missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: "warning" },
@@ -76,6 +101,47 @@ export default function StaffInspectionPage() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [actioning, setActioning] = useState<string | null>(null);
   const [currentNote, setCurrentNote] = useState("");
+
+  // Accessory inspection form state (per accessory row)
+  const [accInspect, setAccInspect] = useState<Record<string, { status: string; note: string; penalty: string; images: string[] }>>({});
+  const [inspectingAcc, setInspectingAcc] = useState<string | null>(null);
+  const [uploadingAccPhoto, setUploadingAccPhoto] = useState<string | null>(null);
+
+  async function handleAccPhotoSelect(accId: string, files: FileList | null) {
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    const form = accInspect[accId] ?? { status: "damaged", note: "", penalty: "", images: [] };
+    if (form.images.length + list.length > 5) {
+      setErrorMsg("Mỗi dòng phụ kiện tải tối đa 5 ảnh.");
+      return;
+    }
+    setUploadingAccPhoto(accId);
+    setErrorMsg(null);
+    try {
+      const uploaded: string[] = [];
+      for (const file of list.slice(0, 5 - form.images.length)) {
+        uploaded.push(await uploadFile(file, "handover"));
+      }
+      setAccInspect((prev) => {
+        const current = prev[accId] ?? { status: "damaged", note: "", penalty: "", images: [] };
+        return { ...prev, [accId]: { ...current, images: [...current.images, ...uploaded] } };
+      });
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : "Tải ảnh thất bại.");
+    } finally {
+      setUploadingAccPhoto(null);
+    }
+  }
+
+  function getAccInspectionState(acc: BookingAccessoryItem): AccInspectionState {
+    if (!acc.accessoryAssetId) return "missing_asset";
+    if (acc.conditionStatus === "good") return "good";
+    if (acc.conditionStatus === "laundry") return "laundry";
+    if (acc.conditionStatus === "maintenance") return "maintenance";
+    if (acc.conditionStatus === "damaged") return "damaged";
+    if (acc.conditionStatus === "lost") return "lost";
+    return "not_started";
+  }
 
   // 1. Load return queue
   const refreshReturnBookings = useCallback(() => {
@@ -246,8 +312,39 @@ export default function StaffInspectionPage() {
     }
   }
 
-  async function handleComplete(finalAssetStatus: string) {
-    if (!activeSession) return;
+  async function handleInspectAccessory(accId: string) {
+    if (!booking) return;
+    const form = accInspect[accId] ?? { status: "good", note: "", penalty: "", images: [] };
+    setInspectingAcc(accId);
+    setErrorMsg(null);
+    const res = await inspectBookingAccessory(booking.id, accId, {
+      conditionStatus: form.status as "good" | "laundry" | "maintenance" | "damaged" | "lost",
+      note: form.note.trim() || undefined,
+      // Hư hỏng: phiếu phạt staff nhập. Mất: backend tự lấy giá đền nên không gửi.
+      penaltyAmount: form.status === "damaged" && form.penalty.trim() ? Number(form.penalty) : undefined,
+      imageUrls: form.status === "damaged" && form.images.length > 0 ? form.images : undefined,
+    });
+    setInspectingAcc(null);
+    if (res.success && res.data) {
+      setAccInspect((prev) => {
+        const next = { ...prev };
+        delete next[accId];
+        return next;
+      });
+      // Cập nhật badge ngay từ response để không nháy lại form trống
+      // trong lúc chờ tải lại danh sách.
+      const updatedAccessories = res.data.accessories ?? [];
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === booking.id ? { ...b, accessories: updatedAccessories } : b,
+        ),
+      );
+    } else {
+      setErrorMsg(res.message ?? "Không thể ghi nhận kiểm tra phụ kiện.");
+    }
+  }
+
+  async function handleComplete(finalAssetStatus: string) {    if (!activeSession) return;
     setActioning(`complete-${finalAssetStatus}`);
     setErrorMsg(null);
     const res = await completeInspection(activeSession.id, {
@@ -473,6 +570,166 @@ export default function StaffInspectionPage() {
                           </span>
                         </div>
                       </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* Accessories */}
+            {booking && (booking.accessories ?? []).length > 0 && (
+              <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
+                <div className="mb-4 flex items-center justify-between border-b border-sand pb-3">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">
+                    Phụ kiện trong đơn
+                  </h2>
+                  <span className="text-xs text-stone-400">{(booking.accessories ?? []).length} món</span>
+                </div>
+                <div className="space-y-2">
+                  {(booking.accessories ?? []).map((acc) => {
+                    const state = getAccInspectionState(acc);
+                    const meta = ACC_STATE_META[state];
+                    const form = accInspect[acc.id] ?? { status: "good", note: "", penalty: "", images: [] };
+                    const inspectable =
+                      ACC_INSPECTABLE_STATUSES.includes(booking.status) &&
+                      Boolean(acc.accessoryAssetId) &&
+                      state === "not_started";
+                    return (
+                      <div key={acc.id} className="rounded-lg border border-sand bg-white p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-ink">
+                              {acc.accessoryName ?? "Phụ kiện"}
+                              {acc.quantity > 1 ? <span className="ml-1 text-stone-500">× {acc.quantity}</span> : null}
+                            </p>
+                            <p className="mt-1 text-xs text-stone-500">
+                              {acc.assetCode ? `Asset: ${acc.assetCode}` : acc.accessoryAssetId ? "Asset: Đã gán" : "Chưa gán asset"}
+                            </p>
+                            {acc.conditionNote && (
+                              <p className="mt-1 text-xs italic text-stone-500">Ghi chú: {acc.conditionNote}</p>
+                            )}
+                          </div>
+                          <span className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
+                            <span className="material-symbols-outlined text-[14px]">{meta.icon}</span>
+                            {meta.label}
+                          </span>
+                        </div>
+                        {inspectable && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-sand pt-3">
+                            <select
+                              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                              value={form.status}
+                              onChange={(e) =>
+                                setAccInspect((prev) => ({
+                                  ...prev,
+                                  [acc.id]: { ...form, status: e.target.value },
+                                }))
+                              }
+                              aria-label="Tình trạng phụ kiện"
+                            >
+                              {ACC_CONDITION_OPTIONS.map((opt) => (
+                                <option key={opt.key} value={opt.key}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              className="min-w-[160px] flex-1 rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+                              placeholder="Ghi chú (nếu có)..."
+                              value={form.note}
+                              onChange={(e) =>
+                                setAccInspect((prev) => ({
+                                  ...prev,
+                                  [acc.id]: { ...form, note: e.target.value },
+                                }))
+                              }
+                            />
+                            {form.status === "damaged" && (
+                              <input
+                                className="w-40 rounded-lg border border-red-300 bg-red-50/50 px-3 py-2 text-sm outline-none focus:border-red-400"
+                                placeholder="Phiếu phạt (VNĐ)..."
+                                type="number"
+                                min={0}
+                                value={form.penalty}
+                                onChange={(e) =>
+                                  setAccInspect((prev) => ({
+                                    ...prev,
+                                    [acc.id]: { ...form, penalty: e.target.value },
+                                  }))
+                                }
+                                aria-label="Phiếu phạt hư hỏng"
+                              />
+                            )}
+                            {form.status === "lost" && (
+                              <span className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                                Tự động đền{" "}
+                                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.replacementValue ?? 0)}
+                                {" "}— trừ vào cọc
+                              </span>
+                            )}
+                            {form.status === "damaged" && (
+                              <div className="flex w-full flex-col gap-2 rounded-lg border border-dashed border-sand bg-mist p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <label className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-parchment">
+                                    {uploadingAccPhoto === acc.id ? "Đang tải..." : "+ Tải ảnh hư hỏng"}
+                                    <input
+                                      type="file"
+                                      accept="image/jpeg,image/png,image/webp"
+                                      multiple
+                                      hidden
+                                      disabled={uploadingAccPhoto === acc.id}
+                                      onChange={(e) => {
+                                        void handleAccPhotoSelect(acc.id, e.target.files);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                  <span className="text-[11px] text-stone-500">
+                                    Tối đa 5 ảnh ({form.images.length}/5)
+                                  </span>
+                                </div>
+                                {form.images.length > 0 && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {form.images.map((url, idx) => (
+                                      <div key={`${url}-${idx}`} className="relative h-16 w-16 overflow-hidden rounded-lg border border-sand">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={url} alt={`Ảnh hư hỏng ${idx + 1}`} className="h-full w-full object-cover" />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setAccInspect((prev) => {
+                                              const current = prev[acc.id] ?? form;
+                                              return {
+                                                ...prev,
+                                                [acc.id]: {
+                                                  ...current,
+                                                  images: current.images.filter((_, i) => i !== idx),
+                                                },
+                                              };
+                                            })
+                                          }
+                                          className="absolute right-0.5 top-0.5 rounded-full bg-black/60 px-1.5 text-xs leading-5 text-white"
+                                          aria-label={`Xóa ảnh ${idx + 1}`}
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              disabled={inspectingAcc === acc.id}
+                              onClick={() => handleInspectAccessory(acc.id)}
+                              className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+                            >
+                              {inspectingAcc === acc.id ? "..." : "Xác nhận kiểm tra"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

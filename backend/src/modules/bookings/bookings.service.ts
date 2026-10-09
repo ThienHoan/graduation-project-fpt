@@ -7,18 +7,22 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { LocationsService } from "../locations/locations.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { VouchersService, type VoucherOrderLine } from "../vouchers/vouchers.service";
+import { InspectionsService } from "../inspections/inspections.service";
 import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
+import type { CheckAccessoryAvailabilityDto } from "./dto/check-accessory-availability.dto";
 import type { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import type { CreateBookingDto } from "./dto/create-booking.dto";
 import type { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 import type { AssignAssetDto } from "./dto/assign-asset.dto";
+import type { AssignAccessoryAssetDto } from "./dto/assign-accessory-asset.dto";
+import type { InspectBookingAccessoryDto } from "./dto/inspect-booking-accessory.dto";
 import type { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import type { MarkPaidDto } from "./dto/mark-paid.dto";
 import type { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import type { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import type { AuthenticatedUser } from "../auth/auth-user";
-import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday } from "./booking-inventory";
-import { assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
+import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday, loadAccessoryInventory, accessoryAvailability } from "./booking-inventory";
+import { assertAccessoryAssetScheduleAvailable, assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
 import { readBookingDeliverySnapshot, serializeAddressSnapshot } from "./booking-delivery";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import { assertOwnedEvidenceUrls } from "../../common/validation/evidence-url";
@@ -117,6 +121,21 @@ const OPERATIONAL_ROLES: AppRole[] = [
   AppRole.admin,
 ];
 
+/** Đơn đã trả đồ mới được kiểm tra phụ kiện (mirror garment inspection). */
+const ACCESSORY_INSPECTABLE_STATUSES: BookingStatus[] = [
+  BookingStatus.returned,
+  BookingStatus.inspection_pending,
+];
+
+/** Kết quả kiểm tra phụ kiện → trạng thái asset (mirror garment complete). */
+const ACCESSORY_CONDITION_TO_ASSET_STATUS: Record<string, AssetStatus> = {
+  good: AssetStatus.available,
+  laundry: AssetStatus.laundry,
+  maintenance: AssetStatus.maintenance,
+  damaged: AssetStatus.damaged,
+  lost: AssetStatus.lost,
+};
+
 const STAFF_ALLOWED_TRANSITIONS: Partial<Record<BookingStatus, BookingStatus[]>> = {
   [BookingStatus.pending_confirmation]: [BookingStatus.awaiting_payment, BookingStatus.confirmed, BookingStatus.rejected],
   [BookingStatus.confirmed]: [BookingStatus.awaiting_payment, BookingStatus.cancelled],
@@ -139,6 +158,7 @@ export class BookingsService {
     private readonly pricing: PricingService,
     private readonly realtime: RealtimeService,
     @Optional() private readonly vouchers?: VouchersService,
+    @Optional() private readonly inspections?: InspectionsService,
   ) { }
 
   // Ngày hiện tại theo giờ Việt Nam, dạng "YYYY-MM-DD"
@@ -228,6 +248,32 @@ export class BookingsService {
     return ok({
       garmentSizeId: dto.garmentSizeId,
       available: available > 0,
+      availableCount: available,
+      totalAssets: capacity,
+    });
+  }
+
+  /**
+   * Tồn kho phụ kiện theo khoảng ngày: nhu cầu (các dòng phụ kiện của đơn còn
+   * hiệu lực, trùng ngày) so với sức chứa (asset khả dụng). Dùng cho trang
+   * chọn ngày thuê để báo đỏ phụ kiện hết hàng như trang phục.
+   */
+  async checkAccessoryAvailability(dto: CheckAccessoryAvailabilityDto) {
+    const accessory = await this.prisma.accessories.findFirst({
+      where: { id: dto.accessoryId, is_active: true },
+    });
+    if (!accessory) throw new NotFoundException("Accessory not found.");
+
+    const { startDay, endDay } = parseRentalDateRange(dto.startDate, dto.endDate);
+    const needed = dto.quantity ?? 1;
+
+    const { capacity, available } = accessoryAvailability(
+      await loadAccessoryInventory(this.prisma, dto.accessoryId, startDay, endDay),
+    );
+
+    return ok({
+      accessoryId: dto.accessoryId,
+      available: available >= needed,
       availableCount: available,
       totalAssets: capacity,
     });
@@ -353,6 +399,77 @@ export class BookingsService {
       throw new BadRequestException("Hệ thống voucher chưa sẵn sàng.");
     }
 
+    // ── Phụ kiện thuê kèm (booking_accessory_items) ──────────────────────────
+    // Client gửi [{ garmentSizeId, accessoryId }] — mỗi cặp gắn vào 1 booking item.
+    // Validate: size phải thuộc đơn + phụ kiện phải được gắn với garment đó
+    // (bảng garment_accessories). Giá snapshot từ extra_price (₫/ngày).
+    type ResolvedAccessory = {
+      garmentSizeId: string;
+      accessoryId: string;
+      quantity: number;
+      unitPrice: number;
+      isIncluded: boolean;
+      lineTotal: number;
+    };
+    let resolvedAccessories: ResolvedAccessory[] = [];
+    // Số đơn vị yêu cầu cho mỗi phụ kiện trong chính đơn này.
+    const requestedQtyByAccessory = new Map<string, number>();
+    if (dto.accessories?.length) {
+      const seen = new Set<string>();
+      const deduped = (dto.accessories ?? []).filter((a) => {
+        const key = `${a.garmentSizeId}::${a.accessoryId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const sizeIdsInOrder = new Set(dto.garmentSizeIds);
+      for (const a of deduped) {
+        if (!sizeIdsInOrder.has(a.garmentSizeId)) {
+          throw new BadRequestException("Phụ kiện phải thuộc một sản phẩm trong đơn.");
+        }
+      }
+      const garmentIds = [...new Set(sizes.map((s) => s.garment_id))];
+      const links = await this.prisma.garment_accessories.findMany({
+        where: {
+          garment_id: { in: garmentIds },
+          accessory_id: { in: [...new Set(deduped.map((a) => a.accessoryId))] },
+        },
+      });
+      const linkByKey = new Map(links.map((l) => [`${l.garment_id}::${l.accessory_id}`, l]));
+      let accessorySubtotal = 0;
+      for (const a of deduped) {
+        const size = sizeMap.get(a.garmentSizeId)!;
+        const link = linkByKey.get(`${size.garment_id}::${a.accessoryId}`);
+        if (!link) {
+          throw new BadRequestException(
+            `Phụ kiện không thuộc sản phẩm "${size.garments.name}". Vui lòng chọn lại.`,
+          );
+        }
+        const quantity = link.quantity ?? 1;
+        const isIncluded = link.is_included ?? true;
+        const unitPrice = isIncluded ? 0 : Number(link.extra_price ?? 0);
+        requestedQtyByAccessory.set(
+          a.accessoryId,
+          (requestedQtyByAccessory.get(a.accessoryId) ?? 0) + quantity,
+        );
+        // Mỗi đơn vị phụ kiện là 1 dòng riêng (quantity = 1) để gán được
+        // từng tài sản vật lý (1 asset cho 1 đơn vị).
+        const lineTotalPerUnit = unitPrice * days;
+        accessorySubtotal += lineTotalPerUnit * quantity;
+        for (let u = 0; u < quantity; u++) {
+          resolvedAccessories.push({
+            garmentSizeId: a.garmentSizeId,
+            accessoryId: a.accessoryId,
+            quantity: 1,
+            unitPrice,
+            isIncluded,
+            lineTotal: lineTotalPerUnit,
+          });
+        }
+      }
+      subtotal += accessorySubtotal;
+    }
+
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
     const booking = await this.prisma.runSerializable(async (tx) => {
@@ -374,6 +491,27 @@ export class BookingsService {
             throw new BadRequestException(
               `"${s.garments.name}" (${s.size_label ?? "—"}) không còn đủ sản phẩm khả dụng cho khoảng thời gian đã chọn.`,
             );
+          }
+        }
+
+        // Tồn kho phụ kiện đi kèm: chặn đơn khi phụ kiện đã tick không còn đủ
+        // asset khả dụng cho khoảng ngày (tính chung transaction để tránh oversell).
+        if (requestedQtyByAccessory.size > 0) {
+          const accNames = new Map(
+            (await tx.accessories.findMany({
+              where: { id: { in: [...requestedQtyByAccessory.keys()] } },
+              select: { id: true, name: true },
+            })).map((a) => [a.id, a.name] as const),
+          );
+          for (const [accessoryId, requestedQty] of requestedQtyByAccessory) {
+            const { capacity, committed } = accessoryAvailability(
+              await loadAccessoryInventory(tx, accessoryId, startDay, endDay),
+            );
+            if (committed + requestedQty > capacity) {
+              throw new BadRequestException(
+                `Phụ kiện "${accNames.get(accessoryId) ?? accessoryId}" không còn đủ số lượng khả dụng cho khoảng thời gian đã chọn.`,
+              );
+            }
           }
         }
 
@@ -418,10 +556,44 @@ export class BookingsService {
                 garmentAsset: true,
               },
             },
+            accessoryItems: {
+              include: {
+                accessory: true,
+                accessoryAsset: true,
+                bookingItem: true,
+              },
+            },
             deliveryAddress: true,
             deliveryRecords: { orderBy: { createdAt: "desc" } },
           },
         });
+        if (resolvedAccessories.length > 0) {
+          // Gắn mỗi phụ kiện vào booking item đầu tiên có cùng garment_size_id.
+          const itemQueueBySize = new Map<string, Array<{ id: string }>>();
+          for (const item of created.items as Array<{ id: string; garment_size_id: string | null }>) {
+            if (!item.garment_size_id) continue;
+            const queue = itemQueueBySize.get(item.garment_size_id) ?? [];
+            queue.push({ id: item.id });
+            itemQueueBySize.set(item.garment_size_id, queue);
+          }
+          for (const acc of resolvedAccessories) {
+            // Nhiều dòng đơn vị có thể chung 1 booking item (không shift queue).
+            const queue = itemQueueBySize.get(acc.garmentSizeId);
+            const target = queue?.[0];
+            if (!target) continue;
+            await tx.bookingAccessoryItem.create({
+              data: {
+                bookingId: created.id,
+                bookingItemId: target.id,
+                accessoryId: acc.accessoryId,
+                quantity: acc.quantity,
+                unitPrice: acc.unitPrice,
+                isIncluded: acc.isIncluded,
+                rentalTotal: acc.lineTotal,
+              },
+            });
+          }
+        }
         if (voucherEval) {
           await this.vouchers!.consume(tx, voucherEval, customerId, created.id);
         }
@@ -462,6 +634,13 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
+          },
+        },
         deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
@@ -476,6 +655,13 @@ export class BookingsService {
           include: {
             garment_sizes: { include: { garments: true } },
             garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
           },
         },
         deliveryRecords: { orderBy: { createdAt: "desc" } },
@@ -534,6 +720,13 @@ export class BookingsService {
               garmentAsset: true,
             },
           },
+          accessoryItems: {
+            include: {
+              accessory: true,
+              accessoryAsset: true,
+              bookingItem: true,
+            },
+          },
           deliveryRecords: { orderBy: { createdAt: "desc" } },
         },
       });
@@ -581,6 +774,13 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
+          },
+        },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
         deliveryAddress: true,
@@ -600,6 +800,13 @@ export class BookingsService {
           include: {
             garment_sizes: { include: { garments: true } },
             garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
           },
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
@@ -627,6 +834,13 @@ export class BookingsService {
           include: {
             garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
           },
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
@@ -663,6 +877,13 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
+          },
+        },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
         payments: { where: { status: PaymentStatus.paid }, take: 1 },
         deliveryRecords: { orderBy: { createdAt: "desc" } },
@@ -679,7 +900,10 @@ export class BookingsService {
     const bookings = await this.prisma.booking.findMany({
       where: {
         status: { in: [BookingStatus.confirmed, BookingStatus.awaiting_payment, BookingStatus.paid, BookingStatus.preparing] },
-        items: { some: { garmentAssetId: null } },
+        OR: [
+          { items: { some: { garmentAssetId: null } } },
+          { accessoryItems: { some: { accessoryAssetId: null } } },
+        ],
       },
       orderBy: { createdAt: "asc" },
       include: {
@@ -687,6 +911,13 @@ export class BookingsService {
           include: {
             garment_sizes: { include: { garments: true } },
             garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
           },
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
@@ -712,6 +943,13 @@ export class BookingsService {
           include: {
             garment_sizes: { include: { garments: true } },
             garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
           },
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
@@ -961,6 +1199,16 @@ export class BookingsService {
             `All booking items must have an assigned asset before transitioning to '${dto.status}'. (${assignedCount}/${itemCount})`,
           );
         }
+        const accessoryItems = await tx.bookingAccessoryItem.findMany({
+          where: { bookingId: id },
+          select: { id: true, accessoryAssetId: true },
+        });
+        const unassignedAccessories = accessoryItems.filter((a) => !a.accessoryAssetId).length;
+        if (unassignedAccessories > 0) {
+          throw new BadRequestException(
+            `All booking accessories must have an assigned asset before transitioning to '${dto.status}'. (${unassignedAccessories} chưa gán)`,
+          );
+        }
       }
 
       if (dto.status === BookingStatus.completed && booking.status === BookingStatus.inspection_pending) {
@@ -1035,6 +1283,13 @@ export class BookingsService {
             include: {
               garment_sizes: { include: { garments: true } },
               garmentAsset: true,
+            },
+          },
+          accessoryItems: {
+            include: {
+              accessory: true,
+              accessoryAsset: true,
+              bookingItem: true,
             },
           },
           payments: true,
@@ -1154,6 +1409,13 @@ export class BookingsService {
             garmentAsset: true,
           },
         },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
+          },
+        },
         deliveryRecords: { orderBy: { createdAt: "desc" } },
       },
     });
@@ -1167,6 +1429,278 @@ export class BookingsService {
     });
 
     return ok(this.serializeBooking(updated));
+  }
+
+  /**
+   * Gán tài sản phụ kiện cụ thể cho 1 dòng phụ kiện trong booking.
+   * Mirror của assignAsset nhưng cho accessory_assets (qua booking_accessory_items).
+   */
+  async assignAccessoryAsset(bookingId: string, accessoryItemId: string, dto: AssignAccessoryAssetDto, staffId?: string) {
+    const assignableStatuses: BookingStatus[] = [
+      BookingStatus.confirmed,
+      BookingStatus.awaiting_payment,
+      BookingStatus.paid,
+      BookingStatus.preparing,
+    ];
+    let assignedAssetCode: string | null = null;
+
+    await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { accessoryItems: true },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (!assignableStatuses.includes(booking.status)) {
+        throw new BadRequestException(
+          `Không thể gán asset khi booking đang ở trạng thái '${booking.status}'.`,
+        );
+      }
+
+      const accessoryItem = booking.accessoryItems.find((candidate) => candidate.id === accessoryItemId);
+      if (!accessoryItem) throw new NotFoundException("Booking accessory item not found.");
+      if (accessoryItem.accessoryAssetId) throw new BadRequestException("Accessory item already has an assigned asset.");
+
+      const asset = await tx.accessory_assets.findUnique({
+        where: { id: dto.accessoryAssetId },
+      });
+      if (!asset) throw new NotFoundException("Accessory asset not found.");
+      this.assertAssetRentable(asset.status);
+
+      await assertAccessoryAssetScheduleAvailable(tx, {
+        assetId: asset.id, bookingId, accessoryItemId,
+        startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+        accessoryId: accessoryItem.accessoryId,
+      });
+
+      // Dòng legacy có quantity > 1 (tạo trước khi tách theo đơn vị):
+      // tách phần còn lại thành dòng mới để mỗi dòng luôn là 1 đơn vị / 1 asset.
+      const legacyQty = accessoryItem.quantity ?? 1;
+      const perUnitTotal = Number(accessoryItem.unitPrice ?? 0)
+        * parseRentalDateRange(booking.rentalStartDate, booking.rentalEndDate).days;
+      await tx.bookingAccessoryItem.update({
+        where: { id: accessoryItemId },
+        data: { quantity: 1, accessoryAssetId: dto.accessoryAssetId, rentalTotal: perUnitTotal },
+      });
+      if (legacyQty > 1) {
+        await tx.bookingAccessoryItem.create({
+          data: {
+            bookingId,
+            bookingItemId: accessoryItem.bookingItemId,
+            accessoryId: accessoryItem.accessoryId,
+            quantity: legacyQty - 1,
+            unitPrice: accessoryItem.unitPrice ?? 0,
+            isIncluded: accessoryItem.isIncluded ?? true,
+            rentalTotal: perUnitTotal * (legacyQty - 1),
+          },
+        });
+      }
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          fromStatus: booking.status,
+          toStatus: booking.status,
+          changedBy: staffId ?? null,
+          note: `Gán accessory asset ${asset.asset_code}`,
+        },
+      });
+      assignedAssetCode = asset.asset_code;
+    });
+
+    const updated = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        items: {
+          include: {
+            garment_sizes: { include: { garments: true } },
+            garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+            bookingItem: true,
+          },
+        },
+        deliveryRecords: { orderBy: { createdAt: "desc" } },
+      },
+    });
+    if (!updated) throw new NotFoundException("Booking not found.");
+
+    await this.notificationsService.notifyStaffBooking({
+      templateKey: "booking.staff.asset_assigned",
+      bookingId,
+      garmentName: null,
+      assetCode: assignedAssetCode,
+    });
+
+    return ok(this.serializeBooking(updated));
+  }
+
+  /** Include đầy đủ để serialize booking kèm phụ kiện sau các thao tác accessory. */
+  private bookingDetailsInclude() {
+    return {
+      items: {
+        include: {
+          garment_sizes: { include: { garments: true } },
+          garmentAsset: true,
+        },
+      },
+      accessoryItems: {
+        include: {
+          accessory: true,
+          accessoryAsset: true,
+          bookingItem: true,
+        },
+      },
+      deliveryRecords: { orderBy: { createdAt: "desc" } },
+    } as const;
+  }
+
+  /**
+   * Ghi nhận kiểm tra 1 dòng phụ kiện khi khách trả đồ.
+   * Mirror garment inspection complete nhưng nhẹ: lưu kết quả lên dòng phụ kiện
+   * + chuyển trạng thái accessory asset (không có session/findings riêng).
+   */
+  async inspectBookingAccessory(
+    bookingId: string,
+    accessoryItemId: string,
+    dto: InspectBookingAccessoryDto,
+    staffId?: string,
+  ) {
+    const nextStatus = ACCESSORY_CONDITION_TO_ASSET_STATUS[dto.conditionStatus];
+    if (!nextStatus) throw new BadRequestException("Tình trạng kiểm tra không hợp lệ.");
+
+    await this.prisma.runSerializable(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { accessoryItems: true },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (!ACCESSORY_INSPECTABLE_STATUSES.includes(booking.status)) {
+        throw new BadRequestException(
+          "Chỉ kiểm tra phụ kiện khi đơn đã trả đồ (returned / inspection_pending).",
+        );
+      }
+
+      const accessoryItem = booking.accessoryItems.find((candidate) => candidate.id === accessoryItemId);
+      if (!accessoryItem) throw new NotFoundException("Booking accessory item not found.");
+      if (!accessoryItem.accessoryAssetId) {
+        throw new BadRequestException("Dòng phụ kiện chưa được gán tài sản nên không thể kiểm tra.");
+      }
+
+      const asset = await tx.accessory_assets.findUnique({
+        where: { id: accessoryItem.accessoryAssetId },
+      });
+      if (!asset) throw new NotFoundException("Accessory asset not found.");
+
+      // Phạt: hư hỏng → phiếu phạt staff nhập; mất → tự lấy giá trị đền.
+      // Phạt cộng vào penaltyTotal nên tự trừ khi hoàn cọc (deposit - penalty).
+      let penaltyAmount = 0;
+      if (dto.conditionStatus === "lost") {
+        const accessory = await tx.accessories.findUnique({
+          where: { id: accessoryItem.accessoryId },
+          select: { replacement_value: true, name: true },
+        });
+        penaltyAmount = Number(accessory?.replacement_value ?? 0);
+      } else if (dto.conditionStatus === "damaged") {
+        penaltyAmount = Math.max(0, Math.floor(dto.penaltyAmount ?? 0));
+      }
+
+      const note = dto.note?.trim() || null;
+      const imageUrls = (dto.imageUrls ?? []).map((u) => u.trim()).filter(Boolean).slice(0, 5);
+      if (imageUrls.length > 0 && staffId) {
+        assertOwnedEvidenceUrls(imageUrls, { purpose: "handover", ownerId: staffId });
+      }
+      await tx.bookingAccessoryItem.update({
+        where: { id: accessoryItemId },
+        data: {
+          conditionStatus: dto.conditionStatus,
+          conditionNote: note,
+          inspectedAt: new Date(),
+          inspectedBy: staffId ?? null,
+          penaltyAmount: penaltyAmount,
+          conditionImages: imageUrls,
+        },
+      });
+      if (asset.status !== nextStatus) {
+        await tx.accessory_assets.update({
+          where: { id: asset.id },
+          data: { status: nextStatus },
+        });
+        await tx.accessory_asset_history.create({
+          data: {
+            asset_id: asset.id,
+            action: "inspect",
+            old_status: asset.status,
+            new_status: nextStatus,
+            note: note ?? `Kiểm tra trả đồ: ${dto.conditionStatus}`,
+            created_by: staffId ?? null,
+          },
+        });
+      }
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          fromStatus: booking.status,
+          toStatus: booking.status,
+          changedBy: staffId ?? null,
+          note: `Kiểm tra phụ kiện ${asset.asset_code}: ${dto.conditionStatus}`,
+        },
+      });
+      if (penaltyAmount > 0) {
+        const createdPenalty = await tx.penalty.create({
+          data: {
+            bookingId,
+            reason: dto.conditionStatus === "lost"
+              ? `Mất phụ kiện ${asset.asset_code} — đền theo giá trị`
+              : `Hư hỏng phụ kiện ${asset.asset_code}${note ? `: ${note}` : ""}`,
+            amount: penaltyAmount,
+            createdBy: staffId ?? null,
+          },
+        });
+        await tx.financialTransaction.create({
+          data: {
+            bookingId,
+            penaltyId: createdPenalty.id,
+            transactionType: "penalty",
+            amount: penaltyAmount,
+            note: `Khấu trừ phụ kiện (${dto.conditionStatus}).`,
+          },
+        });
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { penaltyTotal: { increment: penaltyAmount } },
+        });
+      }
+      return tx.booking.findUniqueOrThrow({
+        where: { id: bookingId },
+        include: this.bookingDetailsInclude(),
+      });
+    });
+
+    // Phụ kiện vừa xong có thể là mảnh cuối cùng → thử đóng đơn kiểm tra.
+    // Chạy transaction riêng SAU khi transaction ghi nhận đã commit.
+    const finalizeResult = this.inspections
+      ? await this.inspections.tryFinalizeBookingInspection(bookingId, staffId ?? "")
+      : null;
+
+    const fresh = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: this.bookingDetailsInclude(),
+    });
+    if (!fresh) throw new NotFoundException("Booking not found.");
+
+    this.realtime.assetChanged({ bookingId: fresh.id });
+    this.realtime.inspectionChanged({ bookingId: fresh.id });
+    // Mirror garment complete để tab Giặt sấy / Hư hỏng của manager tự refresh.
+    if (dto.conditionStatus === "laundry") {
+      this.realtime.laundryChanged({ bookingId: fresh.id });
+    }
+    if (dto.conditionStatus === "maintenance") {
+      this.realtime.maintenanceChanged({ bookingId: fresh.id });
+    }
+    return ok({ ...this.serializeBooking(fresh), inspectionFinalized: finalizeResult?.data?.finalized ?? false });
   }
 
   /**
@@ -1822,6 +2356,7 @@ export class BookingsService {
     // Chỉ đơn còn giữ đồ mới "quá hạn" — đã trả/đã huỷ thì ngày trễ không còn ý nghĩa.
     const overdueDays = this.overdueDays(booking.rentalEndDate);
     const isOverdue = overdueDays > 0 && OVERDUE_ELIGIBLE_STATUSES.includes(booking.status);
+    const accessoryRows: any[] = booking.accessoryItems ?? booking.booking_accessory_items ?? [];
 
     return {
       id: booking.id,
@@ -1873,6 +2408,28 @@ export class BookingsService {
         assetCode: item.garmentAsset?.assetCode ?? null,
         assetStatus: item.garmentAsset?.status ?? null,
         conditionNote: item.garmentAsset?.conditionNote ?? null,
+      })),
+      accessories: accessoryRows.map((row: any) => ({
+        id: row.id,
+        bookingItemId: row.bookingItemId ?? row.booking_item_id ?? null,
+        garmentSizeId: row.bookingItem?.garment_size_id ?? null,
+        garmentId: row.bookingItem?.garmentId ?? null,
+        accessoryId: row.accessoryId ?? row.accessory_id,
+        accessoryCode: row.accessory?.code ?? null,
+        accessoryName: row.accessory?.name ?? null,
+        imageUrl: row.accessory?.image_url ?? null,
+        quantity: row.quantity ?? 1,
+        unitPrice: Number(row.unitPrice ?? row.unit_price ?? 0),
+        isIncluded: row.isIncluded ?? row.is_included ?? true,
+        rentalTotal: Number(row.rentalTotal ?? row.rental_total ?? 0),
+        accessoryAssetId: row.accessoryAssetId ?? row.accessory_asset_id ?? null,
+        assetCode: row.accessoryAsset?.asset_code ?? null,
+        replacementValue: Number(row.accessory?.replacement_value ?? 0),
+        conditionStatus: row.conditionStatus ?? row.condition_status ?? null,
+        conditionNote: row.conditionNote ?? row.condition_note ?? null,
+        inspectedAt: row.inspectedAt?.toISOString?.() ?? row.inspected_at?.toISOString?.() ?? null,
+        penaltyAmount: Number(row.penaltyAmount ?? row.penalty_amount ?? 0),
+        conditionImages: row.conditionImages ?? row.condition_images ?? [],
       })),
     };
   }
