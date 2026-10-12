@@ -311,9 +311,18 @@ function BookingReviewInner() {
               {cartItems.map((item) => (
                 <div key={item.garmentSizeId} className="py-4 first:pt-0 last:pb-0">
                   <div className="flex items-start gap-4">
-                    <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded bg-lotus/10">
-                      <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
-                    </div>
+                    {item.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        alt={item.name}
+                        src={item.imageUrl}
+                        className="h-20 w-16 shrink-0 rounded-lg border border-sand object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-lg bg-lotus/10">
+                        <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
+                      </div>
+                    )}
                     <div className="flex-1">
                     <h3 className="font-medium text-ink">{item.name}</h3>
                     <p className="text-xs text-stone-500">
@@ -353,10 +362,22 @@ function BookingReviewInner() {
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
                           Phụ kiện thuê kèm ({accLinks.length})
                         </p>
-                        <ul className="mt-1.5 space-y-1">
+                        <ul className="mt-1.5 space-y-1.5">
                           {accLinks.map((l) => (
-                            <li key={l.accessory.id} className="flex items-center justify-between gap-3 text-xs">
-                              <span className="truncate text-stone-600">
+                            <li key={l.accessory.id} className="flex items-center gap-2.5 text-xs">
+                              {l.accessory.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  alt={l.accessory.name}
+                                  src={l.accessory.imageUrl}
+                                  className="h-8 w-8 shrink-0 rounded object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-mist">
+                                  <span className="material-symbols-outlined text-sm text-stone-300">diamond</span>
+                                </div>
+                              )}
+                              <span className="min-w-0 flex-1 truncate text-stone-600">
                                 ✓ {l.accessory.name} <span className="text-stone-400">× {l.quantity}</span>
                               </span>
                               <span className={l.isIncluded ? "font-medium text-jade" : "font-medium text-ink"}>

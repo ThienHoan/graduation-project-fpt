@@ -107,6 +107,22 @@ export default function StaffInspectionPage() {
   const [inspectingAcc, setInspectingAcc] = useState<string | null>(null);
   const [uploadingAccPhoto, setUploadingAccPhoto] = useState<string | null>(null);
 
+  // Lightbox phóng to ảnh khi bấm vào
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxUrl(null);
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [lightboxUrl]);
+
   async function handleAccPhotoSelect(accId: string, files: FileList | null) {
     const list = Array.from(files ?? []);
     if (list.length === 0) return;
@@ -424,6 +440,233 @@ export default function StaffInspectionPage() {
     }
   }, [booking, selectedItemId, sessions]);
 
+  // ── Phụ kiện gom theo từng món trang phục trong đơn ──
+  // acc.bookingItemId khớp item.id; dữ liệu cũ thiếu link thì khớp theo garmentId.
+  const allAccessories = booking?.accessories ?? [];
+  function accessoriesForItem(item: BookingItem): BookingAccessoryItem[] {
+    return allAccessories.filter((acc) => {
+      if (acc.bookingItemId) return acc.bookingItemId === item.id;
+      if (acc.garmentId && item.garmentId) return acc.garmentId === item.garmentId;
+      return false;
+    });
+  }
+  const unlinkedAccessories = allAccessories.filter((acc) => {
+    if (!booking) return false;
+    return !booking.items.some((item) => {
+      if (acc.bookingItemId) return acc.bookingItemId === item.id;
+      if (acc.garmentId && item.garmentId) return acc.garmentId === item.garmentId;
+      return false;
+    });
+  });
+  const accInspectedCount = allAccessories.filter((acc) => {
+    const s = getAccInspectionState(acc);
+    return s !== "not_started" && s !== "missing_asset";
+  }).length;
+
+  function renderAccessoryCard(acc: BookingAccessoryItem) {
+    const state = getAccInspectionState(acc);
+    const meta = ACC_STATE_META[state];
+    const form = accInspect[acc.id] ?? { status: "good", note: "", penalty: "", images: [] };
+    const inspectable =
+      booking !== null &&
+      ACC_INSPECTABLE_STATUSES.includes(booking.status) &&
+      Boolean(acc.accessoryAssetId) &&
+      state === "not_started";
+    return (
+      <div key={acc.id} className="rounded-lg border border-sand bg-mist/50 p-2.5">
+        <div className="flex items-center gap-2.5">
+          {acc.imageUrl ? (
+            <button
+              type="button"
+              onClick={() => acc.imageUrl && setLightboxUrl(acc.imageUrl)}
+              className="group relative shrink-0"
+              title="Bấm để phóng to"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt={acc.accessoryName ?? "Phụ kiện"}
+                src={acc.imageUrl}
+                className="h-9 w-9 rounded-md border border-sand object-cover transition group-hover:opacity-80"
+              />
+              <span className="material-symbols-outlined absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" style={{ fontSize: 16 }}>zoom_in</span>
+            </button>
+          ) : (
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white">
+              <span className="material-symbols-outlined text-lg text-stone-300">diamond</span>
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold leading-6 text-ink">
+              {acc.accessoryName ?? "Phụ kiện"}
+              {acc.quantity > 1 ? <span className="ml-1 font-normal text-stone-500">× {acc.quantity}</span> : null}
+            </p>
+            <p className="mt-0.5 truncate text-xs text-stone-500">
+              {acc.assetCode ? `Asset: ${acc.assetCode}` : acc.accessoryAssetId ? "Asset: Đã gán" : "Chưa gán asset"}
+              {acc.isIncluded ? " · Kèm miễn phí" : ""}
+            </p>
+          </div>
+          <span className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.color}`}>
+            <span className="material-symbols-outlined text-[13px]">{meta.icon}</span>
+            {meta.label}
+          </span>
+        </div>
+        {acc.conditionNote && (
+          <p className="mt-1.5 text-xs italic text-stone-500">Ghi chú: {acc.conditionNote}</p>
+        )}
+        {acc.penaltyAmount !== undefined && acc.penaltyAmount > 0 && (
+          <p className="mt-1 text-xs font-semibold text-red-700">
+            Phạt: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.penaltyAmount)}
+          </p>
+        )}
+        {(acc.conditionImages ?? []).length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {(acc.conditionImages ?? []).map((url, idx) => (
+              <button
+                key={`${url}-${idx}`}
+                type="button"
+                onClick={() => setLightboxUrl(url)}
+                className="h-12 w-12 overflow-hidden rounded-md border border-sand transition hover:opacity-80"
+                title="Bấm để phóng to"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={`Ảnh kiểm tra phụ kiện ${idx + 1}`} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        )}
+        {state === "missing_asset" && (
+          <p className="mt-1.5 text-[11px] leading-5 text-red-600">
+            Chưa gán asset — báo quản lý gán trước khi kiểm tra.
+          </p>
+        )}
+        {inspectable && (
+          <div className="mt-2 space-y-2 border-t border-dashed border-sand pt-2">
+            <div className="flex gap-2">
+              <select
+                className="min-w-0 flex-1 rounded-lg border border-sand bg-white px-2 py-1.5 text-xs outline-none focus:border-antique"
+                value={form.status}
+                onChange={(e) =>
+                  setAccInspect((prev) => ({
+                    ...prev,
+                    [acc.id]: { ...form, status: e.target.value },
+                  }))
+                }
+                aria-label="Tình trạng phụ kiện"
+              >
+                {ACC_CONDITION_OPTIONS.map((opt) => (
+                  <option key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={inspectingAcc === acc.id}
+                onClick={() => handleInspectAccessory(acc.id)}
+                className="shrink-0 rounded-lg bg-jade px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-forest disabled:opacity-50"
+              >
+                {inspectingAcc === acc.id ? "..." : "Xác nhận"}
+              </button>
+            </div>
+            <input
+              className="w-full rounded-lg border border-sand bg-white px-2.5 py-1.5 text-xs outline-none focus:border-antique"
+              placeholder="Ghi chú (nếu có)..."
+              value={form.note}
+              onChange={(e) =>
+                setAccInspect((prev) => ({
+                  ...prev,
+                  [acc.id]: { ...form, note: e.target.value },
+                }))
+              }
+            />
+            {form.status === "damaged" && (
+              <input
+                className="w-full rounded-lg border border-red-300 bg-red-50/50 px-2.5 py-1.5 text-xs outline-none focus:border-red-400"
+                placeholder="Phiếu phạt (VNĐ)..."
+                type="number"
+                min={0}
+                value={form.penalty}
+                onChange={(e) =>
+                  setAccInspect((prev) => ({
+                    ...prev,
+                    [acc.id]: { ...form, penalty: e.target.value },
+                  }))
+                }
+                aria-label="Phiếu phạt hư hỏng"
+              />
+            )}
+            {form.status === "lost" && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700">
+                Tự động đền{" "}
+                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.replacementValue ?? 0)}
+                {" "}— trừ vào cọc
+              </p>
+            )}
+            {form.status === "damaged" && (
+              <div className="flex flex-col gap-2 rounded-lg border border-dashed border-sand bg-white p-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="cursor-pointer rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] font-semibold text-lotus transition hover:bg-parchment">
+                    {uploadingAccPhoto === acc.id ? "Đang tải..." : "+ Ảnh hư hỏng"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      multiple
+                      hidden
+                      disabled={uploadingAccPhoto === acc.id}
+                      onChange={(e) => {
+                        void handleAccPhotoSelect(acc.id, e.target.files);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <span className="text-[11px] text-stone-500">
+                    Tối đa 5 ảnh ({form.images.length}/5)
+                  </span>
+                </div>
+                {form.images.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {form.images.map((url, idx) => (
+                      <div key={`${url}-${idx}`} className="relative h-14 w-14 overflow-hidden rounded-lg border border-sand">
+                        <button
+                          type="button"
+                          onClick={() => setLightboxUrl(url)}
+                          className="h-full w-full"
+                          title="Bấm để phóng to"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`Ảnh hư hỏng ${idx + 1}`} className="h-full w-full object-cover" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAccInspect((prev) => {
+                              const current = prev[acc.id] ?? form;
+                              return {
+                                ...prev,
+                                [acc.id]: {
+                                  ...current,
+                                  images: current.images.filter((_, i) => i !== idx),
+                                },
+                              };
+                            })
+                          }
+                          className="absolute right-0.5 top-0.5 rounded-full bg-black/60 px-1.5 text-xs leading-5 text-white"
+                          aria-label={`Xóa ảnh ${idx + 1}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ── Render ──
 
   return (
@@ -530,208 +773,104 @@ export default function StaffInspectionPage() {
               )}
             </section>
 
-            {/* Items / assets */}
+            {/* Trang phục + phụ kiện trong đơn (phụ kiện gom theo từng món) */}
             {booking && (
               <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
                 <div className="mb-4 flex items-center justify-between border-b border-sand pb-3">
                   <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">
-                    Tài sản trong đơn
+                    Trang phục & phụ kiện
                   </h2>
-                  <span className="text-xs text-stone-400">{booking.items.length} món</span>
+                  <span className="text-xs text-stone-400">
+                    {booking.items.length} món
+                    {allAccessories.length > 0 ? ` · ${accInspectedCount}/${allAccessories.length} phụ kiện đã kiểm` : ""}
+                  </span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {booking.items.map((item, index) => {
                     const state = getItemInspectionState(item);
                     const meta = ITEM_STATE_META[state];
                     const isActive = item.id === selectedItem?.id;
+                    const itemAccs = accessoriesForItem(item);
                     return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => selectItem(item.id)}
-                        className={`w-full rounded-lg border p-3 text-left transition ${
-                          isActive
-                            ? "border-lotus bg-parchment"
-                            : "border-sand bg-white hover:bg-mist"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-ink">
-                              #{index + 1} · {item.garmentName ?? "Trang phục"}
-                            </p>
-                            <p className="mt-1 text-xs text-stone-500">
-                              {item.assetCode ? `Asset ID: ${item.assetCode}` : item.garmentAssetId ? "Asset: Đã gán" : "Chưa gán asset"}
-                              {item.sizeLabel ? ` · Cỡ ${item.sizeLabel}` : ""}
-                            </p>
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
-                            {meta.label}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-
-            {/* Accessories */}
-            {booking && (booking.accessories ?? []).length > 0 && (
-              <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-                <div className="mb-4 flex items-center justify-between border-b border-sand pb-3">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">
-                    Phụ kiện trong đơn
-                  </h2>
-                  <span className="text-xs text-stone-400">{(booking.accessories ?? []).length} món</span>
-                </div>
-                <div className="space-y-2">
-                  {(booking.accessories ?? []).map((acc) => {
-                    const state = getAccInspectionState(acc);
-                    const meta = ACC_STATE_META[state];
-                    const form = accInspect[acc.id] ?? { status: "good", note: "", penalty: "", images: [] };
-                    const inspectable =
-                      ACC_INSPECTABLE_STATUSES.includes(booking.status) &&
-                      Boolean(acc.accessoryAssetId) &&
-                      state === "not_started";
-                    return (
-                      <div key={acc.id} className="rounded-lg border border-sand bg-white p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold text-ink">
-                              {acc.accessoryName ?? "Phụ kiện"}
-                              {acc.quantity > 1 ? <span className="ml-1 text-stone-500">× {acc.quantity}</span> : null}
-                            </p>
-                            <p className="mt-1 text-xs text-stone-500">
-                              {acc.assetCode ? `Asset: ${acc.assetCode}` : acc.accessoryAssetId ? "Asset: Đã gán" : "Chưa gán asset"}
-                            </p>
-                            {acc.conditionNote && (
-                              <p className="mt-1 text-xs italic text-stone-500">Ghi chú: {acc.conditionNote}</p>
-                            )}
-                          </div>
-                          <span className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
-                            <span className="material-symbols-outlined text-[14px]">{meta.icon}</span>
-                            {meta.label}
-                          </span>
-                        </div>
-                        {inspectable && (
-                          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-sand pt-3">
-                            <select
-                              className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
-                              value={form.status}
-                              onChange={(e) =>
-                                setAccInspect((prev) => ({
-                                  ...prev,
-                                  [acc.id]: { ...form, status: e.target.value },
-                                }))
-                              }
-                              aria-label="Tình trạng phụ kiện"
-                            >
-                              {ACC_CONDITION_OPTIONS.map((opt) => (
-                                <option key={opt.key} value={opt.key}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              className="min-w-[160px] flex-1 rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
-                              placeholder="Ghi chú (nếu có)..."
-                              value={form.note}
-                              onChange={(e) =>
-                                setAccInspect((prev) => ({
-                                  ...prev,
-                                  [acc.id]: { ...form, note: e.target.value },
-                                }))
-                              }
-                            />
-                            {form.status === "damaged" && (
-                              <input
-                                className="w-40 rounded-lg border border-red-300 bg-red-50/50 px-3 py-2 text-sm outline-none focus:border-red-400"
-                                placeholder="Phiếu phạt (VNĐ)..."
-                                type="number"
-                                min={0}
-                                value={form.penalty}
-                                onChange={(e) =>
-                                  setAccInspect((prev) => ({
-                                    ...prev,
-                                    [acc.id]: { ...form, penalty: e.target.value },
-                                  }))
-                                }
-                                aria-label="Phiếu phạt hư hỏng"
-                              />
-                            )}
-                            {form.status === "lost" && (
-                              <span className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
-                                Tự động đền{" "}
-                                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.replacementValue ?? 0)}
-                                {" "}— trừ vào cọc
-                              </span>
-                            )}
-                            {form.status === "damaged" && (
-                              <div className="flex w-full flex-col gap-2 rounded-lg border border-dashed border-sand bg-mist p-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <label className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-parchment">
-                                    {uploadingAccPhoto === acc.id ? "Đang tải..." : "+ Tải ảnh hư hỏng"}
-                                    <input
-                                      type="file"
-                                      accept="image/jpeg,image/png,image/webp"
-                                      multiple
-                                      hidden
-                                      disabled={uploadingAccPhoto === acc.id}
-                                      onChange={(e) => {
-                                        void handleAccPhotoSelect(acc.id, e.target.files);
-                                        e.target.value = "";
-                                      }}
-                                    />
-                                  </label>
-                                  <span className="text-[11px] text-stone-500">
-                                    Tối đa 5 ảnh ({form.images.length}/5)
-                                  </span>
-                                </div>
-                                {form.images.length > 0 && (
-                                  <div className="flex flex-wrap gap-2">
-                                    {form.images.map((url, idx) => (
-                                      <div key={`${url}-${idx}`} className="relative h-16 w-16 overflow-hidden rounded-lg border border-sand">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img src={url} alt={`Ảnh hư hỏng ${idx + 1}`} className="h-full w-full object-cover" />
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setAccInspect((prev) => {
-                                              const current = prev[acc.id] ?? form;
-                                              return {
-                                                ...prev,
-                                                [acc.id]: {
-                                                  ...current,
-                                                  images: current.images.filter((_, i) => i !== idx),
-                                                },
-                                              };
-                                            })
-                                          }
-                                          className="absolute right-0.5 top-0.5 rounded-full bg-black/60 px-1.5 text-xs leading-5 text-white"
-                                          aria-label={`Xóa ảnh ${idx + 1}`}
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                      <div key={item.id}>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => selectItem(item.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              selectItem(item.id);
+                            }
+                          }}
+                          className={`w-full cursor-pointer rounded-lg border p-3 text-left transition ${
+                            isActive
+                              ? "border-lotus bg-parchment"
+                              : "border-sand bg-white hover:bg-mist"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            {item.imageUrl ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (item.imageUrl) setLightboxUrl(item.imageUrl);
+                                }}
+                                className="group relative shrink-0"
+                                title="Bấm để phóng to"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  alt={item.garmentName ?? "Trang phục"}
+                                  src={item.imageUrl}
+                                  className="h-14 w-11 rounded-md border border-sand object-cover transition group-hover:opacity-80"
+                                />
+                                <span className="material-symbols-outlined absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" style={{ fontSize: 16 }}>zoom_in</span>
+                              </button>
+                            ) : (
+                              <div className="flex h-14 w-11 shrink-0 items-center justify-center rounded-md bg-parchment text-stone-400">
+                                <span className="material-symbols-outlined text-xl">checkroom</span>
                               </div>
                             )}
-                            <button
-                              type="button"
-                              disabled={inspectingAcc === acc.id}
-                              onClick={() => handleInspectAccessory(acc.id)}
-                              className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
-                            >
-                              {inspectingAcc === acc.id ? "..." : "Xác nhận kiểm tra"}
-                            </button>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold leading-6 text-ink">
+                                #{index + 1} · {item.garmentName ?? "Trang phục"}
+                              </p>
+                              <p className="mt-1 text-xs text-stone-500">
+                                {item.assetCode ? `Asset ID: ${item.assetCode}` : item.garmentAssetId ? "Asset: Đã gán" : "Chưa gán asset"}
+                                {item.sizeLabel ? ` · Cỡ ${item.sizeLabel}` : ""}
+                                {itemAccs.length > 0 ? ` · ${itemAccs.length} phụ kiện` : ""}
+                              </p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
+                              {meta.label}
+                            </span>
+                          </div>
+                        </div>
+                        {itemAccs.length > 0 && (
+                          <div className="ml-4 space-y-2 border-l-2 border-dashed border-sand py-2 pl-3">
+                            <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
+                              <span className="material-symbols-outlined text-[14px]">diamond</span>
+                              Phụ kiện đi kèm ({itemAccs.length})
+                            </p>
+                            {itemAccs.map((acc) => renderAccessoryCard(acc))}
                           </div>
                         )}
                       </div>
                     );
                   })}
+                  {unlinkedAccessories.length > 0 && (
+                    <div className="rounded-lg border border-dashed border-sand bg-mist/40 p-3">
+                      <p className="mb-2 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
+                        <span className="material-symbols-outlined text-[14px]">diamond</span>
+                        Phụ kiện chung ({unlinkedAccessories.length})
+                      </p>
+                      <div className="space-y-2">
+                        {unlinkedAccessories.map((acc) => renderAccessoryCard(acc))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
             )}
@@ -741,11 +880,23 @@ export default function StaffInspectionPage() {
               <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
                 <div className="flex gap-4">
                   {selectedItem.imageUrl ? (
-                    <img
-                      alt={selectedItem.garmentName ?? "Trang phục"}
-                      src={selectedItem.imageUrl}
-                      className="h-40 w-28 shrink-0 rounded object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => selectedItem.imageUrl && setLightboxUrl(selectedItem.imageUrl)}
+                      className="group relative shrink-0"
+                      title="Bấm để phóng to"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        alt={selectedItem.garmentName ?? "Trang phục"}
+                        src={selectedItem.imageUrl}
+                        className="h-40 w-28 rounded border border-sand object-cover transition group-hover:opacity-90"
+                      />
+                      <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold text-white">
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>zoom_in</span>
+                        Phóng to
+                      </span>
+                    </button>
                   ) : (
                     <div className="flex h-40 w-28 shrink-0 items-center justify-center rounded bg-parchment text-stone-400">
                       <span className="material-symbols-outlined text-4xl">checkroom</span>
@@ -1031,16 +1182,21 @@ export default function StaffInspectionPage() {
 
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {activeSession.photos.map((p) => (
-                      <div
+                      <button
                         key={p.id}
-                        className="overflow-hidden rounded-lg border border-sand bg-parchment"
+                        type="button"
+                        onClick={() => setLightboxUrl(p.imageUrl)}
+                        className="group relative overflow-hidden rounded-lg border border-sand bg-parchment"
+                        title="Bấm để phóng to"
                       >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           alt="Ảnh kiểm tra"
-                          className="aspect-square w-full object-cover"
+                          className="aspect-square w-full object-cover transition group-hover:opacity-90"
                           src={p.imageUrl}
                         />
-                      </div>
+                        <span className="material-symbols-outlined absolute bottom-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white" style={{ fontSize: 16 }}>zoom_in</span>
+                      </button>
                     ))}
                     {/* Add photo slot */}
                     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-sand bg-mist p-3 text-center">
@@ -1083,6 +1239,35 @@ export default function StaffInspectionPage() {
               </>
             ) : null}
           </div>
+        </div>
+      )}
+      {/* Lightbox phóng to ảnh */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Ảnh phóng to"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxUrl(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/25"
+            aria-label="Đóng ảnh phóng to"
+          >
+            <span className="material-symbols-outlined text-2xl">close</span>
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightboxUrl}
+            alt="Ảnh phóng to"
+            className="max-h-[88vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-white/70">
+            Bấm ra ngoài hoặc phím Esc để đóng
+          </p>
         </div>
       )}
     </StaffPortalShell>

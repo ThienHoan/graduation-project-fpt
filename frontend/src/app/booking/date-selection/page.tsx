@@ -322,9 +322,18 @@ function BookingDateSelectionInner() {
                 return (
                   <div key={item.garmentSizeId} className="p-4">
                     <div className="flex items-start gap-4">
-                      <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded bg-lotus/10">
-                        <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
-                      </div>
+                      {item.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          alt={item.name}
+                          src={item.imageUrl}
+                          className="h-20 w-16 shrink-0 rounded-lg border border-sand object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-lg bg-lotus/10">
+                          <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-ink text-sm">{item.name}</p>
                         <p className="text-xs text-stone-500">
@@ -407,9 +416,6 @@ function BookingDateSelectionInner() {
                                     <p className="mt-0.5 text-xs text-stone-400">Đang kiểm tra tồn kho...</p>
                                   )}
                                 </div>
-                                <span className={`material-symbols-outlined mt-0.5 text-[18px] ${checked ? "text-lotus" : "text-stone-300"}`}>
-                                  {checked ? "check_box" : "check_box_outline_blank"}
-                                </span>
                               </label>
                             );
                           })}

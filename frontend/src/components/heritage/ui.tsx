@@ -128,7 +128,7 @@ export function StaffPortalShell({
     <div className="min-h-screen bg-mist text-ink lg:flex">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex">
         <div className="mb-8 px-3 pt-4">
-          <h1 className="font-display text-3xl text-lotus">Nhân sự Atelier</h1>
+          <h1 className="font-display text-3xl text-lotus">Nhân viên Atelier</h1>
           <p className="mt-1 text-sm text-stone-500">Central Operations</p>
         </div>
         <Link href="/catalog" className="mb-8 inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-3 text-sm font-semibold text-white transition hover:bg-oxblood">
