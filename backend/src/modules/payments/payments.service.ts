@@ -45,7 +45,11 @@ export class PaymentsService {
       }
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { items: { include: { garment_sizes: { include: { garments: true } } } }, payments: true },
+        include: {
+          items: { include: { garment_sizes: { include: { garments: true } } } },
+          accessoryItems: { select: { bookingItemId: true, rentalTotal: true } },
+          payments: true,
+        },
       });
       if (!booking) throw new NotFoundException("Booking not found.");
       if (booking.customerId !== customerId) throw new ForbiddenException("Booking does not belong to you.");
@@ -243,16 +247,77 @@ export class PaymentsService {
     });
   }
 
+  /**
+   * Dựng danh sách dòng gửi PayOS từ TỔNG TIỀN CHUẨN của đơn (rentalTotal đã gồm
+   * luật giá tự động + phụ kiện − voucher, depositTotal, shippingFee) thay vì tính
+   * lại từ dailyPrice × số ngày (dailyPrice là giá bình quân đã làm tròn, không gồm
+   * phụ kiện và voucher → lệch tổng). Tiền thuê/cọc được phân bổ theo tỷ trọng từng
+   * món nên tổng các dòng luôn bằng đúng số tiền thanh toán.
+   */
   private buildItems(booking: any, amount: Prisma.Decimal) {
-    const days = Math.round((new Date(booking.rentalEndDate).getTime() - new Date(booking.rentalStartDate).getTime()) / 86400000) + 1;
-    const items = booking.items.map((item: any) => ({ name: item.garment_sizes?.garments?.name ?? "Trang phục", quantity: 1, price: Math.round(Number(item.dailyPrice) * days + Number(item.depositAmount)) }));
-    if (Number(booking.shippingFee) > 0) items.push({ name: "Phí giao hàng", quantity: 1, price: Math.round(Number(booking.shippingFee)) });
-    const itemTotal = items.reduce((sum: number, item: { price: number; quantity: number }) => sum + item.price * item.quantity, 0);
     const expected = Math.round(amount.toNumber());
+    const rentalTarget = Math.round(Number(booking.rentalTotal ?? 0));
+    const depositTarget = Math.round(Number(booking.depositTotal ?? 0));
+    const shipping = Math.round(Number(booking.shippingFee ?? 0));
+    if (rentalTarget < 0 || depositTarget < 0 || shipping < 0) {
+      throw new BadRequestException("Chi tiết thanh toán không khớp tổng tiền đơn hàng.");
+    }
+
+    const days = Math.max(
+      1,
+      Math.round((new Date(booking.rentalEndDate).getTime() - new Date(booking.rentalStartDate).getTime()) / 86400000) + 1,
+    );
+    const accessoryRows: Array<{ bookingItemId: string; rentalTotal: unknown }> = booking.accessoryItems ?? [];
+    const lines = (booking.items ?? []).map((item: any) => {
+      const accessories = accessoryRows.filter((a) => a.bookingItemId === item.id);
+      const accessoryRental = accessories.reduce((sum, a) => sum + Number(a.rentalTotal ?? 0), 0);
+      const baseName: string = item.garment_sizes?.garments?.name ?? "Trang phục";
+      return {
+        name: accessories.length > 0 ? `${baseName} + phụ kiện` : baseName,
+        rentalWeight: Math.max(0, Number(item.dailyPrice ?? 0) * days + accessoryRental),
+        depositWeight: Math.max(0, Number(item.depositAmount ?? 0)),
+      };
+    });
+
+    let items: Array<{ name: string; quantity: number; price: number }>;
+    if (lines.length === 0) {
+      items = rentalTarget + depositTarget > 0
+        ? [{ name: "Đơn thuê trang phục", quantity: 1, price: rentalTarget + depositTarget }]
+        : [];
+    } else {
+      const rentals = this.allocate(rentalTarget, lines.map((l: { rentalWeight: number }) => l.rentalWeight));
+      const deposits = this.allocate(depositTarget, lines.map((l: { depositWeight: number }) => l.depositWeight));
+      items = lines.map((l: { name: string }, i: number) => ({ name: l.name, quantity: 1, price: rentals[i] + deposits[i] }));
+      // PayOS không cần dòng 0đ (vd. voucher giảm toàn bộ tiền thuê một món không cọc).
+      const nonZero = items.filter((item) => item.price > 0);
+      if (nonZero.length > 0) items = nonZero;
+    }
+    if (shipping > 0) items.push({ name: "Phí giao hàng", quantity: 1, price: shipping });
+
+    const itemTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
     if (itemTotal !== expected) {
       throw new BadRequestException("Chi tiết thanh toán không khớp tổng tiền đơn hàng.");
     }
     return items;
+  }
+
+  /** Chia `total` (số nguyên) theo tỷ trọng `weights`, phần dư dồn cho phần lẻ lớn nhất. */
+  private allocate(total: number, weights: number[]): number[] {
+    if (weights.length === 0) return [];
+    if (total === 0) return weights.map(() => 0);
+    const weightSum = weights.reduce((sum, w) => sum + w, 0);
+    const shares = weightSum > 0
+      ? weights.map((w) => (total * w) / weightSum)
+      : weights.map(() => total / weights.length);
+    const result = shares.map((share) => Math.floor(share));
+    let remainder = total - result.reduce((sum, v) => sum + v, 0);
+    const order = shares
+      .map((share, index) => ({ index, frac: share - Math.floor(share) }))
+      .sort((a, b) => b.frac - a.frac || a.index - b.index);
+    for (let k = 0; remainder > 0; k = (k + 1) % order.length, remainder -= 1) {
+      result[order[k].index] += 1;
+    }
+    return result;
   }
 
   private allocateOrderCode(bookingId: string, existingCodes: Array<string | null>) {

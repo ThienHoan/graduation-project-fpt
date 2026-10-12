@@ -253,6 +253,15 @@ const dto = (startDate: string, endDate: string) => ({
 });
 
 describe("BookingsService.create availability", () => {
+  // Ngày thuê trong test là cố định (10/2026) → cố định "hôm nay" để test không hỏng theo thời gian thực.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T05:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("rejects a booking whose dates overlap an existing booking", async () => {
     const { service, tx } = createService({ committed: 1, capacity: 1 });
 
@@ -632,6 +641,15 @@ describe("ConfirmHandoverDto validation", () => {
 });
 
 describe("BookingsService.create accessories", () => {
+  // Ngày thuê trong test là cố định (10/2026) → cố định "hôm nay" để test không hỏng theo thời gian thực.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T05:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   const ACCESSORY_ID = "00000000-0000-4000-8000-000000000009";
 
   function createAccessoryService(link: { quantity: number; is_included: boolean; extra_price: number } | null) {
