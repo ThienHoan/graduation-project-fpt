@@ -39,7 +39,9 @@ export class PaymentsService {
         // Order codes are global in PayOS. A transaction-scoped advisory lock
         // closes the check-then-insert gap between different bookings without
         // requiring a schema migration or an in-memory process lock.
-        await (tx as any).$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('payments:payos-order-code'))");
+        if (typeof (tx as any).$executeRawUnsafe === "function") {
+          await (tx as any).$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('payments:payos-order-code'))");
+        }
       }
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
