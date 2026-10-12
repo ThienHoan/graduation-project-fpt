@@ -1,29 +1,27 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { getGarmentsGrouped, type GarmentGrouped } from "@/lib/api";
 import { CameraCapture } from "@/components/try-on/camera-capture";
 import { ImageUpload } from "@/components/try-on/image-upload";
-import { apiRequest } from "@/lib/api";
+import { SimilarGarments } from "@/components/try-on/similar-garments";
+import { TryonResultViewer } from "@/components/try-on/tryon-result-viewer";
+import {
+  getGarmentsGrouped,
+  getTryonHistory,
+  getTryonStatus,
+  hideTryonHistoryItem,
+  submitTryon,
+  type GarmentGrouped,
+  type TryonHistoryItem,
+  type TryonMode,
+  type TryonSource,
+} from "@/lib/api";
 import { readStoredAccessToken } from "@/lib/auth";
 
 type ViewState = "setup" | "processing" | "result";
-
-type TryonMode = "face_swap" | "full_body";
-type ImageSource = "camera" | "upload";
-
-type TryonHistoryItem = {
-  id: string;
-  requestId: string;
-  status: string;
-  garmentName: string;
-  resultImageUrl: string | null;
-  createdAt: string;
-};
 
 function TryOnInner() {
   const searchParams = useSearchParams();
@@ -36,19 +34,23 @@ function TryOnInner() {
 
   // Mode & source
   const [mode, setMode] = useState<TryonMode>("face_swap");
-  const [imageSource, setImageSource] = useState<ImageSource>("upload");
+  const [imageSource, setImageSource] = useState<TryonSource>("upload");
 
   // Image
   const [imageBase64, setImageBase64] = useState<string | null>(null);
 
-  // State
+  // States
   const [viewState, setViewState] = useState<ViewState>("setup");
   const [resultImage, setResultImage] = useState<string | null>(null);
+  const [isCachedResult, setIsCachedResult] = useState(false);
+  const [queuePosition, setQueuePosition] = useState(0);
+  const [processingStatusText, setProcessingStatusText] = useState("Đang gửi yêu cầu...");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [consent, setConsent] = useState(true);
   const [hasAccessToken, setHasAccessToken] = useState(false);
   const [historyItems, setHistoryItems] = useState<TryonHistoryItem[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
 
   async function loadHistory() {
     if (!readStoredAccessToken()) {
@@ -57,7 +59,7 @@ function TryOnInner() {
     }
 
     setIsHistoryLoading(true);
-    const res = await apiRequest<TryonHistoryItem[]>("/ai/tryon/history");
+    const res = await getTryonHistory();
     if (res.success && res.data) {
       setHistoryItems(res.data);
     }
@@ -117,39 +119,76 @@ function TryOnInner() {
 
     setViewState("processing");
     setErrorMsg(null);
+    setQueuePosition(0);
+    setIsCachedResult(false);
+    setProcessingStatusText("Đang kiểm tra yêu cầu và dữ liệu ảnh...");
 
-    const res = await apiRequest<{
-      id: string;
-      status: string;
-      resultImageUrl: string;
-      mode: string;
-      garmentName: string;
-      sizeLabel: string | null;
-    }>("/ai/tryon", {
-      method: "POST",
-      body: JSON.stringify({
-        garmentSizeId: selectedSizeId,
-        mode,
-        imageBase64,
-        source: imageSource,
-      }),
+    const res = await submitTryon({
+      garmentSizeId: selectedSizeId,
+      mode,
+      imageBase64,
+      source: imageSource,
     });
 
-    if (res.success && res.data) {
+    if (!res.success || !res.data) {
+      setErrorMsg(res.message ?? "Không thể gửi yêu cầu thử đồ. Vui lòng thử lại.");
+      setViewState("setup");
+      return;
+    }
+
+    // Trường hợp 1: Cache HIT -> Hoàn tất ngay lập tức
+    if (res.data.status === "completed" && res.data.resultImageUrl) {
       setResultImage(res.data.resultImageUrl);
+      setIsCachedResult(Boolean(res.data.isCached));
       setViewState("result");
       void loadHistory();
-    } else {
-      setErrorMsg(res.message ?? "Không thể tạo ảnh AI. Vui lòng thử lại.");
-      setViewState("setup");
+      return;
     }
+
+    // Trường hợp 2: Cache MISS -> Vào hàng đợi và Polling
+    const requestId = res.data.id;
+    setQueuePosition(res.data.queuePosition ?? 1);
+    setProcessingStatusText("Đang trong hàng đợi xử lý...");
+
+    const pollInterval = window.setInterval(async () => {
+      const statusRes = await getTryonStatus(requestId);
+      if (!statusRes.success || !statusRes.data) return;
+
+      const current = statusRes.data;
+      if (current.status === "pending") {
+        setQueuePosition(current.queuePosition);
+        setProcessingStatusText(
+          current.queuePosition > 1
+            ? `Đang xếp hàng chờ xử lý (Vị trí #${current.queuePosition})...`
+            : "Đang chuẩn bị khởi tạo AI...",
+        );
+      } else if (current.status === "processing") {
+        setProcessingStatusText(
+          mode === "face_swap"
+            ? "AI đang ghép khuôn mặt bạn vào người mẫu (khoảng 10-15 giây)..."
+            : "AI đang dựng toàn thân với trang phục (khoảng 15-20 giây)...",
+        );
+      } else if (current.status === "completed" && current.resultImageUrl) {
+        window.clearInterval(pollInterval);
+        setResultImage(current.resultImageUrl);
+        setIsCachedResult(Boolean(current.isCached));
+        setViewState("result");
+        void loadHistory();
+      } else if (current.status === "failed") {
+        window.clearInterval(pollInterval);
+        setErrorMsg(current.errorMessage ?? "Quá trình tạo ảnh thất bại. Vui lòng thử lại.");
+        setViewState("setup");
+      }
+    }, 2000);
+
+    // Timeout an toàn sau 180s
+    window.setTimeout(() => {
+      window.clearInterval(pollInterval);
+    }, 180000);
   }
 
   async function handleHideHistoryItem(id: string) {
-    const res = await apiRequest<{ id: string; hidden: boolean }>(`/ai/tryon/results/${id}/hide`, {
-      method: "PATCH",
-    });
-
+    const res = await hideTryonHistoryItem(id);
     if (res.success) {
       setHistoryItems((items) => items.filter((item) => item.id !== id));
     } else {
@@ -161,7 +200,28 @@ function TryOnInner() {
     setViewState("setup");
     setImageBase64(null);
     setResultImage(null);
+    setIsCachedResult(false);
     setErrorMsg(null);
+  }
+
+  function handleSelectSimilarGarment(garmentId: string) {
+    const idx = groups.findIndex((g) => g.garmentId === garmentId);
+    if (idx !== -1) {
+      setSelectedGroupIdx(idx);
+      const firstSize = groups[idx]?.sizes[0]?.garmentSizeId ?? null;
+      setSelectedSizeId(firstSize);
+      window.scrollTo({ top: 100, behavior: "smooth" });
+    }
+  }
+
+  function handleSelectGarmentByName(garmentName: string) {
+    const idx = groups.findIndex((g) => g.name.toLowerCase().includes(garmentName.toLowerCase()));
+    if (idx !== -1) {
+      setSelectedGroupIdx(idx);
+      const firstSize = groups[idx]?.sizes[0]?.garmentSizeId ?? null;
+      setSelectedSizeId(firstSize);
+      window.scrollTo({ top: 100, behavior: "smooth" });
+    }
   }
 
   return (
@@ -173,8 +233,8 @@ function TryOnInner() {
         <section className="mx-auto max-w-3xl text-center">
           <h1 className="font-display text-5xl text-lotus sm:text-6xl">Thử Đồ AI</h1>
           <p className="mt-5 text-base leading-8 text-stone-600 sm:text-lg">
-            Chụp hoặc upload ảnh chân dung để AI ghép bạn vào trang phục cổ phục.
-            Trải nghiệm chân thực trước khi đặt lịch thuê.
+            Chụp hoặc tải ảnh chân dung để AI ghép bạn vào trang phục cổ phục truyền thống.
+            Trải nghiệm chân thực, nhanh chóng và mượt mà trước khi đặt lịch thuê.
           </p>
         </section>
 
@@ -185,7 +245,7 @@ function TryOnInner() {
             <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
               <h2 className="mb-4 font-display text-2xl text-ink">1. Chọn trang phục</h2>
               {groups.length > 0 ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <select
                     value={selectedGroupIdx}
                     onChange={(e) => {
@@ -203,7 +263,8 @@ function TryOnInner() {
 
                   {/* Size selection */}
                   {selectedGroup && selectedGroup.sizes.length > 1 && (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-stone-500">Size:</span>
                       {selectedGroup.sizes.map((s) => (
                         <button
                           key={s.garmentSizeId}
@@ -221,10 +282,35 @@ function TryOnInner() {
                     </div>
                   )}
 
-                  {selectedSize && (
-                    <div className="mt-3 flex gap-4 text-sm text-stone-500">
-                      <span>Thuê: <strong className="text-ink">{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(selectedSize.dailyPrice)}/ngày</strong></span>
-                      <span>Cọc: <strong className="text-ink">{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(selectedSize.depositAmount)}</strong></span>
+                  {/* Garment Preview Card */}
+                  {selectedGroup && (
+                    <div className="flex items-center gap-3.5 rounded-xl border border-sand bg-parchment/60 p-3.5">
+                      <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border border-sand bg-white">
+                        {selectedGroup.imageUrl ? (
+                          <img
+                            src={selectedGroup.imageUrl}
+                            alt={selectedGroup.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
+                            Không có ảnh
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1 text-xs">
+                        <p className="font-semibold text-ink">{selectedGroup.name}</p>
+                        <p className="mt-0.5 text-stone-500">
+                          {selectedGroup.categoryName ? `${selectedGroup.categoryName} • ` : ""}
+                          {selectedGroup.color ? `Màu ${selectedGroup.color}` : ""}
+                        </p>
+                        {selectedSize && (
+                          <p className="mt-1 font-semibold text-lotus">
+                            Thuê: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(selectedSize.dailyPrice)}/ngày
+                            <span className="font-normal text-stone-400"> • Cọc: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(selectedSize.depositAmount)}</span>
+                          </p>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -238,7 +324,7 @@ function TryOnInner() {
               <h2 className="mb-4 font-display text-2xl text-ink">2. Chế độ thử đồ</h2>
               <div className="grid grid-cols-2 gap-3">
                 {([
-                  { key: "face_swap", label: "Khuôn mặt", desc: "AI ghép mặt bạn vào người mẫu", icon: "face" },
+                  { key: "face_swap", label: "Khuôn mặt", desc: "AI ghép khuôn mặt bạn vào người mẫu", icon: "face" },
                   { key: "full_body", label: "Toàn thân", desc: "AI dựng toàn bộ cơ thể với trang phục", icon: "accessibility_new" },
                 ] as const).map((opt) => (
                   <button
@@ -302,7 +388,7 @@ function TryOnInner() {
                   checked={consent}
                   onChange={(e) => setConsent(e.target.checked)}
                 />
-                <span>Tôi đồng ý cho hệ thống dùng ảnh này để tạo bản xem thử kỹ thuật số. Ảnh chỉ được xử lý tạm thời.</span>
+                <span>Tôi đồng ý cho hệ thống sử dụng ảnh này để tạo bản xem thử kỹ thuật số. Ảnh chỉ được xử lý tạm thời và bảo mật.</span>
               </label>
 
               {errorMsg && (
@@ -324,92 +410,92 @@ function TryOnInner() {
             </section>
           </div>
 
-          {/* RIGHT: Preview / Result */}
-          <section className="relative min-h-[600px] overflow-hidden rounded-xl border border-sand bg-lotus/10">
-            {viewState === "setup" && !imageBase64 && (
-              <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-                <span className="material-symbols-outlined text-6xl text-stone-300">imagesmode</span>
-                <p className="mt-4 max-w-md text-base leading-8 text-stone-500">
-                  Hình ảnh thử đồ của bạn sẽ xuất hiện ở đây sau khi bạn chọn ảnh và bấm &quot;Tạo hình ảnh thử đồ&quot;.
-                </p>
-              </div>
-            )}
-
-            {viewState === "setup" && imageBase64 && (
-              <div className="flex h-full flex-col items-center justify-center p-4">
-                <img
-                  src={`data:image/jpeg;base64,${imageBase64}`}
-                  alt="Ảnh của bạn"
-                  className="max-h-full w-full rounded-lg object-contain shadow-md"
-                />
-                <p className="mt-4 text-sm text-stone-500">
-                  Ảnh của bạn — bấm &quot;Tạo hình ảnh thử đồ&quot; để AI xử lý
-                </p>
-              </div>
-            )}
-
-            {viewState === "processing" && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 p-8 text-center backdrop-blur-sm">
-                <div className="h-24 w-24 animate-spin rounded-full border-4 border-[#fff4ef] border-t-antique" />
-                <h2 className="mt-6 font-display text-4xl text-lotus">Đang dệt nên hình ảnh...</h2>
-                <p className="mt-2 text-sm leading-7 text-stone-600 max-w-sm">
-                  AI đang {mode === "face_swap" ? "ghép khuôn mặt bạn vào người mẫu" : "dựng toàn thân với trang phục"}. Quá trình này mất khoảng 5-15 giây.
-                </p>
-              </div>
-            )}
-
-            {viewState === "result" && resultImage && (
-              <div className="flex h-full flex-col items-center justify-center p-4">
-                <img
-                  alt="Kết quả thử đồ AI"
-                  className="max-h-full w-full rounded-lg object-contain shadow-xl"
-                  src={resultImage}
-                />
-                <div className="mt-6 flex flex-wrap justify-center gap-3 rounded-full border border-sand bg-white/90 px-5 py-3 text-sm shadow">
-                  <button
-                    type="button"
-                    onClick={handleTryOn}
-                    disabled={!canSubmit}
-                    className="inline-flex items-center gap-2 font-semibold text-lotus transition hover:text-oxblood disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">auto_awesome</span>Tạo lại
-                  </button>
-                  <button type="button" onClick={handleReset} className="inline-flex items-center gap-2 text-stone-700 transition hover:text-lotus">
-                    <span className="material-symbols-outlined text-[18px]">replay</span>Thử ảnh khác
-                  </button>
-                  <a
-                    href={resultImage}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 text-stone-700 transition hover:text-lotus"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">download</span>Tải ảnh
-                  </a>
-                  <Link
-                    href="/booking/date-selection"
-                    className="inline-flex items-center gap-2 font-semibold text-lotus"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">calendar_month</span>Đặt lịch thuê
-                  </Link>
+          {/* RIGHT: Preview / Result Display */}
+          <div className="flex flex-col gap-6">
+            <section className="relative min-h-[600px] overflow-hidden rounded-xl border border-sand bg-lotus/10">
+              {viewState === "setup" && !imageBase64 && (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <span className="material-symbols-outlined text-6xl text-stone-300">imagesmode</span>
+                  <p className="mt-4 max-w-md text-base leading-8 text-stone-500">
+                    Hình ảnh thử đồ của bạn sẽ xuất hiện ở đây sau khi bạn chọn ảnh và bấm &quot;Tạo hình ảnh thử đồ&quot;.
+                  </p>
                 </div>
-              </div>
-            )}
-          </section>
+              )}
+
+              {viewState === "setup" && imageBase64 && (
+                <div className="flex h-full flex-col items-center justify-center p-4">
+                  <img
+                    src={`data:image/jpeg;base64,${imageBase64}`}
+                    alt="Ảnh của bạn"
+                    className="max-h-[500px] w-full rounded-lg object-contain shadow-md"
+                  />
+                  <p className="mt-4 text-sm text-stone-500">
+                    Ảnh của bạn đã sẵn sàng — bấm &quot;Tạo hình ảnh thử đồ&quot; để AI xử lý
+                  </p>
+                </div>
+              )}
+
+              {viewState === "processing" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 p-8 text-center backdrop-blur-sm">
+                  <div className="relative flex items-center justify-center">
+                    <div className="h-24 w-24 animate-spin rounded-full border-4 border-stone-200 border-t-lotus" />
+                    <span className="material-symbols-outlined absolute text-3xl text-lotus animate-pulse">auto_awesome</span>
+                  </div>
+
+                  <h2 className="mt-6 font-display text-3xl text-lotus">Đang dệt nên hình ảnh...</h2>
+                  
+                  {queuePosition > 1 && (
+                    <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                      <span className="material-symbols-outlined text-[14px]">schedule</span>
+                      Hàng đợi: Vị trí #{queuePosition}
+                    </span>
+                  )}
+
+                  <p className="mt-3 max-w-sm text-sm leading-6 text-stone-600">
+                    {processingStatusText}
+                  </p>
+                </div>
+              )}
+
+              {viewState === "result" && resultImage && (
+                <TryonResultViewer
+                  resultImageUrl={resultImage}
+                  userImageBase64={imageBase64}
+                  referenceGarmentImageUrl={selectedGroup?.imageUrl ?? null}
+                  garmentName={selectedGroup?.name ?? "Trang phục"}
+                  sizeLabel={selectedSize?.sizeLabel ?? null}
+                  selectedSizeId={selectedSizeId}
+                  isCached={isCachedResult}
+                  onRetry={handleTryOn}
+                  onReset={handleReset}
+                />
+              )}
+            </section>
+
+            {/* Similar Garments Section */}
+            <SimilarGarments
+              currentGarmentId={selectedGroup?.garmentId ?? null}
+              onSelectGarment={handleSelectSimilarGarment}
+            />
+          </div>
         </div>
 
+        {/* Try-on History Section */}
         <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-display text-2xl text-ink">Lịch sử thử đồ gần đây</h2>
-              <p className="mt-1 text-sm text-stone-500">Các ảnh AI đã tạo sẽ tự động lưu ở đây để bạn xem lại hoặc tải về.</p>
+              <p className="mt-1 text-sm text-stone-500">
+                Các ảnh AI đã tạo được lưu tại đây để bạn xem lại, tải về hoặc tiếp tục thử đồ.
+              </p>
             </div>
             <button
               type="button"
               onClick={() => void loadHistory()}
               disabled={!hasAccessToken || isHistoryLoading}
-              className="inline-flex items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg border border-sand px-4 py-2 text-xs font-semibold text-stone-600 transition hover:border-antique disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-[18px]">refresh</span>
+              <span className="material-symbols-outlined text-[16px]">refresh</span>
               {isHistoryLoading ? "Đang tải..." : "Làm mới"}
             </button>
           </div>
@@ -419,40 +505,59 @@ function TryOnInner() {
           ) : historyItems.length > 0 ? (
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {historyItems.map((item) => (
-                <article key={item.id} className="overflow-hidden rounded-xl border border-sand bg-mist">
-                  <div className="aspect-[3/4] bg-lotus/10">
+                <article
+                  key={item.id}
+                  className="group flex flex-col justify-between overflow-hidden rounded-xl border border-sand bg-mist transition hover:border-lotus/40 hover:shadow-sm"
+                >
+                  <div
+                    className="relative aspect-[3/4] cursor-pointer overflow-hidden bg-lotus/10"
+                    onClick={() => {
+                      if (item.resultImageUrl) setLightboxImageUrl(item.resultImageUrl);
+                    }}
+                  >
                     {item.resultImageUrl ? (
-                      <img src={item.resultImageUrl} alt={item.garmentName} className="h-full w-full object-cover" />
+                      <img
+                        src={item.resultImageUrl}
+                        alt={item.garmentName}
+                        className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                      />
                     ) : (
-                      <div className="flex h-full items-center justify-center p-4 text-center text-sm text-stone-400">
+                      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-stone-400">
                         Chưa có ảnh kết quả
                       </div>
                     )}
+                    <span className="absolute bottom-2 right-2 rounded-md bg-black/60 p-1 text-white opacity-0 transition group-hover:opacity-100">
+                      <span className="material-symbols-outlined text-[16px]">zoom_in</span>
+                    </span>
                   </div>
-                  <div className="space-y-2 p-3">
-                    <h3 className="line-clamp-1 text-sm font-semibold text-ink">{item.garmentName}</h3>
-                    <p className="text-xs text-stone-500">
-                      {new Date(item.createdAt).toLocaleString("vi-VN")}
-                    </p>
-                    {item.resultImageUrl && (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <a
-                          href={item.resultImageUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-lotus transition hover:text-oxblood"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">download</span>Tải ảnh
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => void handleHideHistoryItem(item.id)}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-stone-500 transition hover:text-red-500"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">visibility_off</span>Ẩn
-                        </button>
-                      </div>
-                    )}
+
+                  <div className="flex flex-1 flex-col justify-between p-3">
+                    <div>
+                      <h3 className="line-clamp-1 text-xs font-semibold text-ink" title={item.garmentName}>
+                        {item.garmentName}
+                      </h3>
+                      <p className="mt-0.5 text-[11px] text-stone-500">
+                        {new Date(item.createdAt).toLocaleString("vi-VN")}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-sand/60 pt-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectGarmentByName(item.garmentName)}
+                        className="font-medium text-lotus transition hover:text-oxblood"
+                      >
+                        Thử lại mẫu này
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleHideHistoryItem(item.id)}
+                        className="text-stone-400 transition hover:text-red-500"
+                        title="Ẩn khỏi lịch sử"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">visibility_off</span>
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}
@@ -464,6 +569,33 @@ function TryOnInner() {
           )}
         </section>
       </main>
+
+      {/* History Lightbox Modal */}
+      {lightboxImageUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md"
+          onClick={() => setLightboxImageUrl(null)}
+        >
+          <div className="relative max-h-screen max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={lightboxImageUrl}
+              alt="Ảnh thử đồ phóng to"
+              className="max-h-[90vh] w-auto rounded-lg object-contain"
+            />
+            <button
+              type="button"
+              onClick={() => setLightboxImageUrl(null)}
+              className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white transition hover:bg-white/40"
+              title="Đóng"
+            >
+              <span className="material-symbols-outlined text-2xl">close</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       <CustomerFooter />
     </div>
   );

@@ -89,6 +89,15 @@ export class GarmentsController {
   @Get(":id")
   findOne(@Param("id") id: string) { return this.garmentsService.findOne(id); }
 
+  @Get(":id/similar")
+  findSimilar(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("limit") limit?: string,
+  ) {
+    const parsedLimit = limit ? Math.min(Math.max(Number(limit) || 6, 1), 20) : 6;
+    return this.garmentsService.findSimilarGarments(id, parsedLimit);
+  }
+
   @Get(":id/assets/available")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")

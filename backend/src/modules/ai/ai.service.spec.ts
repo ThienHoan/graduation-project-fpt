@@ -217,4 +217,130 @@ describe("AiService", () => {
       ).rejects.toThrow("OpenRouter API");
     });
   });
+
+  describe("createTryon & Caching & Queue", () => {
+    const validBase64 = Buffer.alloc(12000, 42).toString("base64");
+    const validImageUri = `data:image/jpeg;base64,${validBase64}`;
+
+    it("returns cached result immediately when identical request was completed before (Cache HIT)", async () => {
+      const mockGarmentSize = {
+        id: "size-1",
+        garment_id: "g-1",
+        size_label: "M",
+        is_active: true,
+        garments: {
+          name: "Áo dài đỏ thêu sen",
+          tryonReferenceUrl: "https://example.com/model.jpg",
+          images: [],
+          category: { tryonCategory: "dresses" },
+        },
+      };
+
+      const mockCachedResult = {
+        id: "res-cached-1",
+        storedImageUrl: "https://example.com/cached-result.png",
+        resultImageUrl: "https://replicate.delivery/cached.png",
+        aiMetadata: { model: "cdingram/face-swap" },
+      };
+
+      prisma.garment_sizes = {
+        findFirst: vi.fn().mockResolvedValue(mockGarmentSize),
+      };
+      prisma.tryonResult = {
+        findFirst: vi.fn().mockResolvedValue(mockCachedResult),
+        create: vi.fn().mockResolvedValue({ id: "res-new-1" }),
+      };
+      prisma.tryonRequest = {
+        create: vi.fn().mockResolvedValue({ id: "req-new-1" }),
+      };
+
+      const result = await service.createTryon(
+        {
+          garmentSizeId: "size-1",
+          mode: "face_swap",
+          imageBase64: validImageUri,
+        },
+        "customer-1",
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.status).toBe("completed");
+      expect(result.data?.isCached).toBe(true);
+      expect(result.data?.resultImageUrl).toBe("https://example.com/cached-result.png");
+      expect(prisma.tryonResult.create).toHaveBeenCalled();
+    });
+
+    it("dispatches job to TryonQueueService when cache misses and queue is configured", async () => {
+      const mockGarmentSize = {
+        id: "size-1",
+        garment_id: "g-1",
+        size_label: "M",
+        is_active: true,
+        garments: {
+          name: "Áo dài đỏ thêu sen",
+          tryonReferenceUrl: "https://example.com/model.jpg",
+          images: [],
+          category: { tryonCategory: "dresses" },
+        },
+      };
+
+      const mockQueue = {
+        setHandlers: vi.fn(),
+        addJob: vi.fn(),
+        getQueuePosition: vi.fn().mockReturnValue(1),
+      } as any;
+
+      prisma.garment_sizes = {
+        findFirst: vi.fn().mockResolvedValue(mockGarmentSize),
+      };
+      prisma.tryonResult = {
+        findFirst: vi.fn().mockResolvedValue(null), // Cache MISS
+      };
+      prisma.tryonRequest = {
+        create: vi.fn().mockResolvedValue({ id: "req-pending-1" }),
+      };
+
+      const serviceWithQueue = new AiService(prisma as never, createMockPricing(), mockQueue);
+
+      const result = await serviceWithQueue.createTryon(
+        {
+          garmentSizeId: "size-1",
+          mode: "face_swap",
+          imageBase64: validImageUri,
+        },
+        "customer-1",
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.status).toBe("pending");
+      expect(result.data?.isCached).toBe(false);
+      expect(result.data?.queuePosition).toBe(1);
+      expect(mockQueue.addJob).toHaveBeenCalled();
+    });
+
+    it("returns correct status and queue position from getTryonStatus", async () => {
+      prisma.tryonRequest = {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "req-1",
+          status: "pending",
+          mode: "face_swap",
+          garment: { name: "Áo dài thêu sen" },
+          results: [],
+          completedAt: null,
+          errorMessage: null,
+        }),
+      };
+
+      const mockQueue = {
+        getQueuePosition: vi.fn().mockReturnValue(2),
+      } as any;
+
+      const serviceWithQueue = new AiService(prisma as never, createMockPricing(), mockQueue);
+      const res = await serviceWithQueue.getTryonStatus("req-1", "customer-1");
+
+      expect(res.success).toBe(true);
+      expect(res.data?.status).toBe("pending");
+      expect(res.data?.queuePosition).toBe(2);
+    });
+  });
 });

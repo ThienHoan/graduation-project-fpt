@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import * as crypto from "node:crypto";
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { TryonStatus, Prisma, type TryonCategory } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -8,6 +9,7 @@ import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
 import type { AdvisorProduct, OpenRouterResponse, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
 import { detectIntent } from "./utils/intent-detector";
 import { extractFilters, getCanonicalOccasions } from "./utils/filter-extractor";
+import { TryonQueueService } from "./tryon-queue.service";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 const DEFAULT_FACE_SWAP_MODEL = "cdingram/face-swap";
@@ -58,6 +60,7 @@ type NormalizedImage = {
   dataUri: string;
   mimeType: AllowedMimeType;
   sizeBytes: number;
+  imageHash: string;
 };
 
 type ReplicatePrediction = {
@@ -75,13 +78,37 @@ type ReplicateResult = {
 };
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly pricing: PricingService,
+    @Optional() private readonly tryonQueueService?: TryonQueueService,
   ) { }
+
+  onModuleInit() {
+    if (this.tryonQueueService) {
+      this.tryonQueueService.setHandlers(
+        async (job) => {
+          const res = await this.callReplicate(
+            job.mode,
+            job.userImageDataUri,
+            job.garmentImageUrl,
+            job.garmentName,
+            job.tryonCategory as TryonCategory,
+          );
+          return {
+            resultUrl: res.url,
+            model: res.model,
+            predictionId: res.predictionId,
+            inputSchema: res.inputSchema,
+          };
+        },
+        async (replicateUrl, requestId) => this.persistResultImage(replicateUrl, requestId),
+      );
+    }
+  }
 
   async createTryon(dto: CreateTryonDto, customerId: string) {
     const size = await this.prisma.garment_sizes.findFirst({
@@ -109,12 +136,113 @@ export class AiService {
       );
     }
 
+    // ── 1. Kiểm tra Cache ảnh AI ──────────────────────────────────────────────
+    const cachedResult = await this.prisma.tryonResult.findFirst({
+      where: {
+        hiddenAt: null,
+        tryonRequest: {
+          garmentId: size.garment_id,
+          mode: dto.mode,
+          status: TryonStatus.completed,
+          sourceImageUrl: { contains: image.imageHash },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (cachedResult && (cachedResult.storedImageUrl || cachedResult.resultImageUrl)) {
+      const finalUrl = cachedResult.storedImageUrl ?? cachedResult.resultImageUrl!;
+      this.logger.log(`[Cache HIT] Tái sử dụng ảnh thử đồ cho garment=${size.garments.name}, hash=${image.imageHash.slice(0, 10)}`);
+
+      const request = await this.prisma.tryonRequest.create({
+        data: {
+          customerId,
+          garmentId: size.garment_id,
+          status: TryonStatus.completed,
+          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
+          consentAccepted: true,
+          mode: dto.mode,
+          completedAt: new Date(),
+          replicatePredictionId: `cached-${cachedResult.id}`,
+        },
+      });
+
+      await this.prisma.tryonResult.create({
+        data: {
+          tryonRequestId: request.id,
+          resultImageUrl: cachedResult.resultImageUrl,
+          storedImageUrl: cachedResult.storedImageUrl,
+          aiMetadata: {
+            ...(typeof cachedResult.aiMetadata === "object" && cachedResult.aiMetadata !== null
+              ? (cachedResult.aiMetadata as Record<string, unknown>)
+              : {}),
+            isCached: true,
+            originalResultId: cachedResult.id,
+            imageHash: image.imageHash,
+          },
+        },
+      });
+
+      return ok({
+        id: request.id,
+        status: "completed",
+        resultImageUrl: finalUrl,
+        mode: dto.mode,
+        garmentName: size.garments.name,
+        sizeLabel: size.size_label,
+        isCached: true,
+        queuePosition: 0,
+      });
+    }
+
+    // ── 2. Xử lý qua Queue nếu có TryonQueueService ───────────────────────────
+    if (this.tryonQueueService) {
+      const request = await this.prisma.tryonRequest.create({
+        data: {
+          customerId,
+          garmentId: size.garment_id,
+          status: TryonStatus.pending,
+          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
+          consentAccepted: true,
+          mode: dto.mode,
+        },
+      });
+
+      this.tryonQueueService.addJob({
+        requestId: request.id,
+        customerId,
+        garmentSizeId: dto.garmentSizeId,
+        garmentId: size.garment_id,
+        garmentName: size.garments.name,
+        sizeLabel: size.size_label,
+        mode: dto.mode,
+        source: dto.source ?? "upload",
+        userImageDataUri: image.dataUri,
+        imageHash: image.imageHash,
+        garmentImageUrl,
+        tryonCategory,
+      });
+
+      const position = this.tryonQueueService.getQueuePosition(request.id);
+      return ok({
+        id: request.id,
+        status: "pending",
+        resultImageUrl: null,
+        mode: dto.mode,
+        garmentName: size.garments.name,
+        sizeLabel: size.size_label,
+        isCached: false,
+        queuePosition: position,
+      });
+    }
+
+    // Fallback đồng bộ (cho môi trường test không có Queue)
     const request = await this.prisma.tryonRequest.create({
       data: {
         customerId,
         garmentId: size.garment_id,
         status: TryonStatus.processing,
-        sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes`,
+        sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
         consentAccepted: true,
         mode: dto.mode,
       },
@@ -158,6 +286,8 @@ export class AiService {
           predictionId: result.predictionId,
           garmentImageUrl,
           inputSchema: result.inputSchema,
+          imageHash: image.imageHash,
+          isCached: false,
         },
       },
     });
@@ -169,6 +299,40 @@ export class AiService {
       mode: dto.mode,
       garmentName: size.garments.name,
       sizeLabel: size.size_label,
+      isCached: false,
+      queuePosition: 0,
+    });
+  }
+
+  async getTryonStatus(requestId: string, customerId: string) {
+    const request = await this.prisma.tryonRequest.findFirst({
+      where: { id: requestId, customerId },
+      include: {
+        garment: true,
+        results: { where: { hiddenAt: null }, take: 1, orderBy: { createdAt: "desc" } },
+      },
+    });
+    if (!request) throw new NotFoundException("Try-on request not found.");
+
+    const result = request.results[0];
+    const isCached =
+      result && typeof result.aiMetadata === "object" && result.aiMetadata !== null
+        ? (result.aiMetadata as any).isCached === true
+        : false;
+
+    return ok({
+      id: request.id,
+      status: request.status,
+      mode: request.mode,
+      garmentName: request.garment.name,
+      resultImageUrl: result?.storedImageUrl ?? result?.resultImageUrl ?? null,
+      isCached: Boolean(isCached),
+      errorMessage: request.errorMessage ?? null,
+      queuePosition:
+        request.status === TryonStatus.pending && this.tryonQueueService
+          ? this.tryonQueueService.getQueuePosition(request.id)
+          : 0,
+      completedAt: request.completedAt ? request.completedAt.toISOString() : null,
     });
   }
 
@@ -442,10 +606,13 @@ export class AiService {
       throw new BadRequestException(`Ảnh vượt quá dung lượng ${maxImageMb}MB.`);
     }
 
+    const imageHash = crypto.createHash("sha256").update(buffer).digest("hex");
+
     return {
       dataUri: `data:${mimeType};base64,${compactBase64}`,
       mimeType,
       sizeBytes: buffer.length,
+      imageHash,
     };
   }
 

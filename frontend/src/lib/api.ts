@@ -2473,3 +2473,87 @@ export function trackGarmentView(garmentId: string) {
     authToken: null,
   });
 }
+
+// ---------- AI Virtual Try-On & Recommendations ----------
+
+export type SimilarGarment = {
+  garmentId: string;
+  name: string;
+  categoryName: string | null;
+  color: string | null;
+  imageUrl: string | null;
+  dailyPrice: number;
+  depositAmount: number;
+  sizeId: string | null;
+  sizeLabel: string | null;
+  similarityScore: number;
+  reasons: string[];
+};
+
+export async function getSimilarGarments(garmentId: string, limit = 6) {
+  return apiRequest<SimilarGarment[]>(`/garments/${garmentId}/similar?limit=${limit}`);
+}
+
+export type TryonMode = "face_swap" | "full_body";
+export type TryonSource = "upload" | "camera";
+
+export type SubmitTryonPayload = {
+  garmentSizeId: string;
+  mode: TryonMode;
+  imageBase64: string;
+  source?: TryonSource;
+};
+
+export type TryonJobResponse = {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  resultImageUrl: string | null;
+  mode: TryonMode;
+  garmentName: string;
+  sizeLabel: string | null;
+  isCached: boolean;
+  queuePosition?: number;
+};
+
+export type TryonStatusResponse = {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  mode: TryonMode;
+  garmentName: string;
+  resultImageUrl: string | null;
+  isCached: boolean;
+  errorMessage: string | null;
+  queuePosition: number;
+  completedAt: string | null;
+};
+
+export type TryonHistoryItem = {
+  id: string;
+  requestId: string;
+  status: string;
+  garmentName: string;
+  resultImageUrl: string | null;
+  createdAt: string;
+};
+
+export async function submitTryon(payload: SubmitTryonPayload) {
+  return apiRequest<TryonJobResponse>("/ai/tryon", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTryonStatus(requestId: string) {
+  return apiRequest<TryonStatusResponse>(`/ai/tryon/status/${requestId}`);
+}
+
+export async function getTryonHistory() {
+  return apiRequest<TryonHistoryItem[]>("/ai/tryon/history");
+}
+
+export async function hideTryonHistoryItem(id: string) {
+  return apiRequest<{ id: string; hidden: boolean }>(`/ai/tryon/results/${id}/hide`, {
+    method: "PATCH",
+  });
+}
+
