@@ -505,9 +505,12 @@ async function handleConsult() {
           </div>
         ) : null}
 
-        {/* Pairing accessories (real links of this garment) */}
-        {group && (group.accessories ?? []).length > 0 && (
-          <AccessoriesShowcase accessories={group.accessories ?? []} />
+        {/* Pairing accessories of the selected size */}
+        {group && (selectedSize?.accessories ?? []).length > 0 && (
+          <AccessoriesShowcase
+            key={selectedSize?.garmentSizeId ?? "nosize"}
+            accessories={selectedSize?.accessories ?? []}
+          />
         )}
 
         {/* Care & usage terms */}

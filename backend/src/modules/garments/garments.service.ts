@@ -387,6 +387,16 @@ export class GarmentsService {
           lengthCm: number | null;
           sleeveLengthCm: number | null;
         } | null;
+        accessories: Array<{
+          accessoryId: string;
+          code: string;
+          name: string;
+          imageUrl: string | null;
+          quantity: number;
+          isIncluded: boolean;
+          extraPrice: number;
+          replacementValue: number;
+        }>;
       }>;
     }>();
 
@@ -441,7 +451,21 @@ export class GarmentsService {
         }
       }
 
-      // Merge sizes, deduplicate by sizeLabel
+      // Merge sizes, deduplicate by sizeLabel.
+      // Mỗi size mang theo phụ kiện của garment row đang xét, để trang chi tiết
+      // hiện đúng phụ kiện của size được chọn (các row trùng tên có thể gắn khác nhau).
+      const rowAccessories = (g.garment_accessories ?? [])
+        .filter((link) => link.accessories)
+        .map((link) => ({
+          accessoryId: link.accessories.id,
+          code: link.accessories.code,
+          name: link.accessories.name,
+          imageUrl: link.accessories.image_url ?? null,
+          quantity: link.quantity ?? 1,
+          isIncluded: link.is_included ?? true,
+          extraPrice: Number(link.extra_price ?? 0),
+          replacementValue: Number(link.accessories.replacement_value ?? 0),
+        }));
       for (const s of g.garment_sizes) {
         const sk = (s.size_label ?? "__nosize__").trim().toLowerCase();
         if (!group.sizeMap.has(sk)) {
@@ -451,6 +475,7 @@ export class GarmentsService {
             dailyPrice: Number(s.daily_price ?? 0),
             depositAmount: Number(s.deposit_amount ?? 0),
             measurements: this.toSizeMeasurements(s),
+            accessories: rowAccessories,
           });
         }
       }

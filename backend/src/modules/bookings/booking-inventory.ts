@@ -70,6 +70,84 @@ export interface SizeInventorySnapshot {
   excludeBookingId?: string;
 }
 
+export interface AccessoryInventorySnapshot {
+  startDay: Date;
+  endDay: Date;
+  today: Date;
+  assets: InventoryAsset[];
+  /** Mỗi dòng = 1 đơn vị phụ kiện (quantity luôn là 1 sau khi tách dòng). */
+  rows: Array<{
+    booking: {
+      id: string;
+      status: BookingStatus;
+      rentalStartDate: Date;
+      rentalEndDate: Date;
+    };
+  }>;
+}
+
+/** Tồn kho phụ kiện theo khoảng ngày: nhu cầu (dòng booking_accessory_items của
+ * các đơn còn hiệu lực, trùng ngày) so với sức chứa (asset chưa retired/lost).
+ * Mirror logic sizeAvailability nhưng theo accessory_id. */
+export async function loadAccessoryInventory(
+  client: Prisma.TransactionClient,
+  accessoryId: string,
+  startDay: Date,
+  endDay: Date,
+  options: { now?: Date } = {},
+): Promise<AccessoryInventorySnapshot> {
+  const range = parseRentalDateRange(startDay, endDay);
+  const [assets, rows] = await Promise.all([
+    client.accessory_assets.findMany({
+      where: { accessory_id: accessoryId },
+      select: { id: true, status: true },
+    }),
+    client.bookingAccessoryItem.findMany({
+      where: {
+        accessoryId,
+        booking: {
+          status: { notIn: INVENTORY_RELEASED_STATUSES },
+          rentalStartDate: { lte: range.endDay },
+          rentalEndDate: { gte: range.startDay },
+        },
+      },
+      select: {
+        booking: { select: { id: true, status: true, rentalStartDate: true, rentalEndDate: true } },
+      },
+    }),
+  ]);
+  return { ...range, assets, rows, today: vietnamToday(options.now) };
+}
+
+/** committed là PEAK nhu cầu đồng thời, không phải tổng mọi booking giao nhau. */
+export function accessoryAvailability(snapshot: AccessoryInventorySnapshot) {
+  const capacity = snapshot.assets.filter((asset) => RENTABLE_ASSET_STATUSES.includes(asset.status)).length;
+  const events = new Map<number, number>();
+  const addSpan = (start: number, end: number) => {
+    const from = Math.max(+snapshot.startDay, start);
+    const to = Math.min(+snapshot.endDay, end);
+    if (from > to) return;
+    events.set(from, (events.get(from) ?? 0) + 1);
+    events.set(to + DAY_MS, (events.get(to + DAY_MS) ?? 0) - 1);
+  };
+  for (const row of snapshot.rows) {
+    const booking = row.booking;
+    if (INVENTORY_RELEASED_STATUSES.includes(booking.status)) continue;
+    let to = +booking.rentalEndDate;
+    // Đơn quá hạn chưa trả: nhu cầu kéo dài đến hết cửa sổ tra cứu.
+    if (isUnreturnedOverdue(booking, snapshot.today)) to = Math.max(to, +snapshot.endDay);
+    addSpan(+booking.rentalStartDate, to);
+  }
+  const sorted = [...events].sort(([a], [b]) => a - b);
+  let occupancy = 0;
+  let committed = 0;
+  for (const [, delta] of sorted) {
+    occupancy += delta;
+    committed = Math.max(committed, occupancy);
+  }
+  return { capacity, committed, available: Math.max(0, capacity - committed) };
+}
+
 /** Pass the SAME Serializable transaction client used for the booking write.
  * Load all active assignments, including out-of-window physical owners; otherwise an
  * overdue rental/orphaned hold can be mistaken for stock available after its due date.

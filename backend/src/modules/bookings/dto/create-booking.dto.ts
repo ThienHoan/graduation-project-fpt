@@ -1,5 +1,7 @@
-import { ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, Matches, MaxLength, Min } from "class-validator";
+import { Type } from "class-transformer";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, ValidateNested } from "class-validator";
 import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
+import { BookingAccessorySelectionDto } from "./booking-accessory-selection.dto";
 
 export class CreateBookingDto {
   @IsArray()
@@ -40,4 +42,11 @@ export class CreateBookingDto {
   @IsString()
   @IsIn(["cash", "qr_code"])
   paymentMethod?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => BookingAccessorySelectionDto)
+  accessories?: BookingAccessorySelectionDto[];
 }

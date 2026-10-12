@@ -6,6 +6,9 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { BookingsService } from "./bookings.service";
 import { AssignAssetDto } from "./dto/assign-asset.dto";
+import { AssignAccessoryAssetDto } from "./dto/assign-accessory-asset.dto";
+import { CheckAccessoryAvailabilityDto } from "./dto/check-accessory-availability.dto";
+import { InspectBookingAccessoryDto } from "./dto/inspect-booking-accessory.dto";
 import { CheckAvailabilityDto } from "./dto/check-availability.dto";
 import { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
@@ -22,6 +25,11 @@ export class BookingsController {
   @Post("check-availability")
   checkAvailability(@Body() body: CheckAvailabilityDto) {
     return this.bookingsService.checkAvailability(body);
+  }
+
+  @Post("check-accessory-availability")
+  checkAccessoryAvailability(@Body() body: CheckAccessoryAvailabilityDto) {
+    return this.bookingsService.checkAccessoryAvailability(body);
   }
 
   @Post("availability-calendar")
@@ -100,6 +108,28 @@ export class BookingsController {
   @Roles("manager_owner", "admin")
   assignAsset(@CurrentUser() user: AuthenticatedUser, @Param("bookingId", ParseUUIDPipe) bookingId: string, @Param("itemId", ParseUUIDPipe) itemId: string, @Body() dto: AssignAssetDto) {
     return this.bookingsService.assignAsset(bookingId, itemId, dto, user.id);
+  }
+
+  /**
+   * Gán tài sản phụ kiện cụ thể cho 1 dòng phụ kiện trong booking.
+   * PATCH /bookings/:bookingId/accessories/:accessoryItemId/assign-asset
+   */
+  @Patch(":bookingId/accessories/:accessoryItemId/assign-asset")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  assignAccessoryAsset(@CurrentUser() user: AuthenticatedUser, @Param("bookingId", ParseUUIDPipe) bookingId: string, @Param("accessoryItemId", ParseUUIDPipe) accessoryItemId: string, @Body() dto: AssignAccessoryAssetDto) {
+    return this.bookingsService.assignAccessoryAsset(bookingId, accessoryItemId, dto, user.id);
+  }
+
+  /**
+   * Ghi nhận kiểm tra 1 dòng phụ kiện khi khách trả đồ.
+   * PATCH /bookings/:bookingId/accessories/:accessoryItemId/inspect
+   */
+  @Patch(":bookingId/accessories/:accessoryItemId/inspect")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  inspectBookingAccessory(@CurrentUser() user: AuthenticatedUser, @Param("bookingId", ParseUUIDPipe) bookingId: string, @Param("accessoryItemId", ParseUUIDPipe) accessoryItemId: string, @Body() dto: InspectBookingAccessoryDto) {
+    return this.bookingsService.inspectBookingAccessory(bookingId, accessoryItemId, dto, user.id);
   }
 
   /**

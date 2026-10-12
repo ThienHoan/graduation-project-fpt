@@ -88,6 +88,12 @@ function createService(options?: {
         return makeBooking("2026-10-10", "2026-10-12");
       }),
     },
+    accessories: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    accessory_assets: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
 
   const prisma = {
@@ -625,8 +631,491 @@ describe("ConfirmHandoverDto validation", () => {
   });
 });
 
-describe("BookingsService overdue reporting", () => {
-  type Serialized = { overdueDays: number; overdueAmount: number; overdueFeePerDay: number };
+describe("BookingsService.create accessories", () => {
+  const ACCESSORY_ID = "00000000-0000-4000-8000-000000000009";
+
+  function createAccessoryService(link: { quantity: number; is_included: boolean; extra_price: number } | null) {
+    const { service, prisma, tx } = createService({ committed: 0, capacity: 1 });
+    (prisma as unknown as Record<string, unknown>).garment_accessories = {
+      findMany: vi.fn().mockResolvedValue(
+        link ? [{ garment_id: GARMENT_ID, accessory_id: ACCESSORY_ID, ...link }] : [],
+      ),
+    };
+    (tx as unknown as Record<string, unknown>).bookingAccessoryItem = {
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue({ id: "00000000-0000-4000-8000-000000000010" }),
+    };
+    // Kho phụ kiện đủ cho các test tạo đơn (không test cạn kho ở đây).
+    (tx as unknown as Record<string, unknown>).accessory_assets = {
+      findMany: vi.fn().mockResolvedValue(
+        Array.from({ length: 5 }, (_, i) => ({ id: `acc-asset-${i}`, status: "available" })),
+      ),
+    };
+    return { service, prisma, tx };
+  }
+
+  it("creates booking accessory items and adds extra price (per day x qty x days) to subtotal", async () => {
+    const { service, tx } = createAccessoryService({ quantity: 1, is_included: false, extra_price: 20000 });
+
+    const result = await service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      accessories: [{ garmentSizeId: SIZE_ID, accessoryId: ACCESSORY_ID }],
+    });
+
+    expect(result.data).toBeDefined();
+    expect((tx as unknown as { bookingAccessoryItem: { create: ReturnType<typeof vi.fn> } }).bookingAccessoryItem.create).toHaveBeenCalledTimes(1);
+    const createArg = (tx.booking.create as unknown as { mock: { calls: Array<Array<{ data: { subtotal: number } }>> } }).mock.calls[0][0];
+    // 3 ngày thuê × 20.000đ × 1 = 60.000đ (giá garment trong mock = 0).
+    expect(Number(createArg.data.subtotal)).toBe(60000);
+  });
+
+  it("splits quantity 3 into 3 unit rows so each unit gets its own asset", async () => {
+    const { service, tx } = createAccessoryService({ quantity: 3, is_included: false, extra_price: 20000 });
+
+    const result = await service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      accessories: [{ garmentSizeId: SIZE_ID, accessoryId: ACCESSORY_ID }],
+    });
+
+    expect(result.data).toBeDefined();
+    const createMock = (tx as unknown as { bookingAccessoryItem: { create: ReturnType<typeof vi.fn> } }).bookingAccessoryItem.create;
+    expect(createMock).toHaveBeenCalledTimes(3);
+    for (const call of createMock.mock.calls) {
+      expect(call[0].data.quantity).toBe(1);
+    }
+    const createArg = (tx.booking.create as unknown as { mock: { calls: Array<Array<{ data: { subtotal: number } }>> } }).mock.calls[0][0];
+    // 3 đơn vị × 3 ngày × 20.000đ = 180.000đ (tổng tiền không đổi khi tách dòng).
+    expect(Number(createArg.data.subtotal)).toBe(180000);
+  });
+
+  it("does not charge subtotal for included (free) accessories but still records them", async () => {
+    const { service, tx } = createAccessoryService({ quantity: 2, is_included: true, extra_price: 0 });
+
+    await service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      accessories: [{ garmentSizeId: SIZE_ID, accessoryId: ACCESSORY_ID }],
+    });
+
+    // Số lượng 2 → tách thành 2 dòng đơn vị, đều miễn phí nên subtotal = 0.
+    expect((tx as unknown as { bookingAccessoryItem: { create: ReturnType<typeof vi.fn> } }).bookingAccessoryItem.create).toHaveBeenCalledTimes(2);
+    const createArg = (tx.booking.create as unknown as { mock: { calls: Array<Array<{ data: { subtotal: number } }>> } }).mock.calls[0][0];
+    expect(Number(createArg.data.subtotal)).toBe(0);
+  });
+
+  it("rejects accessories that do not belong to the ordered garment", async () => {    const { service, tx } = createAccessoryService(null);
+
+    await expect(service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      accessories: [{ garmentSizeId: SIZE_ID, accessoryId: ACCESSORY_ID }],
+    })).rejects.toThrow("không thuộc sản phẩm");
+
+    expect(tx.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects creating when accessories exceed available stock for the dates", async () => {
+    const { service, tx } = createAccessoryService({ quantity: 3, is_included: false, extra_price: 20000 });
+    // Kho chỉ còn 1 asset khả dụng nhưng đơn cần 3 đơn vị.
+    ((tx as unknown as { accessory_assets: { findMany: ReturnType<typeof vi.fn> } }).accessory_assets.findMany)
+      .mockResolvedValue([{ id: "only-one", status: "available" }]);
+
+    await expect(service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      accessories: [{ garmentSizeId: SIZE_ID, accessoryId: ACCESSORY_ID }],
+    })).rejects.toThrow("không còn đủ số lượng khả dụng");
+
+    expect(tx.booking.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService.assignAccessoryAsset", () => {
+  const ACCESSORY_ID = "00000000-0000-4000-8000-000000000009";
+  const ACCESSORY_ITEM_ID = "00000000-0000-4000-8000-000000000010";
+  const ACCESSORY_ASSET_ID = "00000000-0000-4000-8000-000000000011";
+
+  function createAssignService(
+    asset: { accessory_id: string; status: string },
+    itemOverrides?: { quantity?: number; unitPrice?: number; isIncluded?: boolean },
+  ) {
+    const booking = {
+      ...makeBooking("2026-10-10", "2026-10-12", { status: "confirmed" }),
+      accessoryItems: [
+        {
+          id: ACCESSORY_ITEM_ID,
+          bookingId: BOOKING_ID,
+          bookingItemId: ITEM_ID,
+          accessoryId: ACCESSORY_ID,
+          accessoryAssetId: null,
+          quantity: 1,
+          unitPrice: 20000,
+          isIncluded: false,
+          ...itemOverrides,
+        },
+      ],
+    };
+    const tx = {
+      booking: { findUnique: vi.fn().mockResolvedValue(booking) },
+      accessory_assets: { findUnique: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID, ...asset, asset_code: "PK-001" }) },
+      bookingAccessoryItem: {
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue({ id: ACCESSORY_ITEM_ID }),
+        create: vi.fn().mockResolvedValue({ id: "new-acc-item" }),
+      },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "history-1" }) },
+    };
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+      booking: { findUnique: vi.fn().mockResolvedValue(booking) },
+    };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() } as never,
+    );
+    return { service, tx };
+  }
+
+  it("assigns an accessory asset belonging to the same accessory", async () => {
+    const { service, tx } = createAssignService({ accessory_id: ACCESSORY_ID, status: "available" });
+
+    const result = await service.assignAccessoryAsset(BOOKING_ID, ACCESSORY_ITEM_ID, { accessoryAssetId: ACCESSORY_ASSET_ID });
+
+    expect(result.data).toBeDefined();
+    // Dòng quantity 1: gán asset, chốt quantity = 1 và rentalTotal theo snapshot.
+    expect(tx.bookingAccessoryItem.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ITEM_ID },
+      data: { quantity: 1, accessoryAssetId: ACCESSORY_ASSET_ID, rentalTotal: 60000 },
+    });
+    expect(tx.bookingAccessoryItem.create).not.toHaveBeenCalled();
+  });
+
+  it("splits a legacy quantity-3 row on assign so remaining units stay assignable", async () => {
+    const { service, tx } = createAssignService(
+      { accessory_id: ACCESSORY_ID, status: "available" },
+      { quantity: 3 },
+    );
+
+    const result = await service.assignAccessoryAsset(BOOKING_ID, ACCESSORY_ITEM_ID, { accessoryAssetId: ACCESSORY_ASSET_ID });
+
+    expect(result.data).toBeDefined();
+    expect(tx.bookingAccessoryItem.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ITEM_ID },
+      data: { quantity: 1, accessoryAssetId: ACCESSORY_ASSET_ID, rentalTotal: 60000 },
+    });
+    // Phần còn lại (2 đơn vị) tách thành dòng mới chưa gán, tổng tiền giữ nguyên.
+    expect(tx.bookingAccessoryItem.create).toHaveBeenCalledTimes(1);
+    const remainder = (tx.bookingAccessoryItem.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(remainder.quantity).toBe(2);
+    expect(Number(remainder.rentalTotal)).toBe(120000);
+    expect(remainder.accessoryAssetId).toBeUndefined();
+  });
+
+  it("rejects an asset that belongs to a different accessory", async () => {
+    const { service, tx } = createAssignService({ accessory_id: "00000000-0000-4000-8000-000000000099", status: "available" });
+
+    await expect(service.assignAccessoryAsset(BOOKING_ID, ACCESSORY_ITEM_ID, { accessoryAssetId: ACCESSORY_ASSET_ID }))
+      .rejects.toThrow("không thuộc phụ kiện");
+
+    expect(tx.bookingAccessoryItem.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService.advanceStatus accessories", () => {
+  function createAdvanceService(accessories: Array<{ id: string; accessoryAssetId: string | null }>) {
+    const booking = {
+      ...makeBooking("2026-10-10", "2026-10-12", { status: "paid" }),
+      handoverStatus: null,
+      items: [
+        { id: ITEM_ID, garmentId: GARMENT_ID, garment_size_id: SIZE_ID, garmentAssetId: ASSET_ID },
+      ],
+      payments: [],
+      penalties: [],
+    };
+    const tx = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue(booking),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: vi.fn(),
+      },
+      bookingAccessoryItem: { findMany: vi.fn().mockResolvedValue(accessories) },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+    };
+    const savedBooking = {
+      ...booking,
+      status: "preparing",
+      items: booking.items,
+      payments: [],
+      deliveryRecords: [],
+      accessoryItems: [],
+    };
+    (tx.booking as { findUnique: ReturnType<typeof vi.fn> }).findUnique
+      .mockResolvedValueOnce(booking)
+      .mockResolvedValueOnce(savedBooking);
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() } as never,
+    );
+    return { service, tx };
+  }
+
+  it("blocks preparing when an accessory has no assigned asset", async () => {
+    const { service } = createAdvanceService([{ id: "acc-1", accessoryAssetId: null }]);
+
+    await expect(service.advanceStatus(BOOKING_ID, { status: "preparing" } as never))
+      .rejects.toThrow("accessories must have an assigned asset");
+  });
+
+  it("allows preparing when all accessories are assigned", async () => {
+    const { service, tx } = createAdvanceService([{ id: "acc-1", accessoryAssetId: ASSET_ID }]);
+
+    // claimBookingAssets needs garment asset rows; stub minimal garment asset flow.
+    (tx as unknown as Record<string, unknown>).garmentAsset = {
+      findUnique: vi.fn().mockResolvedValue({ id: ASSET_ID, status: "available", garmentId: GARMENT_ID, garment_size_id: SIZE_ID }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    (tx as unknown as Record<string, unknown>).bookingItem = {
+      findMany: vi.fn().mockResolvedValue([]),
+    };
+
+    const result = await service.advanceStatus(BOOKING_ID, { status: "preparing" } as never);
+    expect(result.data).toBeDefined();
+  });
+});
+
+describe("BookingsService.checkAccessoryAvailability", () => {
+  const ACCESSORY_ID = "00000000-0000-4000-8000-000000000009";
+
+  function createCheckService(rows: Array<{ status: string; start: string; end: string }>, assetStatuses: string[]) {
+    const prisma = {
+      accessories: {
+        findFirst: vi.fn().mockResolvedValue({ id: ACCESSORY_ID, is_active: true }),
+      },
+      accessory_assets: {
+        findMany: vi.fn().mockResolvedValue(assetStatuses.map((status, i) => ({ id: `aa-${i}`, status }))),
+      },
+      bookingAccessoryItem: {
+        findMany: vi.fn().mockResolvedValue(
+          rows.map((r, i) => ({
+            booking: {
+              id: `b-${i}`,
+              status: r.status,
+              rentalStartDate: new Date(`${r.start}T00:00:00.000Z`),
+              rentalEndDate: new Date(`${r.end}T00:00:00.000Z`),
+            },
+          })),
+        ),
+      },
+    };
+    const service = new BookingsService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return { service };
+  }
+
+  it("reports available when demand fits capacity", async () => {
+    const { service } = createCheckService(
+      [{ status: "renting", start: "2026-10-10", end: "2026-10-12" }],
+      ["available", "available"],
+    );
+    const res = await service.checkAccessoryAvailability({
+      accessoryId: ACCESSORY_ID, startDate: "2026-10-10", endDate: "2026-10-12", quantity: 1,
+    });
+    expect(res.data?.available).toBe(true);
+    expect(res.data?.availableCount).toBe(1);
+    expect(res.data?.totalAssets).toBe(2);
+  });
+
+  it("reports unavailable when overlapping demand covers capacity", async () => {
+    const { service } = createCheckService(
+      [
+        { status: "renting", start: "2026-10-10", end: "2026-10-12" },
+        { status: "confirmed", start: "2026-10-11", end: "2026-10-13" },
+      ],
+      ["available", "available"],
+    );
+    const res = await service.checkAccessoryAvailability({
+      accessoryId: ACCESSORY_ID, startDate: "2026-10-10", endDate: "2026-10-12", quantity: 1,
+    });
+    expect(res.data?.available).toBe(false);
+    expect(res.data?.availableCount).toBe(0);
+  });
+
+  it("ignores released bookings in demand", async () => {
+    const { service } = createCheckService(
+      [{ status: "cancelled", start: "2026-10-10", end: "2026-10-12" }],
+      ["available"],
+    );
+    const res = await service.checkAccessoryAvailability({
+      accessoryId: ACCESSORY_ID, startDate: "2026-10-10", endDate: "2026-10-12", quantity: 1,
+    });
+    expect(res.data?.available).toBe(true);
+  });
+});
+
+describe("BookingsService.inspectBookingAccessory", () => {
+  const ACCESSORY_ITEM_ID = "00000000-0000-4000-8000-000000000010";
+  const ACCESSORY_ASSET_ID = "00000000-0000-4000-8000-000000000011";
+
+  function createInspectService(bookingStatus: string, accessoryAssetId: string | null) {
+    const booking = {
+      ...makeBooking("2026-10-10", "2026-10-12", { status: bookingStatus }),
+      accessoryItems: [
+        {
+          id: ACCESSORY_ITEM_ID, bookingId: BOOKING_ID, bookingItemId: ITEM_ID,
+          accessoryId: "00000000-0000-4000-8000-000000000009",
+          accessoryAssetId, quantity: 1, unitPrice: 0, isIncluded: true,
+        },
+      ],
+    };
+    const tx = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue(booking),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ ...booking, accessoryItems: [] }),
+        update: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+          id: BOOKING_ID, status: bookingStatus, depositTotal: 50, penaltyTotal: 0, ...data,
+        })),
+      },
+      accessories: {
+        findUnique: vi.fn().mockResolvedValue({ replacement_value: 500000, name: "Mấn" }),
+      },
+      accessory_assets: {
+        findUnique: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID, status: "available", asset_code: "PK-001" }),
+        update: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID }),
+      },
+      accessory_asset_history: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+      bookingAccessoryItem: { update: vi.fn().mockResolvedValue({ id: ACCESSORY_ITEM_ID }) },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h2" }) },
+      penalty: { create: vi.fn().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "pen-1", ...data })) },
+      financialTransaction: { create: vi.fn().mockResolvedValue({ id: "ft-1" }) },
+    };
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          ...booking,
+          deliveryAddress: null,
+          deliveryRecords: [],
+          payments: [],
+        }),
+      },
+    };
+    const inspections = {
+      tryFinalizeBookingInspection: vi.fn().mockResolvedValue({ data: { finalized: false } }),
+    };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      {
+        assetChanged: vi.fn(), inspectionChanged: vi.fn(),
+        laundryChanged: vi.fn(), maintenanceChanged: vi.fn(),
+        bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(),
+      } as never,
+      inspections as never,
+    );
+    return { service, tx };
+  }
+
+  it("records a good inspection and keeps the asset available", async () => {
+    const { service, tx } = createInspectService("returned", ACCESSORY_ASSET_ID);
+    const res = await service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "good", note: "OK" }, STAFF_ID,
+    );
+    expect(res.data).toBeDefined();
+    expect(tx.bookingAccessoryItem.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ITEM_ID },
+      data: expect.objectContaining({ conditionStatus: "good", inspectedBy: STAFF_ID }),
+    });
+    // good → available, asset đã available nên không update status.
+    expect(tx.accessory_assets.update).not.toHaveBeenCalled();
+  });
+
+  it("moves the asset to damaged on a damaged inspection", async () => {
+    const { service, tx } = createInspectService("inspection_pending", ACCESSORY_ASSET_ID);
+    const photoUrl = `https://example.supabase.co/storage/v1/object/public/products/handover/${STAFF_ID}/11111111-1111-4111-8111-111111111111.jpg`;
+    await service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID,
+      { conditionStatus: "damaged", imageUrls: [photoUrl] },
+      STAFF_ID,
+    );
+    expect(tx.accessory_assets.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ASSET_ID },
+      data: { status: "damaged" },
+    });
+    expect(tx.bookingAccessoryItem.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ITEM_ID },
+      data: expect.objectContaining({
+        conditionStatus: "damaged",
+        conditionImages: [photoUrl],
+      }),
+    });
+    expect(tx.accessory_asset_history.create).toHaveBeenCalled();
+  });
+
+  it("rejects inspection when the row has no assigned asset", async () => {
+    const { service } = createInspectService("returned", null);
+    await expect(service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "good" }, STAFF_ID,
+    )).rejects.toThrow("chưa được gán tài sản");
+  });
+
+  it("rejects inspection when the booking is still renting", async () => {
+    const { service } = createInspectService("renting", ACCESSORY_ASSET_ID);
+    await expect(service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "good" }, STAFF_ID,
+    )).rejects.toThrow("đã trả đồ");
+  });
+
+  it("creates a manual penalty voucher on damaged inspection", async () => {
+    const { service, tx } = createInspectService("returned", ACCESSORY_ASSET_ID);
+    await service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "damaged", penaltyAmount: 150000 }, STAFF_ID,
+    );
+    expect(tx.penalty.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ bookingId: BOOKING_ID, amount: 150000 }),
+    });
+    expect(tx.booking.update).toHaveBeenCalledWith({
+      where: { id: BOOKING_ID },
+      data: { penaltyTotal: { increment: 150000 } },
+    });
+  });
+
+  it("auto-charges replacement value on lost inspection", async () => {
+    const { service, tx } = createInspectService("returned", ACCESSORY_ASSET_ID);
+    await service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "lost" }, STAFF_ID,
+    );
+    expect(tx.penalty.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amount: 500000 }),
+    });
+    expect(tx.accessory_assets.update).toHaveBeenCalledWith({
+      where: { id: ACCESSORY_ASSET_ID },
+      data: { status: "lost" },
+    });
+  });
+
+  it("creates no penalty on good inspection", async () => {
+    const { service, tx } = createInspectService("returned", ACCESSORY_ASSET_ID);
+    await service.inspectBookingAccessory(
+      BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "good" }, STAFF_ID,
+    );
+    expect(tx.penalty.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService overdue reporting", () => {  type Serialized = { overdueDays: number; overdueAmount: number; overdueFeePerDay: number };
 
   function serializeWith(service: unknown, booking: unknown): Serialized {
     const spy = service as { serializeBooking(b: unknown): Serialized };

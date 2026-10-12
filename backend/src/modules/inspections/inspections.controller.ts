@@ -38,6 +38,11 @@ export class InspectionsController {
     return this.inspectionsService.findAllLog();
   }
 
+  @Get("accessory-log")
+  findAccessoryLog() {
+    return this.inspectionsService.findAccessoryLog();
+  }
+
   @Get("laundry")
   findAllLaundry() {
     return this.inspectionsService.findAllLaundry();

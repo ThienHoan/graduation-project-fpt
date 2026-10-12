@@ -280,8 +280,7 @@ export class AccessoriesService {
     );
   }
 
-  async findAssetHistory(assetId: string) {    const asset = await this.prisma.accessory_assets.findUnique({ where: { id: assetId } });
-    if (!asset) throw new NotFoundException("Không tìm thấy tài sản phụ kiện.");
+  async findAssetHistory(assetId: string) {    const asset = await this.prisma.accessory_assets.findUnique({ where: { id: assetId } });    if (!asset) throw new NotFoundException("Không tìm thấy tài sản phụ kiện.");
 
     const rows = await this.prisma.accessory_asset_history.findMany({
       where: { asset_id: assetId },
@@ -310,6 +309,45 @@ export class AccessoriesService {
             ? { email: actor.email, name: actor.profile?.fullName ?? null }
             : null,
           createdAt: r.created_at.toISOString(),
+        };
+      }),
+    );
+  }
+
+  /**
+   * Tài sản phụ kiện cần xử lý sau kiểm tra trả đồ (giặt / sửa / hỏng / mất),
+   * kèm đơn gần nhất để manager đối chiếu. Dùng cho tab Giặt sấy + Hư hỏng.
+   */
+  async findProcessingAssets() {
+    const assets = await this.prisma.accessory_assets.findMany({
+      where: { status: { in: ["laundry", "maintenance", "damaged", "lost"] } },
+      include: {
+        accessories: { select: { id: true, name: true, replacement_value: true } },
+        booking_accessory_items: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            conditionNote: true,
+            booking: { select: { id: true, status: true } },
+          },
+        },
+      },
+      orderBy: { updated_at: "asc" },
+    });
+    return ok(
+      assets.map((a) => {
+        const latest = a.booking_accessory_items[0] ?? null;
+        return {
+          id: a.id,
+          accessoryId: a.accessory_id,
+          accessoryName: a.accessories.name,
+          assetCode: a.asset_code,
+          status: a.status,
+          conditionNote: a.condition_note ?? latest?.conditionNote ?? null,
+          replacementValue: Number(a.accessories.replacement_value ?? 0),
+          bookingId: latest?.booking.id ?? null,
+          bookingStatus: latest?.booking.status ?? null,
+          updatedAt: a.updated_at.toISOString(),
         };
       }),
     );
