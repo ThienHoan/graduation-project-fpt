@@ -160,8 +160,48 @@ describe("PaymentsService.createPaymentLink", () => {
     expect(payos.paymentRequests.create).toHaveBeenCalledWith(expect.objectContaining({ orderCode: 100000000002 }));
   });
 
-  it("rejects a PayOS item total that differs from the booking amount", async () => {
-    const { service, tx } = createLinkService(paymentLinkBooking({ rentalTotal: new Prisma.Decimal(110) }));
+  it("matches the booking amount when a voucher reduced the rental total", async () => {
+    // Giá gốc 50/ngày × 2 ngày = 100, voucher giảm 20 → rentalTotal 80.
+    const { service } = createLinkService(paymentLinkBooking({ rentalTotal: new Prisma.Decimal(80) }));
+
+    await service.createPaymentLink(BOOKING_ID, CUSTOMER_ID);
+
+    expect(payos.paymentRequests.create).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 140,
+      items: [
+        { name: "Áo dài mẫu", quantity: 1, price: 130 },
+        { name: "Phí giao hàng", quantity: 1, price: 10 },
+      ],
+    }));
+  });
+
+  it("matches the booking amount with price-rule rounding, accessories and several items", async () => {
+    // dailyPrice là giá bình quân đã làm tròn (33.333 → 33.000) nên dailyPrice × ngày
+    // không bằng tiền thuê thật; thêm phụ kiện 20.000 gắn vào món thứ nhất.
+    const booking = paymentLinkBooking({
+      rentalStartDate: new Date("2026-10-10T00:00:00.000Z"),
+      rentalEndDate: new Date("2026-10-12T00:00:00.000Z"),
+      rentalTotal: new Prisma.Decimal(320_000),
+      depositTotal: new Prisma.Decimal(300_000),
+      shippingFee: new Prisma.Decimal(0),
+      items: [
+        { id: "item-1", dailyPrice: new Prisma.Decimal(33_000), depositAmount: new Prisma.Decimal(100_000), garment_sizes: { garments: { name: "Áo dài đỏ" } } },
+        { id: "item-2", dailyPrice: new Prisma.Decimal(67_000), depositAmount: new Prisma.Decimal(200_000), garment_sizes: { garments: { name: "Áo nhật bình" } } },
+      ],
+      accessoryItems: [{ bookingItemId: "item-1", rentalTotal: new Prisma.Decimal(20_000) }],
+    });
+    const { service } = createLinkService(booking);
+
+    await service.createPaymentLink(BOOKING_ID, CUSTOMER_ID);
+
+    const call = payos.paymentRequests.create.mock.calls.at(-1)![0];
+    expect(call.amount).toBe(620_000);
+    expect(call.items.map((item: { name: string }) => item.name)).toEqual(["Áo dài đỏ + phụ kiện", "Áo nhật bình"]);
+    expect(call.items.reduce((sum: number, item: { price: number }) => sum + item.price, 0)).toBe(620_000);
+  });
+
+  it("rejects a booking whose totals are invalid", async () => {
+    const { service, tx } = createLinkService(paymentLinkBooking({ rentalTotal: new Prisma.Decimal(-10) }));
 
     await expect(service.createPaymentLink(BOOKING_ID, CUSTOMER_ID)).rejects.toThrow(
       "Chi tiết thanh toán không khớp tổng tiền đơn hàng.",
