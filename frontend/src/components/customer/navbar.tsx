@@ -34,9 +34,14 @@ export function CustomerNavbar({
   const accountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setCartCountVal(cartCount());
-    const interval = setInterval(() => setCartCountVal(cartCount()), 500);
-    return () => clearInterval(interval);
+    const updateCount = () => setCartCountVal(cartCount());
+    updateCount();
+    window.addEventListener("cart:updated", updateCount);
+    window.addEventListener("storage", updateCount);
+    return () => {
+      window.removeEventListener("cart:updated", updateCount);
+      window.removeEventListener("storage", updateCount);
+    };
   }, []);
 
   // Close account dropdown on outside click

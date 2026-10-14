@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import compression = require("compression");
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -30,6 +31,9 @@ async function bootstrap() {
   // Tăng body limit cho ảnh base64 AI try-on (10MB)
   app.useBodyParser("json", { limit: "10mb" });
   app.useBodyParser("urlencoded", { limit: "10mb", extended: true });
+
+  // Tự động nén toàn bộ HTTP responses (Gzip/Brotli) giảm 70-80% payload
+  app.use(compression());
 
   await app.listen(port);
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uploadFile, deleteUploadedFile } from "@/lib/upload";
 import { useRouter } from "next/navigation";
 import { ManagerPortalShell, ConfirmModal } from "@/components/heritage/ui";
+import { Pagination } from "@/components/common/pagination";
 import {
   CheckCircle2,
   AlertCircle,
@@ -4354,6 +4355,17 @@ function InspectionLogTab({
   const [accStatusFilter, setAccStatusFilter] = useState("all");
   const [subTab, setSubTab] = useState<"garments" | "accessories">("garments");
   const [viewingImages, setViewingImages] = useState<{ title: string; images: string[] } | null>(null);
+  const [garmentsPage, setGarmentsPage] = useState(1);
+  const [accessoriesPage, setAccessoriesPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  useEffect(() => {
+    setGarmentsPage(1);
+  }, [search, statusFilter, penaltyFilter]);
+
+  useEffect(() => {
+    setAccessoriesPage(1);
+  }, [search, accStatusFilter, penaltyFilter]);
 
   const filteredLog = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -4401,6 +4413,16 @@ function InspectionLogTab({
       return byText && byStatus && byPenalty;
     });
   }, [accLog, search, accStatusFilter, penaltyFilter]);
+ 
+  const paginatedLog = useMemo(() => {
+    const start = (garmentsPage - 1) * PAGE_SIZE;
+    return filteredLog.slice(start, start + PAGE_SIZE);
+  }, [filteredLog, garmentsPage]);
+
+  const paginatedAccLog = useMemo(() => {
+    const start = (accessoriesPage - 1) * PAGE_SIZE;
+    return filteredAccLog.slice(start, start + PAGE_SIZE);
+  }, [filteredAccLog, accessoriesPage]);
 
   return (
     <div className="space-y-4">
@@ -4509,7 +4531,7 @@ function InspectionLogTab({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand">
-                  {filteredLog.map((entry) => {
+                  {paginatedLog.map((entry) => {
                     const sm = INSPECTION_STATUS_META[entry.status] ?? {
                       label: entry.status,
                       color: "bg-stone-100 text-stone-600",
@@ -4548,6 +4570,14 @@ function InspectionLogTab({
                   })}
                 </tbody>
               </table>
+
+              <Pagination
+                currentPage={garmentsPage}
+                totalItems={filteredLog.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setGarmentsPage}
+                itemLabel="phiên kiểm tra"
+              />
             </div>
           )}
           </>
@@ -4576,7 +4606,7 @@ function InspectionLogTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-sand">
-                    {filteredAccLog.map((entry) => {
+                    {paginatedAccLog.map((entry) => {
                       const meta = accConditionMeta[entry.conditionStatus ?? ""] ?? {
                         label: entry.conditionStatus ?? "—",
                         color: "bg-stone-100 text-stone-600",
@@ -4634,6 +4664,14 @@ function InspectionLogTab({
                     })}
                   </tbody>
                 </table>
+
+                <Pagination
+                  currentPage={accessoriesPage}
+                  totalItems={filteredAccLog.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setAccessoriesPage}
+                  itemLabel="lượt kiểm tra phụ kiện"
+                />
               </div>
             )}
           </div>
@@ -6542,6 +6580,13 @@ function RefundsTab({
   approvingId: string | null;
 }) {
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 5;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
   const query = search.trim().replace(/^#/, "").toLowerCase();
   const filteredRefunds = query
     ? pendingRefunds.filter(
@@ -6551,21 +6596,28 @@ function RefundsTab({
       )
     : pendingRefunds;
 
+  const paginatedRefunds = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredRefunds.slice(start, start + PAGE_SIZE);
+  }, [filteredRefunds, page]);
+
   return (
     <div className="space-y-6">
       {!loadingRefunds && pendingRefunds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white p-4 shadow-sm">
           <div className="relative flex-1 min-w-[240px] max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-stone-400" />
             <input
-              className="w-full rounded-lg border border-sand bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique"
+              className="w-full rounded-lg border border-sand bg-mist/60 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique focus:bg-white"
               placeholder="Tìm theo mã đơn hoặc tên khách..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="text-sm text-stone-500">
-            {filteredRefunds.length}/{pendingRefunds.length} yêu cầu chờ duyệt
+          <span className="text-xs sm:text-sm font-medium text-stone-600 bg-sand/30 px-3 py-1.5 rounded-lg">
+            Hiển thị {filteredRefunds.length > 0 ? (page - 1) * PAGE_SIZE + 1 : 0} -{" "}
+            {Math.min(page * PAGE_SIZE, filteredRefunds.length)} trong{" "}
+            <span className="font-semibold text-lotus">{filteredRefunds.length}</span> yêu cầu chờ duyệt
           </span>
         </div>
       )}
@@ -6584,15 +6636,28 @@ function RefundsTab({
           &rdquo;.
         </div>
       ) : (
-        filteredRefunds.map((refund) => (
-          <RefundCard
-            key={refund.id}
-            refund={refund}
-            approvingId={approvingId}
-            handleApproveRefund={handleApproveRefund}
-            handleRejectRefund={handleRejectRefund}
+        <>
+          <div className="space-y-6">
+            {paginatedRefunds.map((refund) => (
+              <RefundCard
+                key={refund.id}
+                refund={refund}
+                approvingId={approvingId}
+                handleApproveRefund={handleApproveRefund}
+                handleRejectRefund={handleRejectRefund}
+              />
+            ))}
+          </div>
+
+          <Pagination
+            currentPage={page}
+            totalItems={filteredRefunds.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            itemLabel="yêu cầu hoàn cọc"
+            className="rounded-xl border border-sand bg-white shadow-sm"
           />
-        ))
+        </>
       )}
     </div>
   );
@@ -6614,6 +6679,13 @@ function RejectedHandoversTab({
   const [reason, setReason] = useState("");
   const [replacements, setReplacements] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 6;
+
+  const paginatedBookings = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return bookings.slice(start, start + PAGE_SIZE);
+  }, [bookings, page]);
 
   const availableAssets = useMemo(
     () => allAssets.filter((a) => a.status === "available"),
@@ -6658,49 +6730,62 @@ function RejectedHandoversTab({
           Không có biên bản bàn giao nào bị từ chối.
         </div>
       ) : (
-        bookings.map((booking) => (
-          <div
-            key={booking.id}
-            className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-display text-lg text-ink">
-                  Đơn {booking.id.split("-")[0].toUpperCase()}
-                </h3>
-                <p className="text-sm text-stone-500">
-                  Khách hàng: {booking.customerName}
-                </p>
-                <p className="text-sm text-red-600 mt-2 font-medium">
-                  Lý do từ chối: {booking.handover?.note || "Không rõ"}
-                </p>
-                <div className="mt-2 flex gap-2">
-                  {booking.handover?.images?.map(
-                    (url: string, i: number) => (
-                      <img
-                        key={i}
-                        src={url}
-                        alt="Từ chối"
-                        className="h-20 w-20 rounded border border-sand object-cover"
-                      />
-                    ),
-                  )}
+        <>
+          <div className="space-y-4">
+            {paginatedBookings.map((booking) => (
+              <div
+                key={booking.id}
+                className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-display text-lg text-ink">
+                      Đơn {booking.id.split("-")[0].toUpperCase()}
+                    </h3>
+                    <p className="text-sm text-stone-500">
+                      Khách hàng: {booking.customerName}
+                    </p>
+                    <p className="text-sm text-red-600 mt-2 font-medium">
+                      Lý do từ chối: {booking.handover?.note || "Không rõ"}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      {booking.handover?.images?.map(
+                        (url: string, i: number) => (
+                          <img
+                            key={i}
+                            src={url}
+                            alt="Từ chối"
+                            className="h-20 w-20 rounded border border-sand object-cover"
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedBooking(booking);
+                      setAction("replace");
+                      setReason("");
+                      setReplacements({});
+                    }}
+                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                  >
+                    Xử lý
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedBooking(booking);
-                  setAction("replace");
-                  setReason("");
-                  setReplacements({});
-                }}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-              >
-                Xử lý
-              </button>
-            </div>
+            ))}
           </div>
-        ))
+
+          <Pagination
+            currentPage={page}
+            totalItems={bookings.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            itemLabel="biên bản từ chối"
+            className="rounded-xl border border-sand bg-white shadow-sm"
+          />
+        </>
       )}
 
       {selectedBooking && (

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { CustomerFooter } from "@/components/customer/footer";
+import { OptimizedImage } from "@/components/common/optimized-image";
 import { cartCount } from "@/lib/cart";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -78,9 +79,14 @@ export default function HomePage() {
 
   // Cart badge
   useEffect(() => {
-    setCartCountVal(cartCount());
-    const interval = setInterval(() => setCartCountVal(cartCount()), 500);
-    return () => clearInterval(interval);
+    const updateCount = () => setCartCountVal(cartCount());
+    updateCount();
+    window.addEventListener("cart:updated", updateCount);
+    window.addEventListener("storage", updateCount);
+    return () => {
+      window.removeEventListener("cart:updated", updateCount);
+      window.removeEventListener("storage", updateCount);
+    };
   }, []);
 
   // Section scroll tracking
@@ -251,12 +257,15 @@ export default function HomePage() {
             <div className="lg:col-span-5">
               <div className="relative overflow-hidden rounded-2xl border border-sand bg-white p-4 shadow-md transition-all duration-300 hover:border-lotus hover:shadow-xl">
                 <div className="relative aspect-[4/5] overflow-hidden rounded-xl bg-stone-100">
-                  <img
+                  <OptimizedImage
                     src="https://lh3.googleusercontent.com/aida-public/AB6AXuDvowMvVYvat40td0eYsm2xOyewRYASe82qkNdpYOhmlGpLtvo-CY1thuEj3H0Ex3taiVfLTKX2ESAQ9rvq13OU7L69H-IJ4iocVq83idHbhAPZHBmozXmdoLqEf5PfXNcZXs7Uz2YmawbQoZwfIPGjesRNPzDQS18JSZs6OvqnDYS1j1ExtTh4ACDttytuJ5mfuT_RDObouB5E1zhQh92zf6X9GOwGBGbQXQXDpLMIfe9reSHCU63uycTGSdtwAwLtouKipe_UVc2k"
                     alt="Nhật Bình Hoàng Phái"
+                    fill
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 40vw"
                     className="h-full w-full object-cover object-top"
                   />
-                  <span className="absolute left-3 top-3 rounded-md bg-black/75 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-md">
+                  <span className="absolute left-3 top-3 z-10 rounded-md bg-black/75 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-md">
                     Tiêu điểm phục dựng
                   </span>
                 </div>
@@ -350,14 +359,14 @@ export default function HomePage() {
             {/* Card 1 */}
             <div className="overflow-hidden rounded-xl border border-sand bg-white transition-all duration-300 hover:border-lotus hover:shadow-lg">
               <div className="relative aspect-[3/4] overflow-hidden bg-stone-100">
-                <img
+                <OptimizedImage
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuAp8QntSX86-npLy6GZhzDW3S6hDsmK_e0194JUyIehNfQKRhE9vUF35IBAk74jbWLnJDbSY5CxzXa9AfzYnepenhDwTtGl9GlAtITr3j_tYnhzVdMESPHHVvCtJMLH95tqwn1olV8v5veytJaiVZetmkvmHe6wgjJyNSG4p-2C5RF61y_YXkDUSeNIp-XWXYoHT4HyAdzpSJ0i9sKrzvlJPzxMibEHs2G9xKp4cMvVMV81eICncFd31Vq-S_G8HK8GEIPiOZ6dxl2O"
                   alt="Áo Tấc Lam Thượng"
-                  loading="lazy"
-                  decoding="async"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
                   className="h-full w-full object-cover"
                 />
-                <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
+                <span className="shadow-xs absolute left-3 top-3 z-10 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
                   Triều Nguyễn
                 </span>
               </div>
@@ -379,14 +388,14 @@ export default function HomePage() {
             {/* Card 2 */}
             <div className="overflow-hidden rounded-xl border border-sand bg-white transition-all duration-300 hover:border-lotus hover:shadow-lg">
               <div className="relative aspect-[3/4] overflow-hidden bg-stone-100">
-                <img
+                <OptimizedImage
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuDS1o5lSmGpkTUXc5LH4apMFHlcKEbyL3m8Z8RgdQROFBvi-EDOwrPRIdNCQ9PXjHlWVZcnVBJitf0PhQPkfPCnb91euyVXyXmEjGH22LyYBCWx9tIZUtohpM8mddPADbGjhomL0P10yhDjoWJvUVy3zdHCEPBS6Jxc2dQXB9H04gP_Pc-tbIec8mGliSs3Ny9q-elFSPeu7fojwL3nKXsVaM970qq_IoiXasEdVlGaBNW-BdsVVcsi52wgkajLfqkJMTYSAX-fJaR9"
                   alt="Áo Dài Phụng Vũ"
-                  loading="lazy"
-                  decoding="async"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
                   className="h-full w-full object-cover"
                 />
-                <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
+                <span className="shadow-xs absolute left-3 top-3 z-10 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
                   Lễ Phục Cưới
                 </span>
               </div>
@@ -409,14 +418,14 @@ export default function HomePage() {
             {/* Card 3 */}
             <div className="overflow-hidden rounded-xl border border-sand bg-white transition-all duration-300 hover:border-lotus hover:shadow-lg">
               <div className="relative aspect-[3/4] overflow-hidden bg-stone-100">
-                <img
+                <OptimizedImage
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpdew3ggLs6xlVpmJgHap9WUw51NiN8-SxZWc86HUd9JvUYXaAk5-M3DypF1FMxsO3kNu01OGy-kQjU1PAp0AXHNP7Jf7L9-ulP3kBMVjnSPdqbrW4WB_Klqenl5xpyMrEanc_WAZ9CVkvIEIlBxsT5uOv76VGhgt_WPLW3zGg_0HBn3ppgZUi3J1zHml8--uq-_9PpHGmkfACxuONpGtfDGiC9h0jrET4HMI_c6BDLqq37iaAcUrMvRKL2JuFJkLPnlJaEKugt7ic"
                   alt="Ngũ Thân Cát Tường"
-                  loading="lazy"
-                  decoding="async"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 33vw"
                   className="h-full w-full object-cover"
                 />
-                <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
+                <span className="shadow-xs absolute left-3 top-3 z-10 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
                   Trang Phục Nam
                 </span>
               </div>

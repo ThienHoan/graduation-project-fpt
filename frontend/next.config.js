@@ -33,6 +33,9 @@ const nextConfig = {
       },
     ],
   },
+  experimental: {
+    optimizePackageImports: ["lucide-react", "leaflet"],
+  },
 };
 
 module.exports = nextConfig;

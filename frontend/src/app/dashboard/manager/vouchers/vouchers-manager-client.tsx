@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { Plus, PauseCircle, PlayCircle, Pencil, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Pagination } from "@/components/common/pagination";
 
 const STATUS_META: Record<Voucher["status"], { label: string; cls: string }> = {
   active: { label: "Đang chạy", cls: "bg-jade/10 text-jade" },
@@ -99,6 +100,12 @@ export function VouchersManagerClient() {
   const [saving, setSaving] = useState(false);
   const [toDelete, setToDelete] = useState<Voucher | null>(null);
   const [toast, setToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, status]);
 
   const show = useCallback((kind: "success" | "error", message: string) => {
     setToast({ kind, message });
@@ -163,6 +170,8 @@ export function VouchersManagerClient() {
     load();
   }
 
+  const paginatedItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -215,7 +224,7 @@ export function VouchersManagerClient() {
           <tbody className="divide-y divide-sand">
             {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400">Đang tải...</td></tr>}
             {!loading && items.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400">Chưa có voucher nào.</td></tr>}
-            {items.map((v) => (
+            {paginatedItems.map((v) => (
               <tr key={v.id}>
                 <td className="px-4 py-3">
                   <p className="font-mono font-semibold text-lotus">{v.code}</p>
@@ -258,6 +267,14 @@ export function VouchersManagerClient() {
             ))}
           </tbody>
         </table>
+
+        <Pagination
+          currentPage={page}
+          totalItems={items.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          itemLabel="mã voucher"
+        />
       </section>
 
       {formOpen && (

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getStaffReviews, replyToReview, reportReview, hideReview, StaffReviewResponse } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
 import { Star, AlertTriangle, MessageSquare } from "lucide-react";
+import { Pagination } from "@/components/common/pagination";
 
 export function StaffReviewsClient() {
   const { user } = useAuth();
@@ -16,6 +17,8 @@ export function StaffReviewsClient() {
   const [hideReason, setHideReason] = useState("Vi phạm tiêu chuẩn cộng đồng");
   const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
   const [actionType, setActionType] = useState<"reply" | "report" | "hide" | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
 
   useEffect(() => {
     fetchReviews();
@@ -91,6 +94,8 @@ export function StaffReviewsClient() {
   if (loading) return <div>Đang tải...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
 
+  const paginatedReviews = reviews.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       <div className="overflow-x-auto">
@@ -105,7 +110,7 @@ export function StaffReviewsClient() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {reviews.map((review) => (
+            {paginatedReviews.map((review) => (
               <tr key={review.id} className="hover:bg-slate-50/50">
                 <td className="px-4 py-3 align-top">
                   <div className="font-medium">{review.customer?.profile?.fullName || review.customerId}</div>
@@ -244,6 +249,14 @@ export function StaffReviewsClient() {
             )}
           </tbody>
         </table>
+
+        <Pagination
+          currentPage={page}
+          totalItems={reviews.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          itemLabel="đánh giá"
+        />
       </div>
     </div>
   );
