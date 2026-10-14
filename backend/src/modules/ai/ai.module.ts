@@ -4,6 +4,7 @@ import { AuthModule } from "../auth/auth.module";
 import { PricingModule } from "../pricing/pricing.module";
 import { AiController } from "./ai.controller";
 import { AiService } from "./ai.service";
+import { TryonQueueService } from "./tryon-queue.service";
 
 @Module({
   imports: [
@@ -12,7 +13,7 @@ import { AiService } from "./ai.service";
     ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 10 }] }),
   ],
   controllers: [AiController],
-  providers: [AiService],
-  exports: [AiService],
+  providers: [AiService, TryonQueueService],
+  exports: [AiService, TryonQueueService],
 })
 export class AiModule {}

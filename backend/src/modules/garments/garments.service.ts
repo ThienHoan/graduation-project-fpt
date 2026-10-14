@@ -770,6 +770,114 @@ export class GarmentsService {
     return cols;
   }
 
+  // ── Similar Garments Recommendation ───────────────────────────────────────
+
+  async findSimilarGarments(garmentId: string, limit = 6) {
+    const target = await this.prisma.garment.findFirst({
+      where: { id: garmentId, isActive: true, deletedAt: null },
+      include: {
+        category: true,
+        garment_sizes: { where: { is_active: true } },
+      },
+    });
+    if (!target) throw new NotFoundException("Garment not found.");
+
+    const targetPrices = target.garment_sizes
+      .map((s) => Number(s.daily_price ?? 0))
+      .filter((p) => p > 0);
+    const targetMinPrice = targetPrices.length > 0 ? Math.min(...targetPrices) : 0;
+    const targetColor = target.color?.trim().toLowerCase() ?? "";
+    const targetOccasions = (target.occasion ?? []).map((o) => o.trim().toLowerCase());
+
+    const candidates = await this.prisma.garment.findMany({
+      where: {
+        id: { not: garmentId },
+        isActive: true,
+        deletedAt: null,
+      },
+      include: {
+        category: true,
+        images: { orderBy: { sortOrder: "asc" }, take: 1 },
+        garment_sizes: { where: { is_active: true }, orderBy: { daily_price: "asc" } },
+      },
+    });
+
+    const scored = candidates
+      .filter((c) => c.garment_sizes.length > 0)
+      .map((c) => {
+        let score = 0;
+        const reasons: string[] = [];
+
+        // 1. Cùng danh mục: +40 điểm
+        if (target.categoryId && c.categoryId === target.categoryId) {
+          score += 40;
+          if (c.category?.name) {
+            reasons.push(`Cùng kiểu dáng ${c.category.name}`);
+          }
+        }
+
+        // 2. Màu sắc: +25 điểm nếu khớp hoàn toàn, +15 nếu chứa nhau
+        const candColor = c.color?.trim().toLowerCase() ?? "";
+        if (targetColor && candColor) {
+          if (candColor === targetColor) {
+            score += 25;
+            reasons.push(`Cùng tông màu ${c.color}`);
+          } else if (candColor.includes(targetColor) || targetColor.includes(candColor)) {
+            score += 15;
+            reasons.push(`Tông màu tương tự (${c.color})`);
+          }
+        }
+
+        // 3. Dịp sử dụng: +20 điểm nếu trùng ít nhất 1 dịp
+        const candOccasions = (c.occasion ?? []).map((o) => o.trim().toLowerCase());
+        const sharedOccasions = targetOccasions.filter((to) =>
+          candOccasions.some((co) => co.includes(to) || to.includes(co)),
+        );
+        if (sharedOccasions.length > 0) {
+          score += 20;
+          reasons.push(`Phù hợp cho ${sharedOccasions.slice(0, 2).join(", ")}`);
+        }
+
+        // 4. Giá tiền: +15 điểm nếu chênh lệch <= 25%, +10 điểm nếu <= 50%
+        const candPrices = c.garment_sizes
+          .map((s) => Number(s.daily_price ?? 0))
+          .filter((p) => p > 0);
+        const candMinPrice = candPrices.length > 0 ? Math.min(...candPrices) : 0;
+
+        if (targetMinPrice > 0 && candMinPrice > 0) {
+          const diffRatio = Math.abs(candMinPrice - targetMinPrice) / targetMinPrice;
+          if (diffRatio <= 0.25) {
+            score += 15;
+            reasons.push("Mức giá tương đương");
+          } else if (diffRatio <= 0.5) {
+            score += 10;
+            reasons.push("Mức giá cận kề");
+          } else if (diffRatio <= 1.0) {
+            score += 5;
+          }
+        }
+
+        return {
+          garmentId: c.id,
+          name: c.name,
+          categoryName: c.category?.name ?? null,
+          color: c.color ?? null,
+          imageUrl: c.images[0]?.imageUrl ?? null,
+          dailyPrice: candMinPrice,
+          depositAmount: Number(c.garment_sizes[0]?.deposit_amount ?? 0),
+          sizeId: c.garment_sizes[0]?.id ?? null,
+          sizeLabel: c.garment_sizes[0]?.size_label ?? null,
+          similarityScore: score,
+          reasons: reasons.length > 0 ? reasons : ["Gợi ý phổ biến"],
+        };
+      })
+      .filter((item) => item.similarityScore >= 15)
+      .sort((a, b) => b.similarityScore - a.similarityScore)
+      .slice(0, limit);
+
+    return ok(scored);
+  }
+
   // ── Serialization ──────────────────────────────────────────────────────────
 
   private serialize(garment: GarmentWithImages) {

@@ -20,6 +20,15 @@ export class AiController {
     return this.aiService.createTryon(body, user.id);
   }
 
+  @Get("tryon/status/:id")
+  @UseGuards(JwtAuthGuard)
+  getTryonStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+  ) {
+    return this.aiService.getTryonStatus(id, user.id);
+  }
+
   @Get("tryon/history")
   @UseGuards(JwtAuthGuard)
   getMyHistory(@CurrentUser() user: AuthenticatedUser) {
