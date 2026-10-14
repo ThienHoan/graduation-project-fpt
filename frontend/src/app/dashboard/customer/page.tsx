@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getMyBookings, cancelBooking, getCustomerRefund, getDeliveryTrack } from "@/lib/api";
-import type { BookingResponse, CustomerRefundResponse, DeliveryTrackData } from "@/lib/api";
+import {
+  getMyBookings,
+  cancelBooking,
+  getCustomerRefund,
+  getDeliveryTrack,
+  getCustomerBookingInspections,
+} from "@/lib/api";
+import type {
+  BookingResponse,
+  CustomerRefundResponse,
+  DeliveryTrackData,
+  InspectionSessionResponse,
+} from "@/lib/api";
 import { DeliveryTracker } from "@/components/location/delivery-tracker";
 import { readStoredSession } from "@/lib/auth";
 import { getMyChatConversation, sendBookingCardMessage } from "@/lib/chat";
@@ -30,6 +41,10 @@ import {
   Ruler,
   X,
   AlertCircle,
+  ClipboardCheck,
+  ZoomIn,
+  Loader2,
+  ShieldAlert,
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 5;
@@ -53,6 +68,29 @@ export default function CustomerDashboardPage() {
   const [refundMap, setRefundMap] = useState<Record<string, CustomerRefundResponse | null>>({});
   // Delivery tracking
   const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
+
+  // Inspection report modal state
+  const [inspectingBooking, setInspectingBooking] = useState<BookingResponse | null>(null);
+  const [inspectionSessions, setInspectionSessions] = useState<InspectionSessionResponse[]>([]);
+  const [loadingInspections, setLoadingInspections] = useState(false);
+  const [customerLightboxUrl, setCustomerLightboxUrl] = useState<string | null>(null);
+
+  async function handleOpenInspectionModal(b: BookingResponse) {
+    setInspectingBooking(b);
+    setLoadingInspections(true);
+    try {
+      const res = await getCustomerBookingInspections(b.id);
+      if (res.success && res.data) {
+        setInspectionSessions(res.data);
+      } else {
+        setInspectionSessions([]);
+      }
+    } catch {
+      setInspectionSessions([]);
+    } finally {
+      setLoadingInspections(false);
+    }
+  }
 
   // Poll delivery tracking every 10s. Only track active delivery handoff, not already-renting/completed orders.
   useEffect(() => {
@@ -204,42 +242,115 @@ export default function CustomerDashboardPage() {
   );
 
   function renderRefundStatus(b: BookingResponse) {
-    if (b.status !== "completed" && b.status !== "refund_pending") return <span className="text-xs text-stone-400">—</span>;
-    const refund = refundMap[b.id];
-    if (refund === undefined) return <span className="text-xs text-stone-400">Đang tải...</span>;
-    if (!refund) return <span className="text-xs text-stone-400">—</span>;
-    if (refund.status === "refunded" || refund.status === "partially_refunded") {
-      return (
-        <span className="inline-flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-3 py-1 text-xs font-semibold text-jade">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Đã hoàn {formatVND(refund.amount)}
-          </span>
-          {refund.proofImageUrl && (
-            <a
-              href={refund.proofImageUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-full border border-jade/40 px-3 py-1 text-xs font-semibold text-jade transition hover:bg-jade/10"
-            >
-              <Receipt className="h-3.5 w-3.5" />
-              Xem bill
-            </a>
-          )}
-        </span>
-      );
+    if (b.status !== "completed" && b.status !== "refund_pending" && b.status !== "returned") {
+      return <span className="text-xs text-stone-400">—</span>;
     }
+    const refund = refundMap[b.id];
+    const penalty = Number(b.penaltyTotal ?? 0);
+    const deposit = Number(b.depositTotal ?? 0);
+    const remaining = Math.max(0, deposit - penalty);
+    const excessDebt = penalty > deposit ? penalty - deposit : 0;
+
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-700">
-        <Clock className="h-3.5 w-3.5" />
-        Đang xử lý {formatVND(refund.amount)}
-      </span>
+      <div className="flex flex-col gap-1.5 min-w-[155px]">
+        {/* Khối chiết tính khấu trừ hư hại nếu có */}
+        {penalty > 0 && (
+          <div className={`rounded-lg border p-2 text-[11px] leading-tight shadow-2xs ${
+            excessDebt > 0 ? "border-red-300 bg-red-50/90" : "border-amber-300/80 bg-amber-50/80"
+          }`}>
+            <div className="flex items-center justify-between gap-1 text-stone-600">
+              <span>Cọc ban đầu:</span>
+              <span className="font-semibold text-ink">{formatVND(deposit)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-1 font-semibold text-red-600 mt-0.5">
+              <span>Khấu trừ hư hại:</span>
+              <span>-{formatVND(penalty)}</span>
+            </div>
+            {excessDebt > 0 ? (
+              <div className="mt-1 border-t border-red-200 pt-1 flex items-center justify-between gap-1 font-bold text-red-700 bg-red-100/80 -mx-1 px-1.5 py-0.5 rounded">
+                <span>Cần bồi thường thêm:</span>
+                <span>+{formatVND(excessDebt)}</span>
+              </div>
+            ) : (
+              <div className="mt-1 border-t border-amber-200 pt-1 flex items-center justify-between gap-1 font-bold text-ink">
+                <span>Thực hoàn:</span>
+                <span className="text-jade">{formatVND(remaining)}</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleOpenInspectionModal(b)}
+              className={`mt-1.5 flex w-full items-center justify-center gap-1 rounded bg-white px-2 py-1 text-[10px] font-bold border transition ${
+                excessDebt > 0
+                  ? "border-red-300 text-red-700 hover:bg-red-50"
+                  : "border-amber-300 text-amber-900 hover:bg-amber-100"
+              }`}
+            >
+              <ClipboardCheck className={`h-3 w-3 ${excessDebt > 0 ? "text-red-700" : "text-amber-700"}`} />
+              <span>{excessDebt > 0 ? "Xem biên bản & Đền bù" : "Xem biên bản lỗi"}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Trạng thái hoàn tiền */}
+        {refund && (refund.status === "refunded" || refund.status === "partially_refunded") ? (
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-2.5 py-0.5 text-xs font-semibold text-jade">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Đã hoàn {formatVND(refund.amount)}
+            </span>
+            {refund.proofImageUrl && (
+              <a
+                href={refund.proofImageUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-jade/40 px-2 py-0.5 text-xs font-semibold text-jade transition hover:bg-jade/10"
+              >
+                <Receipt className="h-3.5 w-3.5" />
+                Xem bill
+              </a>
+            )}
+          </span>
+        ) : refund ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-semibold text-yellow-700">
+            <Clock className="h-3.5 w-3.5" />
+            Đang xử lý hoàn {formatVND(refund.amount)}
+          </span>
+        ) : excessDebt > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700 border border-red-200">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Cần thu thêm {formatVND(excessDebt)}
+          </span>
+        ) : penalty >= deposit && deposit > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Đã trừ 100% tiền cọc
+          </span>
+        ) : penalty === 0 && deposit > 0 && b.status === "refund_pending" ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-semibold text-yellow-700">
+            <Clock className="h-3.5 w-3.5" />
+            Chờ hoàn {formatVND(deposit)}
+          </span>
+        ) : (
+          <span className="text-xs text-stone-400">—</span>
+        )}
+      </div>
     );
   }
 
   function renderActions(b: BookingResponse) {
     return (
       <div className="flex flex-nowrap items-center gap-1.5">
+        {(b.status === "completed" || b.status === "refund_pending" || b.status === "returned") && (
+          <button
+            type="button"
+            onClick={() => void handleOpenInspectionModal(b)}
+            className="shrink-0 whitespace-nowrap rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[11px] font-semibold text-stone-700 transition hover:bg-mist"
+            title="Xem chi tiết biên bản kiểm tra đồ & ảnh chụp thực tế"
+          >
+            Biên bản
+          </button>
+        )}
         {(b.status === "completed" || b.status === "returned") && (
           <button
             type="button"
@@ -359,6 +470,17 @@ export default function CustomerDashboardPage() {
                   pickupMethod={activeBooking.pickupMethod}
                   className="border-t border-sand pt-6"
                 />
+                {Number(activeBooking.penaltyTotal ?? 0) > Number(activeBooking.depositTotal ?? 0) && (
+                  <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-xs">
+                    <div className="flex items-center gap-2 font-bold text-red-800 uppercase tracking-wider mb-1">
+                      <ShieldAlert className="h-4 w-4 text-red-600 shrink-0" />
+                      <span>Thông báo: Khoản bồi thường hư hại vượt tiền cọc</span>
+                    </div>
+                    <p className="text-red-900/90 leading-relaxed">
+                      Đơn hàng đã được thẩm định với chi phí hư tổn là <strong>{formatVND(activeBooking.penaltyTotal ?? 0)}</strong> (vượt tiền cọc {formatVND(activeBooking.depositTotal ?? 0)}). Quý khách có khoản đền bù bổ sung cần thanh toán: <strong className="text-red-700 text-sm">+{formatVND((activeBooking.penaltyTotal ?? 0) - activeBooking.depositTotal)}</strong>. Vui lòng bấm &ldquo;Xem chi tiết&rdquo; hoặc liên hệ atelier để được hỗ trợ.
+                    </p>
+                  </div>
+                )}
                 <HandoverSummary handover={activeBooking.handover} compact />
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Link
@@ -678,6 +800,317 @@ export default function CustomerDashboardPage() {
       )}
 
       <ConfirmModal open={!!confirmDialog} title={confirmDialog?.title??""} message={confirmDialog?.message??""} danger={confirmDialog?.danger} onConfirm={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} onCancel={() => setConfirmDialog(null)} />
+
+      {/* Modal Biên bản kiểm định & Đối soát cọc cho khách hàng */}
+      {inspectingBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl border border-stone-200">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-sand pb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                  <ClipboardCheck className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="font-display text-xl font-bold text-ink">
+                    Biên bản kiểm định & Đối soát cọc
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Đơn thuê: #{inspectingBooking.id.slice(0, 8).toUpperCase()} • {inspectingBooking.items[0]?.garmentName ?? "Trang phục"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectingBooking(null)}
+                className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Chiết tính hoàn cọc & Đền bù vượt cọc nếu có */}
+            {(() => {
+              const deposit = Number(inspectingBooking.depositTotal ?? 0);
+              const penalty = Number(inspectingBooking.penaltyTotal ?? 0);
+              const remaining = Math.max(0, deposit - penalty);
+              const excess = penalty > deposit ? penalty - deposit : 0;
+
+              return (
+                <div className={`my-5 rounded-xl border p-4 ${excess > 0 ? "border-red-300 bg-red-50/50" : "border-sand bg-parchment/60"}`}>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
+                    Bảng chiết tính cọc & hoàn trả
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-sm">
+                      <span className="text-xs text-stone-500 block">Tiền cọc ban đầu</span>
+                      <span className="text-base font-semibold text-ink">
+                        {formatVND(deposit)}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-sm">
+                      <span className="text-xs text-stone-500 block">Khấu trừ hư tổn / vệ sinh</span>
+                      <span className={`text-base font-semibold ${penalty > 0 ? "text-red-600" : "text-stone-700"}`}>
+                        {penalty > 0 ? `-${formatVND(penalty)}` : "0đ"}
+                      </span>
+                    </div>
+                    <div className={`rounded-lg p-3 border shadow-sm ${
+                      excess > 0 ? "bg-red-100/80 border-red-300" : "bg-emerald-50 border-emerald-200"
+                    }`}>
+                      <span className={`text-xs font-medium block ${excess > 0 ? "text-red-800 font-bold" : "text-emerald-700"}`}>
+                        {excess > 0 ? "Cần bồi thường thêm" : "Thực hoàn ví cọc"}
+                      </span>
+                      <span className={`text-base font-bold ${excess > 0 ? "text-red-700" : "text-emerald-800"}`}>
+                        {excess > 0 ? `+${formatVND(excess)}` : formatVND(remaining)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {excess > 0 ? (
+                    <div className="mt-3.5 rounded-xl border border-red-300 bg-white p-3.5 shadow-2xs">
+                      <div className="flex items-center gap-2 text-red-800 font-bold text-xs uppercase tracking-wide mb-1.5">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
+                        <span>Thông báo bồi thường vượt cọc theo biên bản</span>
+                      </div>
+                      <p className="text-xs text-red-900/90 leading-relaxed">
+                        Do trang phục phát sinh hư hại nặng không thể phục hồi, tổng tổn thất thực tế là <strong>{formatVND(penalty)}</strong>, vượt quá khoản tiền cọc ban đầu (<strong>{formatVND(deposit)}</strong>).
+                        Căn cứ theo Điều khoản thuê trang phục & Biên bản bàn giao đã xác nhận, quý khách có trách nhiệm thanh toán bổ sung số tiền chênh lệch <strong>+{formatVND(excess)}</strong> trong vòng 3 ngày làm việc. Quý khách vui lòng liên hệ nhân viên hoặc thanh toán tại quầy atelier.
+                      </p>
+                    </div>
+                  ) : penalty > 0 ? (
+                    <p className="mt-2 text-xs text-stone-500 italic">
+                      * Mức khấu trừ đã được thẩm định tự động và kiểm tra xác nhận bởi chuyên viên cửa hàng.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })()}
+
+            {/* Danh sách phiên kiểm tra */}
+            <div className="space-y-6">
+              <h4 className="text-sm font-semibold text-ink">
+                Chi tiết kết quả thẩm định ({inspectionSessions.length})
+              </h4>
+
+              {loadingInspections ? (
+                <div className="flex flex-col items-center justify-center py-10 text-stone-400">
+                  <Loader2 className="h-8 w-8 animate-spin text-lotus" />
+                  <p className="mt-2 text-xs">Đang tải biên bản và ảnh đối chiếu...</p>
+                </div>
+              ) : inspectionSessions.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
+                  Chưa có biên bản kiểm tra chi tiết nào được lưu cho đơn này.
+                </div>
+              ) : (
+                inspectionSessions.map((session, sIdx) => {
+                  return (
+                    <div
+                      key={session.id || sIdx}
+                      className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
+                        <div>
+                          <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700 mr-2">
+                            Mã đồ: {session.asset?.assetCode || session.asset?.garment?.name || "Trang phục"}
+                          </span>
+                          <span className="text-xs text-stone-400">
+                            {new Date(session.createdAt).toLocaleString("vi-VN")}
+                          </span>
+                          {session.inspector && (
+                            <span className="ml-2 text-xs text-stone-500">
+                              • Chuyên viên: {session.inspector.fullName}
+                            </span>
+                          )}
+                        </div>
+                        <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
+                          Trạng thái: {session.status === "completed" ? "Đã thẩm định xong" : session.status}
+                        </span>
+                      </div>
+
+                      {/* Đánh giá độ nguyên vẹn & chất lượng */}
+                      {session.aiComparisonResult?.conditionScore !== undefined && session.aiComparisonResult?.conditionScore !== null && (() => {
+                        const score = Math.max(0, Math.min(100, Number(session.aiComparisonResult.conditionScore) || 0));
+                        const loss = 100 - score;
+                        return (
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-xs">
+                            <span className="font-semibold text-stone-600">Đánh giá chất lượng sau thuê:</span>
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 font-medium shadow-2xs">
+                              <span className="text-stone-700">Độ nguyên vẹn: <strong className="font-bold text-ink">{score}/100</strong></span>
+                              {loss > 0 ? (
+                                <span className="font-bold text-amber-800">(Hao tổn {loss}%)</span>
+                              ) : (
+                                <span className="font-bold text-emerald-700">(Hoàn hảo 100%)</span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Ghi chú */}
+                      {session.note && (
+                        <div className="mt-3 text-xs text-stone-600 bg-stone-50 rounded-lg p-2.5 border border-stone-100">
+                          <span className="font-semibold text-stone-700">Ghi chú nhân viên: </span>
+                          {session.note}
+                        </div>
+                      )}
+
+                      {/* Danh sách lỗi hư hỏng */}
+                      <div className="mt-4">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                          Ghi nhận hư tổn / hao mòn ({session.findings?.length ?? 0})
+                        </span>
+                        {(!session.findings || session.findings.length === 0) ? (
+                          <p className="text-xs text-emerald-700 bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-100">
+                            ✓ Không phát hiện lỗi hoặc hư hỏng nào. Trang phục đạt chuẩn tốt.
+                          </p>
+                        ) : (
+                          <div className="overflow-x-auto rounded-lg border border-stone-200">
+                            <table className="min-w-full text-left text-xs">
+                              <thead className="bg-stone-50 text-stone-600 border-b border-stone-200">
+                                <tr>
+                                  <th className="px-3 py-2 font-semibold">Loại vấn đề</th>
+                                  <th className="px-3 py-2 font-semibold">Mức độ</th>
+                                  <th className="px-3 py-2 font-semibold">Chi tiết mô tả</th>
+                                  <th className="px-3 py-2 font-semibold text-right">Phí khấu trừ</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-stone-100">
+                                {session.findings.map((f, fIdx) => (
+                                  <tr key={f.id || fIdx} className="hover:bg-stone-50/50">
+                                    <td className="px-3 py-2 font-medium text-ink capitalize">
+                                      {f.findingType || "Hao mòn"}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
+                                        f.severity === "high" || f.severity === "severe" || f.severity === "nang"
+                                          ? "bg-red-100 text-red-700"
+                                          : f.severity === "medium" || f.severity === "vua"
+                                          ? "bg-amber-100 text-amber-700"
+                                          : "bg-blue-50 text-blue-700"
+                                      }`}>
+                                        {f.severity || "Nhẹ"}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-stone-600 max-w-xs">
+                                      {f.description || "Chi tiết kiểm tra định kỳ"}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-semibold text-amber-700">
+                                      {formatVND(f.penaltyAmount || 0)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Hình ảnh thẩm định thực tế */}
+                      {session.photos && session.photos.length > 0 && (
+                        <div className="mt-4">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                            Hình ảnh chụp thực tế lúc hoàn trả ({session.photos.length})
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {session.photos.map((p, pIdx) => (
+                              <button
+                                key={p.id || pIdx}
+                                type="button"
+                                onClick={() => setCustomerLightboxUrl(p.imageUrl)}
+                                className="group relative h-20 w-20 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-lotus transition"
+                              >
+                                <img
+                                  src={p.imageUrl}
+                                  alt={p.photoType || "Ảnh kiểm tra"}
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                                  <ZoomIn className="h-5 w-5 text-white" />
+                                </div>
+                                {p.photoType && (
+                                  <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white text-center py-0.5 truncate">
+                                    {p.photoType}
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Ảnh đối chiếu lúc giao đồ nếu có */}
+                      {session.handoverImages && session.handoverImages.length > 0 && (
+                        <div className="mt-4 border-t border-dashed border-stone-200 pt-3">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                            Ảnh bàn giao ban đầu ({session.handoverImages.length})
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {session.handoverImages.map((imgUrl, hIdx) => (
+                              <button
+                                key={hIdx}
+                                type="button"
+                                onClick={() => setCustomerLightboxUrl(imgUrl)}
+                                className="group relative h-16 w-16 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-jade transition"
+                              >
+                                <img
+                                  src={imgUrl}
+                                  alt="Ảnh bàn giao"
+                                  className="h-full w-full object-cover transition group-hover:scale-105"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                                  <ZoomIn className="h-4 w-4 text-white" />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-sand pt-4">
+              <p className="text-xs text-stone-500">
+                Mọi thắc mắc về tiền cọc, vui lòng liên hệ bộ phận hỗ trợ khách hàng.
+              </p>
+              <button
+                type="button"
+                onClick={() => setInspectingBooking(null)}
+                className="w-full sm:w-auto rounded-lg bg-stone-100 px-5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-200 transition"
+              >
+                Đóng biên bản
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox phóng to ảnh đối chứng */}
+      {customerLightboxUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+          onClick={() => setCustomerLightboxUrl(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={customerLightboxUrl}
+              alt="Ảnh phóng to"
+              className="max-h-[85vh] w-auto max-w-full rounded-lg object-contain shadow-2xl"
+            />
+            <button
+              type="button"
+              onClick={() => setCustomerLightboxUrl(null)}
+              className="absolute -top-3 -right-3 rounded-full bg-white p-2 text-stone-800 shadow-lg hover:bg-stone-100 transition"
+              aria-label="Đóng"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

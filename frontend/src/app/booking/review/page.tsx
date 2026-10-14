@@ -42,6 +42,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Clock,
+  ShieldAlert,
 } from "lucide-react";
 
 function formatVND(amount: number) {
@@ -66,6 +67,14 @@ const pickupLabels: Record<string, string> = {
   delivery: "Giao tận nơi & nhận lại tại nhà",
   store_pickup: "Nhận tại atelier & hoàn trả tại cửa hàng",
 };
+
+const RENTAL_TERMS = [
+  "Không tự ý giặt máy, không ủi nhiệt độ cao hoặc phơi trực tiếp dưới nắng gắt.",
+  "Tránh để trang phục tiếp xúc nước hoa nồng độ cao, rượu bia, dầu mỡ hoặc hoá chất làm biến dạng/ố màu vải.",
+  "Không tự ý cắt sửa form dáng, may vá hoặc đính kèm phụ kiện sắt nhọn lên vải.",
+  "Khách hàng kiểm tra sản phẩm và báo ngay trong vòng 30 phút sau khi nhận nếu có lỗi phát sinh từ trước.",
+  "Chính sách bồi hoàn hư hại: Phí tổn thất được tính theo % giá trị định giá của trang phục. Nếu hư hại không thể khắc phục vượt quá số tiền cọc, khách hàng có trách nhiệm thanh toán bổ sung phần chênh lệch trong vòng 3 ngày làm việc.",
+];
 
 function BookingReviewInner() {
   const router = useRouter();
@@ -597,9 +606,34 @@ function BookingReviewInner() {
               </div>
             </div>
 
-            <label className="mt-8 flex cursor-pointer items-start gap-3 text-sm leading-7 text-stone-600">
-              <input className="mt-1 h-5 w-5 rounded border-sand text-lotus focus:ring-lotus" type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
-              <span>Tôi đã đọc chính sách nghi lễ và đồng ý giữ gìn trang phục như một tài sản văn hóa trong suốt thời gian thuê.</span>
+            {/* ── Khối Điều khoản sử dụng & Quy định bồi hoàn ── */}
+            <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-amber-800">
+                  Điều khoản sử dụng & Chính sách bồi thường
+                </span>
+              </div>
+              <ul className="space-y-1.5 text-xs text-amber-900/85">
+                {RENTAL_TERMS.map((term, idx) => (
+                  <li key={idx} className="flex items-start gap-1.5 leading-relaxed">
+                    <span className="font-bold text-amber-700 shrink-0">•</span>
+                    <span>{term}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <label className="mt-4 flex cursor-pointer items-start gap-3 text-sm leading-6 text-stone-700">
+              <input
+                className="mt-1 h-5 w-5 rounded border-sand text-lotus focus:ring-lotus shrink-0"
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+              />
+              <span>
+                Tôi đã đọc kỹ, hiểu rõ và đồng ý với <strong>Điều khoản sử dụng trang phục</strong> cùng <strong>Chính sách bồi thường theo % giá trị trang phục</strong> nếu phát sinh hư hại trong kỳ thuê.
+              </span>
             </label>
 
             {errorMsg && <p className="mt-4 text-sm text-red-500">{errorMsg}</p>}

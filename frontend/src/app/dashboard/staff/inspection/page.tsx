@@ -9,7 +9,11 @@ import {
   getBookingInspections,
   createInspectionSession,
   addInspectionFinding,
+  deleteInspectionFinding,
   addInspectionPhoto,
+  deleteInspectionPhoto,
+  compareInspectionSessionWithAi,
+  applyAiInspectionFindings,
   completeInspection,
   inspectBookingAccessory,
   finalizeBookingInspection,
@@ -32,6 +36,16 @@ import {
   ZoomIn,
   ClipboardCheck,
   X,
+  Camera,
+  UploadCloud,
+  Layers,
+  ArrowRight,
+  Bot,
+  RefreshCw,
+  CheckCheck,
+  ShieldCheck,
+  Trash2,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -120,6 +134,14 @@ export default function StaffInspectionPage() {
   const [currentNote, setCurrentNote] = useState("");
   const [finalizingBooking, setFinalizingBooking] = useState(false);
   const [finalizeMsg, setFinalizeMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // AI comparison states
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [applyingAiFindings, setApplyingAiFindings] = useState(false);
+  const [uploadingReturnPhoto, setUploadingReturnPhoto] = useState(false);
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+  const [deletingFindingId, setDeletingFindingId] = useState<string | null>(null);
+  const [aiSuccessMsg, setAiSuccessMsg] = useState<string | null>(null);
 
   // Accessory inspection form state (per accessory row)
   const [accInspect, setAccInspect] = useState<Record<string, { status: string; note: string; penalty: string; images: string[] }>>({});
@@ -344,6 +366,135 @@ export default function StaffInspectionPage() {
       setPhotoUrl("");
     } else {
       setErrorMsg(res.message ?? "Không thể thêm ảnh.");
+    }
+  }
+
+  async function handleReturnPhotoUpload(files: FileList | null) {
+    if (!activeSession || !files || files.length === 0) return;
+    setUploadingReturnPhoto(true);
+    setErrorMsg(null);
+    try {
+      for (const file of Array.from(files)) {
+        const url = await uploadFile(file, "handover");
+        const res = await addInspectionPhoto(activeSession.id, {
+          imageUrl: url,
+          photoType: "after",
+        });
+        if (res.success && res.data) {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === activeSession.id
+                ? { ...s, photos: [...s.photos, res.data!] }
+                : s,
+            ),
+          );
+        }
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Tải ảnh trả đồ thất bại.");
+    } finally {
+      setUploadingReturnPhoto(false);
+    }
+  }
+
+  async function handleDeleteReturnPhoto(photoId: string) {
+    if (!activeSession) return;
+    setDeletingPhotoId(photoId);
+    setErrorMsg(null);
+    try {
+      const res = await deleteInspectionPhoto(activeSession.id, photoId);
+      if (res.success) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === activeSession.id
+              ? { ...s, photos: s.photos.filter((p) => p.id !== photoId) }
+              : s,
+          ),
+        );
+      } else {
+        setErrorMsg(res.message ?? "Không thể xoá ảnh.");
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Xoá ảnh thất bại.");
+    } finally {
+      setDeletingPhotoId(null);
+    }
+  }
+
+  async function handleRunAiCompare() {
+    if (!activeSession) return;
+    if (activeSession.photos.length === 0) {
+      setErrorMsg("Vui lòng tải lên ít nhất một ảnh sau khi nhận lại đồ để AI đối chiếu.");
+      return;
+    }
+    setAiAnalyzing(true);
+    setErrorMsg(null);
+    setAiSuccessMsg(null);
+    try {
+      const res = await compareInspectionSessionWithAi(activeSession.id);
+      if (res.success && res.data) {
+        const updatedSession = res.data.session;
+        setSessions((prev) =>
+          prev.map((s) => (s.id === activeSession.id ? updatedSession : s)),
+        );
+        setAiSuccessMsg("AI đã hoàn tất đối chiếu hình ảnh bàn giao và hình ảnh trả đồ!");
+      } else {
+        setErrorMsg(res.message ?? "Phân tích AI thất bại.");
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Có lỗi xảy ra khi gọi dịch vụ AI.");
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }
+
+  async function handleApplyAiFindings() {
+    if (!activeSession) return;
+    setApplyingAiFindings(true);
+    setErrorMsg(null);
+    try {
+      const res = await applyAiInspectionFindings(activeSession.id);
+      if (res.success && res.data) {
+        const updatedSession = res.data.session;
+        setSessions((prev) =>
+          prev.map((s) => (s.id === activeSession.id ? updatedSession : s)),
+        );
+        // Tự động điền nhận xét của AI vào ô ghi chú nếu nhân viên chưa gõ
+        if (!currentNote.trim() && activeSession.aiComparisonResult?.summary) {
+          setCurrentNote(activeSession.aiComparisonResult.summary);
+        }
+        setAiSuccessMsg(`Đã tự động áp dụng ${res.data.appliedCount} ghi nhận lỗi từ AI vào biên bản! Bạn có thể xem lại hoặc xóa bớt ở mục Ghi nhận đã lưu phía trên.`);
+      } else {
+        setErrorMsg(res.message ?? "Không thể áp dụng lỗi AI.");
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Có lỗi khi áp dụng các lỗi AI.");
+    } finally {
+      setApplyingAiFindings(false);
+    }
+  }
+
+  async function handleDeleteFinding(findingId: string) {
+    if (!activeSession) return;
+    setDeletingFindingId(findingId);
+    setErrorMsg(null);
+    try {
+      const res = await deleteInspectionFinding(activeSession.id, findingId);
+      if (res.success) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === activeSession.id
+              ? { ...s, findings: s.findings.filter((f) => f.id !== findingId) }
+              : s,
+          ),
+        );
+      } else {
+        setErrorMsg(res.message ?? "Không thể xoá ghi nhận lỗi.");
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Xoá ghi nhận lỗi thất bại.");
+    } finally {
+      setDeletingFindingId(null);
     }
   }
 
@@ -1152,29 +1303,52 @@ export default function StaffInspectionPage() {
                   {/* Findings list */}
                   {activeSession.findings.length > 0 && (
                     <div className="mt-6 border-t border-sand pt-4">
-                      <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
-                        Ghi nhận đã lưu
-                      </h3>
+                      <div className="mb-3 flex items-center justify-between">
+                        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
+                          Ghi nhận đã lưu ({activeSession.findings.length})
+                        </h3>
+                        <span className="text-xs text-stone-500 italic">Nhân viên có thể xóa bớt lỗi nếu AI bắt nhầm</span>
+                      </div>
                       <div className="space-y-2">
                         {activeSession.findings.map((f) => (
                           <div
                             key={f.id}
-                            className="flex items-center justify-between rounded-lg border border-sand bg-mist px-4 py-2 text-sm"
+                            className="flex items-center justify-between gap-3 rounded-lg border border-sand bg-mist px-4 py-2.5 text-sm"
                           >
-                            <div>
-                              <span className="font-medium text-ink">{f.findingType}</span>
-                              <span className="ml-2 text-xs text-stone-500">
-                                ({f.severity})
-                              </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-ink">{f.findingType}</span>
+                                <span className="rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-700">
+                                  {f.severity}
+                                </span>
+                              </div>
+                              {f.description && (
+                                <p className="mt-0.5 text-xs text-stone-600 line-clamp-2">{f.description}</p>
+                              )}
                             </div>
-                            {f.penaltyAmount > 0 && (
-                              <span className="text-xs font-semibold text-red-700">
-                                {new Intl.NumberFormat("vi-VN", {
-                                  style: "currency",
-                                  currency: "VND",
-                                }).format(f.penaltyAmount)}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-3">
+                              {f.penaltyAmount > 0 && (
+                                <span className="text-xs font-bold text-red-700">
+                                  {new Intl.NumberFormat("vi-VN", {
+                                    style: "currency",
+                                    currency: "VND",
+                                  }).format(f.penaltyAmount)}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                disabled={deletingFindingId === f.id}
+                                onClick={() => void handleDeleteFinding(f.id)}
+                                className="rounded p-1 text-stone-400 hover:bg-red-50 hover:text-red-600 transition disabled:opacity-50"
+                                title="Xóa lỗi này khỏi biên bản"
+                              >
+                                {deletingFindingId === f.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-red-600" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1218,56 +1392,379 @@ export default function StaffInspectionPage() {
                   </div>
                 </section>
 
-                {/* Photos */}
+                {/* AI Notification Banner */}
+                {aiSuccessMsg && (
+                  <div className="flex items-center justify-between rounded-xl border border-jade/30 bg-jade/10 p-4 text-sm text-jade">
+                    <div className="flex items-center gap-2.5">
+                      <ShieldCheck className="h-5 w-5 shrink-0" />
+                      <span className="font-medium">{aiSuccessMsg}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-xs font-semibold hover:bg-jade/20"
+                      onClick={() => setAiSuccessMsg(null)}
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                )}
+
+                {/* Photos & AI Inspection Comparison Section */}
                 <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-                  <div className="mb-6 flex items-center justify-between border-b border-sand pb-3">
-                    <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">
-                      Bằng chứng hình ảnh
-                    </h2>
+                  <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Bot className="h-5 w-5 text-lotus" />
+                        <h2 className="font-display text-lg text-ink">
+                          Đối chiếu hình ảnh & Thẩm định AI
+                        </h2>
+                      </div>
+                      <p className="mt-1 text-xs text-stone-500">
+                        So sánh ảnh lúc bàn giao (trước thuê) và ảnh trả hàng thực tế (sau thuê) để phát hiện hư hại chính xác.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={aiAnalyzing || activeSession.photos.length === 0}
+                      onClick={handleRunAiCompare}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-lotus to-oxblood px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:opacity-50"
+                      title={activeSession.photos.length === 0 ? "Hãy tải lên ít nhất 1 ảnh trả đồ để chạy AI" : "Bấm để AI phân tích đối chiếu ảnh"}
+                    >
+                      {aiAnalyzing ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>AI đang phân tích đối chiếu...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4 text-amber-200" />
+                          <span>{activeSession.aiComparisonResult ? "Phân tích lại bằng AI" : "Phân tích đối chiếu AI"}</span>
+                        </>
+                      )}
+                    </button>
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {activeSession.photos.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setLightboxUrl(p.imageUrl)}
-                        className="group relative overflow-hidden rounded-lg border border-sand bg-parchment"
-                        title="Bấm để phóng to"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          alt="Ảnh kiểm tra"
-                          className="aspect-square w-full object-cover transition group-hover:opacity-90"
-                          src={p.imageUrl}
-                        />
-                        <span className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white">
-                          <ZoomIn className="h-3.5 w-3.5" />
+                  {/* 2-Column Photo Comparison (Trước vs Sau) */}
+                  <div className="grid gap-6 md:grid-cols-2">
+                    {/* Cột 1: Ảnh bàn giao trước thuê */}
+                    <div className="rounded-xl border border-sand bg-mist/30 p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex h-2 w-2 rounded-full bg-jade" />
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-700">
+                            Ảnh bàn giao (Trước thuê)
+                          </h3>
+                        </div>
+                        <span className="rounded-full bg-jade/10 px-2.5 py-0.5 text-[11px] font-semibold text-jade">
+                          {activeSession.conditionBeforeRental ? `Tình trạng: ${activeSession.conditionBeforeRental}` : "Lúc bàn giao"}
                         </span>
-                      </button>
-                    ))}
-                    {/* Add photo slot */}
-                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-sand bg-mist p-3 text-center">
-                      <input
-                        className="w-full rounded border border-sand px-2 py-1 text-xs outline-none focus:border-antique"
-                        placeholder="Dán URL ảnh..."
-                        value={photoUrl}
-                        onChange={(e) => setPhotoUrl(e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        disabled={actioning === "photo" || !photoUrl.trim()}
-                        onClick={handleAddPhoto}
-                        className="rounded bg-lotus px-3 py-1 text-xs font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
-                      >
-                        {actioning === "photo" ? "..." : "Thêm"}
-                      </button>
+                      </div>
+
+                      {(() => {
+                        const rawHandover = (booking as any)?.handover;
+                        const rawCondition = (booking as any)?.conditionImages;
+                        const handoverPhotos: string[] =
+                          activeSession.handoverImages && activeSession.handoverImages.length > 0
+                            ? activeSession.handoverImages
+                            : Array.isArray(rawHandover?.images) && rawHandover.images.length > 0
+                            ? rawHandover.images
+                            : Array.isArray(rawCondition?.images) && rawCondition.images.length > 0
+                            ? rawCondition.images
+                            : Array.isArray(rawCondition)
+                            ? rawCondition
+                            : [];
+
+                        if (handoverPhotos.length > 0) {
+                          return (
+                            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                              {handoverPhotos.map((url: string, idx: number) => (
+                                <button
+                                  key={`handover-${url}-${idx}`}
+                                  type="button"
+                                  onClick={() => setLightboxUrl(url)}
+                                  className="group relative aspect-square overflow-hidden rounded-lg border border-sand bg-white shadow-xs transition hover:opacity-90"
+                                  title="Xem phóng to ảnh bàn giao"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={url}
+                                    alt={`Ảnh bàn giao ${idx + 1}`}
+                                    className="h-full w-full object-cover"
+                                  />
+                                  <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                                    <ZoomIn className="h-3 w-3" />
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-sand bg-white/70 py-8 text-center text-xs text-stone-500">
+                            <Layers className="h-8 w-8 text-stone-300 mb-2" />
+                            <p className="font-medium text-stone-600">Chưa có ảnh bàn giao ban đầu</p>
+                            <p className="mt-1 text-[11px] text-stone-400">
+                              AI sẽ đối chiếu dựa trên chuẩn trang phục xuất xưởng nguyên bản.
+                            </p>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Cột 2: Ảnh trả hàng sau thuê */}
+                    <div className="rounded-xl border border-sand bg-mist/30 p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex h-2 w-2 rounded-full bg-lotus" />
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-700">
+                            Ảnh nhận trả hàng (Sau thuê)
+                          </h3>
+                        </div>
+                        <span className="rounded-full bg-lotus/10 px-2.5 py-0.5 text-[11px] font-semibold text-lotus">
+                          {activeSession.photos.length} ảnh đã chụp
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                        {activeSession.photos.map((p, idx) => (
+                          <div
+                            key={p.id}
+                            className="group relative aspect-square overflow-hidden rounded-lg border border-sand bg-white shadow-xs"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              alt={`Ảnh kiểm tra ${idx + 1}`}
+                              className="h-full w-full object-cover cursor-pointer transition duration-200 group-hover:scale-105"
+                              src={p.imageUrl}
+                              onClick={() => setLightboxUrl(p.imageUrl)}
+                            />
+                            {/* Phóng to */}
+                            <button
+                              type="button"
+                              onClick={() => setLightboxUrl(p.imageUrl)}
+                              className="absolute bottom-1.5 right-1.5 flex items-center gap-0.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white opacity-85 transition hover:opacity-100 hover:bg-black/80"
+                              title="Xem phóng to ảnh kiểm tra"
+                            >
+                              <ZoomIn className="h-3 w-3" />
+                            </button>
+                            {/* Xoá ảnh */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteReturnPhoto(p.id);
+                              }}
+                              disabled={deletingPhotoId === p.id}
+                              className="absolute top-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-red-600/90 text-white shadow-sm transition hover:bg-red-700 hover:scale-110 disabled:opacity-50"
+                              title="Xóa ảnh này"
+                            >
+                              {deletingPhotoId === p.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        ))}
+
+                        {/* Nút upload file ảnh trả hàng trực tiếp */}
+                        <label className="flex aspect-square cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-lotus/40 bg-lotus/5 text-center transition hover:border-lotus hover:bg-lotus/10">
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/*"
+                            disabled={uploadingReturnPhoto}
+                            onChange={(e) => handleReturnPhotoUpload(e.target.files)}
+                            className="hidden"
+                          />
+                          {uploadingReturnPhoto ? (
+                            <RefreshCw className="h-5 w-5 animate-spin text-lotus" />
+                          ) : (
+                            <>
+                              <Camera className="h-5 w-5 text-lotus mb-1" />
+                              <span className="text-[11px] font-semibold text-lotus">Chụp / Tải ảnh</span>
+                            </>
+                          )}
+                        </label>
+                      </div>
+
+                      {/* Nhập link ảnh trực tiếp nếu có */}
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-xs outline-none focus:border-antique"
+                          placeholder="Hoặc dán URL ảnh trả đồ..."
+                          value={photoUrl}
+                          onChange={(e) => setPhotoUrl(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          disabled={actioning === "photo" || !photoUrl.trim()}
+                          onClick={handleAddPhoto}
+                          className="rounded-lg bg-stone-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink disabled:opacity-50"
+                        >
+                          {actioning === "photo" ? "..." : "Thêm URL"}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <p className="mt-4 text-sm italic text-stone-500">
-                    Hệ thống yêu cầu ít nhất một ảnh nếu đánh dấu &quot;Mòn nhẹ&quot; hoặc &quot;Hư hỏng nặng&quot;.
-                  </p>
+                  {/* KẾT QUẢ PHÂN TÍCH SO SÁNH AI */}
+                  {activeSession.aiComparisonResult && (
+                    <div className="mt-6 rounded-xl border border-sand bg-parchment/60 p-5 shadow-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-3">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-amber-600" />
+                          <h3 className="font-display text-base text-ink">
+                            Kết quả AI Thẩm định & So sánh
+                          </h3>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          {/* Huy hiệu tình trạng */}
+                          {(() => {
+                            const cond = activeSession.aiComparisonResult.overallCondition;
+                            const metaMap: Record<string, { label: string; color: string }> = {
+                              excellent: { label: "Hoàn hảo (95-100đ)", color: "bg-jade/15 text-jade border-jade/30" },
+                              good: { label: "Tốt (Bụi nhẹ)", color: "bg-jade/10 text-jade border-jade/20" },
+                              minor_damage: { label: "Có lỗi nhẹ cần xử lý", color: "bg-amber-100 text-amber-800 border-amber-300" },
+                              major_damage: { label: "Hư hại đáng kể", color: "bg-orange-100 text-orange-800 border-orange-300" },
+                              severely_damaged: { label: "Hư hỏng nặng", color: "bg-red-100 text-red-800 border-red-300" },
+                            };
+                            const current = metaMap[cond] ?? metaMap.good;
+                            return (
+                              <span className={`rounded-full border px-3 py-1 text-xs font-bold ${current.color}`}>
+                                {current.label}
+                              </span>
+                            );
+                          })()}
+
+                          {(() => {
+                            const score = Math.max(0, Math.min(100, activeSession.aiComparisonResult.conditionScore));
+                            const loss = 100 - score;
+                            return (
+                              <span className="text-xs text-stone-600 bg-sand/40 border border-sand px-2.5 py-1 rounded-full font-medium">
+                                Độ nguyên vẹn: <strong className="text-ink font-bold">{score}/100</strong>
+                                {loss > 0 ? (
+                                  <span className="text-amber-800 font-semibold ml-1">
+                                    (Hao tổn {loss}%)
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-700 font-semibold ml-1">
+                                    (Hoàn hảo 100%)
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Tóm tắt đánh giá */}
+                      <p className="mt-3 text-sm leading-relaxed text-stone-800">
+                        {activeSession.aiComparisonResult.summary}
+                      </p>
+
+                      {/* Khuyến nghị hành động */}
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sand bg-white p-3 text-xs">
+                        <div>
+                          <span className="font-semibold text-stone-600">Khuyến nghị từ AI: </span>
+                          <span className="font-bold text-ink">
+                            {activeSession.aiComparisonResult.recommendedAction === "laundry"
+                              ? "Chuyển Giặt Sấy Tiêu Chuẩn"
+                              : activeSession.aiComparisonResult.recommendedAction === "maintenance"
+                              ? "Cần Thợ Bảo Trì / Sửa Chữa"
+                              : "Ghi Nhận Hư Hỏng & Tính Phạt"}
+                          </span>
+                          <span className="ml-2 text-stone-500 italic">
+                            ({activeSession.aiComparisonResult.actionReason})
+                          </span>
+                        </div>
+
+                        {/* Nút chọn nhanh hành động hoàn tất theo AI */}
+                        <button
+                          type="button"
+                          onClick={() => handleComplete(activeSession.aiComparisonResult!.recommendedAction)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-stone-800 px-3 py-1.5 font-semibold text-white transition hover:bg-black"
+                        >
+                          <span>Chọn hành động này</span>
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Danh sách các lỗi AI phát hiện */}
+                      {activeSession.aiComparisonResult.detectedIssues && activeSession.aiComparisonResult.detectedIssues.length > 0 ? (
+                        <div className="mt-4 space-y-2 border-t border-sand pt-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold uppercase tracking-[0.12em] text-red-700">
+                              Phát hiện {activeSession.aiComparisonResult.detectedIssues.length} điểm bất thường:
+                            </span>
+                            <span className="text-xs font-semibold text-red-700">
+                              Tổng phạt ước tính: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(activeSession.aiComparisonResult.totalSuggestedPenalty)}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {activeSession.aiComparisonResult.detectedIssues.map((issue, i) => (
+                              <div
+                                key={`issue-${i}`}
+                                className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50/60 p-3 text-xs"
+                              >
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-ink">{issue.findingType}</span>
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                      issue.severity === "severe" || issue.severity === "high"
+                                        ? "bg-red-200 text-red-800"
+                                        : issue.severity === "medium"
+                                        ? "bg-amber-100 text-amber-800"
+                                        : "bg-stone-200 text-stone-700"
+                                    }`}>
+                                      Mức độ: {issue.severity}
+                                    </span>
+                                  </div>
+                                  <p className="text-stone-600">{issue.description}</p>
+                                </div>
+                                {issue.suggestedPenalty > 0 && (
+                                  <span className="shrink-0 font-bold text-red-700">
+                                    +{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(issue.suggestedPenalty)}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Nút 1-Click: Áp dụng các lỗi này vào danh sách biên bản */}
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              disabled={applyingAiFindings}
+                              onClick={handleApplyAiFindings}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3.5 py-2 text-xs font-bold text-red-700 shadow-2xs transition hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {applyingAiFindings ? (
+                                <>
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                  <span>Đang đưa vào biên bản...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCheck className="h-3.5 w-3.5" />
+                                  <span>Tự động đưa các lỗi này vào biên bản kiểm tra</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex items-center gap-2 text-xs text-jade">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>Không phát hiện lỗi hư tổn hay vết bẩn cứng đầu nào ngoài dự kiến.</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </section>
 
                 {/* Finalize message banner */}

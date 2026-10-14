@@ -1,5 +1,5 @@
 import type { BookingHandover } from "@/lib/api";
-import { ClipboardCheck, CheckCircle2, Circle } from "lucide-react";
+import { ClipboardCheck, CheckCircle2, Circle, ShieldAlert } from "lucide-react";
 
 type Props = {
   handover?: BookingHandover | null;
@@ -12,6 +12,14 @@ const conditionLabels: Record<string, string> = {
   MAJOR_DAMAGE: "Lỗi nặng",
 };
 
+const USAGE_TERMS = [
+  "Không giặt máy, không phơi trực tiếp dưới nắng gắt hoặc sử dụng máy sấy nhiệt cao.",
+  "Tránh để trang phục tiếp xúc với nước hoa đậm đặc, rượu, dầu ăn, hoặc các chất tẩy rửa.",
+  "Không tự ý cắt chỉnh, sửa form hoặc đính thêm phụ kiện lên trang phục.",
+  "Phát hiện hư hỏng sẵn có phải báo ngay tại quầy hoặc ghi chú trong vòng 30 phút sau khi nhận.",
+  "Mức phạt hư hỏng được tính theo % giá trị bộ đồ. Nếu tổn thất vượt tiền cọc, khách có trách nhiệm bồi thường phần chênh lệch trong vòng 3 ngày làm việc.",
+];
+
 export function HandoverSummary({ handover, compact = false }: Props) {
   if (!handover || !handover.status) {
     return (
@@ -23,6 +31,24 @@ export function HandoverSummary({ handover, compact = false }: Props) {
             <p className="mt-1 text-sm text-stone-500">Chưa có biên bản bàn giao. Nhân viên sẽ cập nhật khi giao hoặc trao sản phẩm tại cửa hàng.</p>
           </div>
         </div>
+        {!compact && (
+          <div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/50 p-3.5">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
+              <p className="text-xs font-bold uppercase tracking-[0.12em] text-amber-800">
+                Lưu ý sử dụng & Quy định bồi hoàn (Đọc trước khi nhận đồ)
+              </p>
+            </div>
+            <ul className="space-y-1 text-xs text-amber-900/80 pl-1">
+              {USAGE_TERMS.map((term, idx) => (
+                <li key={idx} className="flex items-start gap-1.5">
+                  <span className="text-amber-700 font-bold">•</span>
+                  <span>{term}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
     );
   }
@@ -107,6 +133,32 @@ export function HandoverSummary({ handover, compact = false }: Props) {
       )}
 
       {handover.note && <p className="mt-5 whitespace-pre-wrap rounded-xl border border-sand bg-parchment/40 px-4 py-3 text-sm text-stone-700"><span className="font-semibold text-ink">Ghi chú: </span>{handover.note}</p>}
+
+      {/* ── Điều khoản sử dụng trang phục ── */}
+      <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-amber-800">
+            Điều khoản sử dụng & Chính sách bồi thường
+          </p>
+        </div>
+        <ol className="space-y-1.5 pl-1">
+          {USAGE_TERMS.map((term, idx) => (
+            <li key={idx} className="flex items-start gap-2 text-xs text-amber-900/80">
+              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-200 text-[9px] font-bold text-amber-800">
+                {idx + 1}
+              </span>
+              <span>{term}</span>
+            </li>
+          ))}
+        </ol>
+        {isConfirmed && (
+          <p className="mt-3 border-t border-amber-200 pt-2 text-[10px] text-amber-700 italic">
+            ✓ Khách hàng đã xác nhận nhận trang phục và đồng ý với các điều khoản trên tại thời điểm bàn giao.
+          </p>
+        )}
+      </div>
     </section>
   );
 }
+

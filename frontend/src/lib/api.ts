@@ -627,8 +627,30 @@ export type InspectionFindingResponse = {
 export type InspectionPhotoResponse = {
   id: string;
   imageUrl: string;
+  photoType?: string;
   note: string | null;
+  aiAnalysis?: any;
   createdAt: string;
+};
+
+export type AiInspectionFindingSuggestion = {
+  findingType: string;
+  severity: "low" | "medium" | "high" | "severe";
+  description: string;
+  suggestedPenalty: number;
+};
+
+export type AiInspectionComparisonResult = {
+  overallCondition: "excellent" | "good" | "minor_damage" | "major_damage" | "severely_damaged";
+  conditionScore: number;
+  summary: string;
+  recommendedAction: "laundry" | "maintenance" | "damaged";
+  actionReason: string;
+  detectedIssues: AiInspectionFindingSuggestion[];
+  totalSuggestedPenalty: number;
+  confidence: number;
+  beforePhotosAnalyzed: number;
+  afterPhotosAnalyzed: number;
 };
 
 export type InspectionSessionResponse = {
@@ -637,6 +659,10 @@ export type InspectionSessionResponse = {
   garmentAssetId: string;
   status: string;
   note: string | null;
+  aiComparisonResult?: AiInspectionComparisonResult | null;
+  aiComparedAt?: string | null;
+  handoverImages?: string[];
+  conditionBeforeRental?: string | null;
   createdAt: string;
   completedAt: string | null;
   inspector: {
@@ -653,6 +679,10 @@ export type InspectionSessionResponse = {
 
 export async function getBookingInspections(bookingId: string) {
   return apiRequest<InspectionSessionResponse[]>(`/inspections/booking/${bookingId}`);
+}
+
+export async function getCustomerBookingInspections(bookingId: string) {
+  return apiRequest<InspectionSessionResponse[]>(`/inspections/customer/booking/${bookingId}`);
 }
 
 export async function createInspectionSession(payload: {
@@ -681,16 +711,63 @@ export async function addInspectionFinding(
   });
 }
 
+export async function deleteInspectionFinding(
+  sessionId: string,
+  findingId: string,
+) {
+  return apiRequest<{ message: string; findingId: string }>(
+    `/inspections/${sessionId}/findings/${findingId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export async function addInspectionPhoto(
   sessionId: string,
   payload: {
     imageUrl: string;
+    photoType?: string;
     note?: string;
   },
 ) {
   return apiRequest<InspectionPhotoResponse>(`/inspections/${sessionId}/photos`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteInspectionPhoto(
+  sessionId: string,
+  photoId: string,
+) {
+  return apiRequest<{ message: string; photoId: string }>(
+    `/inspections/${sessionId}/photos/${photoId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export async function compareInspectionSessionWithAi(
+  sessionId: string,
+  payload?: { afterImageUrls?: string[] },
+) {
+  return apiRequest<{
+    aiComparisonResult: AiInspectionComparisonResult;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-compare`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function applyAiInspectionFindings(sessionId: string) {
+  return apiRequest<{
+    appliedCount: number;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-apply-findings`, {
+    method: "POST",
   });
 }
 

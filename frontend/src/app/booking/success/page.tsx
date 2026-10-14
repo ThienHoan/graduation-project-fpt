@@ -180,6 +180,21 @@ function BookingSuccessInner() {
                     <dt className="text-stone-500">Tiền cọc</dt>
                     <dd className="text-right font-medium text-ink">{formatVND(booking.depositTotal)}</dd>
                   </div>
+                  {typeof booking.penaltyTotal === "number" && booking.penaltyTotal > 0 && (
+                    <div className="flex justify-between gap-4 border-b border-sand pb-3 sm:border-0 sm:pb-0 font-semibold text-red-600">
+                      <dt>Khấu trừ hư hại</dt>
+                      <dd className="text-right">-{formatVND(booking.penaltyTotal)}</dd>
+                    </div>
+                  )}
+                  {typeof booking.penaltyTotal === "number" && booking.penaltyTotal > booking.depositTotal && (
+                    <div className="flex justify-between items-center gap-4 border border-red-300 bg-red-50 p-3 rounded-lg sm:col-span-2 font-bold text-red-700">
+                      <div>
+                        <span>Khoản đền bù vượt cọc cần thu thêm</span>
+                        <p className="text-[11px] font-normal text-red-800/80 mt-0.5">Theo Biên bản bàn giao, quý khách vui lòng thanh toán khoản chênh lệch cho atelier</p>
+                      </div>
+                      <span className="text-base text-red-700 shrink-0">+{formatVND(booking.penaltyTotal - booking.depositTotal)}</span>
+                    </div>
+                  )}
                   {typeof booking.shippingFee === "number" && booking.shippingFee > 0 && (
                     <div className="flex justify-between gap-4 border-b border-sand pb-3 sm:border-0 sm:pb-0">
                       <dt className="text-stone-500">Phí giao hàng</dt>

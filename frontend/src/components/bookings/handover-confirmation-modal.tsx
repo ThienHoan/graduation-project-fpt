@@ -9,7 +9,7 @@ import {
   type ConditionBeforeRental,
   type StaffBookingResponse,
 } from "@/lib/api";
-import { X, Sparkles } from "lucide-react";
+import { X, Sparkles, ShieldAlert } from "lucide-react";
 
 type Props = {
   booking: StaffBookingResponse | null;
@@ -22,6 +22,13 @@ const CONDITION_OPTIONS: { value: ConditionBeforeRental; label: string; hint: st
   { value: "GOOD", label: "Tốt", hint: "Không phát hiện lỗi trước khi nhận" },
   { value: "MINOR_DAMAGE", label: "Có lỗi nhẹ", hint: "Vẫn có thể bàn giao, cần ghi rõ tình trạng" },
   { value: "MAJOR_DAMAGE", label: "Lỗi nặng", hint: "Chỉ có thể từ chối bàn giao" },
+];
+
+const USAGE_TERMS = [
+  "Không giặt máy, không tự ủi nhiệt độ cao hoặc phơi dưới nắng gắt.",
+  "Tránh tiếp xúc nước hoa đậm đặc, rượu, dầu mỡ hoặc hoá chất tẩy rửa.",
+  "Không tự ý cắt sửa form, may vá hoặc đính kèm phụ kiện sắc nhọn lên vải.",
+  "Mức phạt hư hỏng tính theo % giá trị trang phục. Nếu hư hại không thể khắc phục vượt tiền cọc, khách bồi thường phần chênh lệch.",
 ];
 
 export function HandoverConfirmationModal({ booking, onClose, onCompleted, onError }: Props) {
@@ -215,12 +222,29 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
           </section>
 
           <section>
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
+              <div className="flex items-center gap-2 mb-2">
+                <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
+                <span className="text-xs font-bold uppercase tracking-[0.12em] text-amber-800">
+                  Điều khoản sử dụng & Chính sách bồi thường
+                </span>
+              </div>
+              <ul className="space-y-1 text-xs text-amber-900/80">
+                {USAGE_TERMS.map((term, idx) => (
+                  <li key={idx} className="flex items-start gap-1.5">
+                    <span className="font-bold text-amber-700">•</span>
+                    <span>{term}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <h3 className="text-sm font-bold text-ink">Checklist bắt buộc</h3>
             <div className="mt-3 grid gap-3">
               {[
                 { checked: correctProduct, set: setCorrectProduct, label: "Sản phẩm bàn giao đúng mẫu, đúng size và đúng asset trong đơn" },
                 { checked: noVisibleDefect, set: setNoVisibleDefect, label: "Sản phẩm không có lỗi nhìn thấy trước khi nhận" },
-                { checked: customerAgreed, set: setCustomerAgreed, label: "Khách/người nhận đã kiểm tra và đồng ý nhận sản phẩm" },
+                { checked: customerAgreed, set: setCustomerAgreed, label: "Khách/người nhận đã kiểm tra, đồng ý nhận và chấp thuận điều khoản sử dụng & đền bù" },
               ].map((item) => (
                 <label key={item.label} className="flex cursor-pointer items-start gap-3 rounded-lg border border-sand p-3 text-sm text-stone-700 transition hover:bg-mist">
                   <input
