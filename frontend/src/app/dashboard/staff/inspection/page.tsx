@@ -12,6 +12,7 @@ import {
   addInspectionPhoto,
   completeInspection,
   inspectBookingAccessory,
+  finalizeBookingInspection,
   type StaffBookingResponse,
   type InspectionSessionResponse,
   type BookingItem,
@@ -101,6 +102,8 @@ export default function StaffInspectionPage() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [actioning, setActioning] = useState<string | null>(null);
   const [currentNote, setCurrentNote] = useState("");
+  const [finalizingBooking, setFinalizingBooking] = useState(false);
+  const [finalizeMsg, setFinalizeMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Accessory inspection form state (per accessory row)
   const [accInspect, setAccInspect] = useState<Record<string, { status: string; note: string; penalty: string; images: string[] }>>({});
@@ -360,7 +363,28 @@ export default function StaffInspectionPage() {
     }
   }
 
-  async function handleComplete(finalAssetStatus: string) {    if (!activeSession) return;
+  async function handleFinalizeBooking() {
+    if (!booking) return;
+    setFinalizingBooking(true);
+    setFinalizeMsg(null);
+    setErrorMsg(null);
+    const res = await finalizeBookingInspection(booking.id);
+    setFinalizingBooking(false);
+    if (res.success && res.data) {
+      if (res.data.finalized) {
+        setFinalizeMsg({ type: "success", text: "Đã hoàn tất kiểm tra đơn — đơn đã chuyển sang trạng thái mới." });
+        // Refresh danh sách đơn
+        void refreshAll();
+      } else {
+        setFinalizeMsg({ type: "error", text: "Đơn chưa hoàn tất kiểm tra — vẫn còn trang phục hoặc phụ kiện chưa được kiểm." });
+      }
+    } else {
+      setFinalizeMsg({ type: "error", text: res.message ?? "Không thể hoàn tất kiểm tra đơn. Vui lòng thử lại." });
+    }
+  }
+
+  async function handleComplete(finalAssetStatus: string) {
+    if (!activeSession || actioning !== null) return;
     setActioning(`complete-${finalAssetStatus}`);
     setErrorMsg(null);
     const res = await completeInspection(activeSession.id, {
@@ -1222,19 +1246,40 @@ export default function StaffInspectionPage() {
                   </p>
                 </section>
 
+                {/* Finalize message banner */}
+                {finalizeMsg && (
+                  <div className={`mb-3 rounded-lg border p-3 text-sm ${finalizeMsg.type === "success" ? "border-jade/30 bg-jade/10 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
+                    {finalizeMsg.text}
+                    <button type="button" className="ml-3 underline opacity-70" onClick={() => setFinalizeMsg(null)}>Đóng</button>
+                  </div>
+                )}
+
                 {/* Actions bar */}
-                <div className="sticky bottom-0 flex flex-wrap justify-end gap-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
-                  {FINAL_ACTIONS.map((action) => (
+                <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
+                  {/* Nút hoàn tất kiểm tra đơn — chỉ hiển thị khi đơn đang inspection_pending */}
+                  {booking?.status === "inspection_pending" && (
                     <button
-                      key={action.key}
                       type="button"
-                      disabled={actioning !== null}
-                      onClick={() => handleComplete(action.key)}
-                      className={`rounded-lg px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
+                      disabled={finalizingBooking || actioning !== null}
+                      onClick={handleFinalizeBooking}
+                      className="rounded-lg border border-jade bg-jade/5 px-4 py-2.5 text-sm font-semibold text-jade transition hover:bg-jade/15 disabled:opacity-50"
                     >
-                      {actioning === `complete-${action.key}` ? "Đang xử lý..." : action.label}
+                      {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
                     </button>
-                  ))}
+                  )}
+                  <div className="flex flex-wrap gap-3 ml-auto">
+                    {FINAL_ACTIONS.map((action) => (
+                      <button
+                        key={action.key}
+                        type="button"
+                        disabled={actioning !== null}
+                        onClick={() => handleComplete(action.key)}
+                        className={`rounded-lg px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
+                      >
+                        {actioning === `complete-${action.key}` ? "Đang xử lý..." : action.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </>
             ) : null}

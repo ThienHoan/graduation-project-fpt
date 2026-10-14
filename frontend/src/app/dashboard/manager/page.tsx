@@ -4465,7 +4465,16 @@ function LaundryTab({
                 </span>
               </div>
               {t.note && (
-                <p className="mt-2 text-xs text-stone-500">{t.note}</p>
+                <p className="mt-2 text-xs text-stone-500">
+                  {t.note.startsWith("Tạo từ inspection")
+                    ? "Giặt sấy sau khi trả đồ"
+                    : t.note}
+                </p>
+              )}
+              {t.bookingId && (
+                <p className="mt-1 text-xs text-stone-400">
+                  Đơn #{t.bookingId.slice(0, 8).toUpperCase()}
+                </p>
               )}
               <div className="mt-4 flex justify-end">
                 <button
@@ -4599,7 +4608,11 @@ function DamagedTab({
                 </span>
               </div>
               {j.note && (
-                <p className="mt-2 text-xs text-stone-500">{j.note}</p>
+                <p className="mt-2 text-xs text-stone-500">
+                  {j.note.startsWith("Tạo từ inspection")
+                    ? "Cần bảo trì sau khi trả đồ"
+                    : j.note}
+                </p>
               )}
               <div className="mt-4 flex gap-2 justify-end">
                 {j.status !== "completed" && j.status !== "cannot_repair" && (

@@ -1152,6 +1152,18 @@ export async function getAssetsNeedingProcessing() {
   return apiRequest<AssetNeedingProcessing[]>("/inspections/assets/needing-processing");
 }
 
+/**
+ * Hoàn tất kiểm tra đơn thủ công — dùng khi tất cả trang phục + phụ kiện
+ * đã kiểm tra xong nhưng đơn vẫn kẹt ở inspection_pending.
+ */
+export async function finalizeBookingInspection(bookingId: string) {
+  return apiRequest<{ finalized: boolean; status: string }>(
+    `/inspections/booking/${bookingId}/finalize`,
+    { method: "POST" },
+  );
+}
+
+
 // ---------- Asset management types (extended) ----------
 
 export type AssetDetail = {

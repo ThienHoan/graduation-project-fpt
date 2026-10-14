@@ -202,20 +202,26 @@ export class InspectionsService {
   }
 
   async complete(id: string, dto: CompleteInspectionDto, staffId: string) {
-    const updated = await this.prisma.runSerializable(async (tx) => {
-      const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
-      if (!FINAL_ASSET_STATUSES.includes(finalAssetStatus)) {
-        throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
-      }
+    let updated: any;
+    try {
+      updated = await this.prisma.runSerializable(async (tx) => {
+        const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
+        if (!FINAL_ASSET_STATUSES.includes(finalAssetStatus)) {
+          throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
+        }
 
-      const session = await tx.inspectionSession.findUnique({
-        where: { id },
-        include: { booking: { include: { items: true } } },
-      });
-      if (!session) throw new NotFoundException("Inspection session not found.");
-      if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
-        throw new BadRequestException("Inspection has already been completed.");
-      }
+        const session = await tx.inspectionSession.findUnique({
+          where: { id },
+          include: { booking: { include: { items: true } } },
+        });
+        if (!session) throw new NotFoundException("Inspection session not found.");
+        if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+          // Idempotent guard: Phiên đã hoàn tất (ví dụ do click đúp hoặc race condition), trả về kết quả
+          return tx.inspectionSession.findUniqueOrThrow({
+            where: { id },
+            include: this.sessionInclude(),
+          });
+        }
 
       const claimedSession = await tx.inspectionSession.updateMany({
         where: { id, status: { in: MUTABLE_INSPECTION_STATUSES } },
@@ -241,12 +247,21 @@ export class InspectionsService {
 
       if (finalAssetStatus === AssetStatus.laundry) {
         await tx.laundryTicket.create({
-          data: { garmentAssetId: session.garmentAssetId, bookingId: session.bookingId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+          data: {
+            garmentAssetId: session.garmentAssetId,
+            bookingId: session.bookingId,
+            status: MaintenanceStatus.open,
+            note: dto.note ?? `Giặt sấy sau khi trả đơn #${session.bookingId.slice(0, 8).toUpperCase()}`,
+          },
         });
       }
       if (finalAssetStatus === AssetStatus.maintenance) {
         await tx.maintenanceJob.create({
-          data: { garmentAssetId: session.garmentAssetId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+          data: {
+            garmentAssetId: session.garmentAssetId,
+            status: MaintenanceStatus.open,
+            note: dto.note ?? `Bảo trì sau khi trả đơn #${session.bookingId.slice(0, 8).toUpperCase()}`,
+          },
         });
       }
 
@@ -297,6 +312,20 @@ export class InspectionsService {
         include: this.sessionInclude(),
       });
     });
+    } catch (error) {
+      // Nếu có race condition khiến transaction failed, kiểm tra xem session đã hoàn tất chưa
+      const recheck = await this.prisma.inspectionSession?.findUnique({
+        where: { id },
+        include: this.sessionInclude(),
+      });
+      if (recheck?.status === InspectionStatus.completed) {
+        return ok(this.serialize(recheck));
+      }
+      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
+        throw error;
+      }
+      throw new ConflictException("Hệ thống đang xử lý đơn hàng, vui lòng thử lại sau vài giây.");
+    }
 
     this.realtime.inspectionChanged({
       id: updated.id,
@@ -542,7 +571,23 @@ export class InspectionsService {
       throw new BadRequestException("Laundry ticket already completed.");
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      // Re-read bên trong transaction để tránh race condition
+      const freshTicket = await tx.laundryTicket.findUnique({ where: { id: ticketId } });
+      if (!freshTicket) throw new NotFoundException("Laundry ticket not found.");
+      if (freshTicket.status === "completed") {
+        throw new BadRequestException("Laundry ticket already completed.");
+      }
+
+      // Kiểm tra asset vẫn đang ở trạng thái laundry
+      const asset = await tx.garmentAsset.findUnique({ where: { id: freshTicket.garmentAssetId } });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
+      if (asset.status !== AssetStatus.laundry) {
+        throw new BadRequestException(
+          `Trang phục không còn ở trạng thái giặt sấy (hiện tại: ${asset.status}). Vui lòng kiểm tra lại.`,
+        );
+      }
+
       const done = await tx.laundryTicket.update({
         where: { id: ticketId },
         data: {
@@ -552,13 +597,10 @@ export class InspectionsService {
         },
       });
 
-      const claimed = await tx.garmentAsset.updateMany({
-        where: { id: ticket.garmentAssetId, status: AssetStatus.laundry },
+      await tx.garmentAsset.update({
+        where: { id: freshTicket.garmentAssetId },
         data: { status: AssetStatus.available, conditionNote: null },
       });
-      if (claimed.count !== 1) {
-        throw new BadRequestException("Asset is no longer in laundry status.");
-      }
 
       return done;
     });

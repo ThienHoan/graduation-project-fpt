@@ -93,4 +93,16 @@ export class InspectionsController {
   markAssetReady(@CurrentUser() user: AuthenticatedUser, @Param("assetId", ParseUUIDPipe) assetId: string) {
     return this.inspectionsService.markAssetReady(assetId, user.id);
   }
+
+  /**
+   * Hoàn tất kiểm tra đơn thủ công — dùng khi trang phục + phụ kiện đều
+   * đã kiểm tra xong nhưng đơn vẫn kẹt ở inspection_pending.
+   */
+  @Post("booking/:bookingId/finalize")
+  finalizeBookingInspection(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("bookingId", ParseUUIDPipe) bookingId: string,
+  ) {
+    return this.inspectionsService.tryFinalizeBookingInspection(bookingId, user.id);
+  }
 }
