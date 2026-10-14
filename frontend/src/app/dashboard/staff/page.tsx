@@ -24,6 +24,25 @@ import { DeliveryMap } from "@/components/location/delivery-map";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverConfirmationModal } from "@/components/bookings/handover-confirmation-modal";
+import {
+  Map,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  PackageOpen,
+  Sparkles,
+  Clock,
+  ChevronLeft,
+  ChevronRight,
+  Banknote,
+  QrCode,
+  CreditCard,
+  Building2,
+  Eye,
+  X,
+  AlertCircle,
+  type LucideIcon,
+} from "lucide-react";
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -74,9 +93,9 @@ type PaymentDialog = {
   depositTotal: number;
 } | null;
 
-const PAYMENT_METHODS: { key: string; label: string; icon: string }[] = [
-  { key: "cash", label: "Tiền mặt", icon: "payments" },
-  { key: "qr_code", label: "QR Code", icon: "qr_code" },
+const PAYMENT_METHODS: { key: string; label: string; icon: LucideIcon }[] = [
+  { key: "cash", label: "Tiền mặt", icon: Banknote },
+  { key: "qr_code", label: "QR Code", icon: QrCode },
 ];
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -467,11 +486,11 @@ export default function StaffDashboardPage() {
               : "border-transparent text-stone-500 hover:text-lotus"
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">map</span>
+          <Map className="h-4 w-4" />
           Bản đồ giao hàng
         </button>
         <div className="relative ml-auto mb-2 hidden md:block">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
           <input
             className="w-72 rounded-lg border border-sand bg-white py-2 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-lotus"
             placeholder="Tìm mã đơn, khách hàng..."
@@ -520,7 +539,7 @@ export default function StaffDashboardPage() {
               <div key={booking.id}>
                 {successId === booking.id && (
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
-                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                    <CheckCircle2 className="h-4 w-4 text-jade shrink-0" />
                     <span>{successMsg}</span>
                   </div>
                 )}
@@ -585,12 +604,18 @@ export default function StaffDashboardPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Phương thức thanh toán</p>
                       <p className="mt-1 flex items-center gap-1.5 font-medium text-ink">
-                        <span className="material-symbols-outlined text-[18px] text-jade">
-                          {booking.paidPaymentMethod === "cash" ? "payments" : booking.paidPaymentMethod === "pos_card" ? "credit_card" : booking.paidPaymentMethod === "qr_code" ? "qr_code" : "account_balance"}
-                        </span>
+                        {booking.paidPaymentMethod === "cash" ? (
+                          <Banknote className="h-4 w-4 text-jade" />
+                        ) : booking.paidPaymentMethod === "pos_card" ? (
+                          <CreditCard className="h-4 w-4 text-jade" />
+                        ) : booking.paidPaymentMethod === "qr_code" ? (
+                          <QrCode className="h-4 w-4 text-jade" />
+                        ) : (
+                          <Building2 className="h-4 w-4 text-jade" />
+                        )}
                         {paidMethod}
                       </p>
-                      <p className="text-sm text-jade">Đã thanh toán</p>
+                      <p className="text-sm text-jade font-medium">Đã thanh toán</p>
                     </div>
                   )}
                 </div>
@@ -599,7 +624,7 @@ export default function StaffDashboardPage() {
                 {tab !== "refunds" && ASSET_NEEDED_STATUSES.includes(booking.status) && (booking.items.some((item) => !item.garmentAssetId) || (booking.accessories ?? []).some((acc) => !acc.accessoryAssetId)) && (
                   <div className="border-t border-amber-200 bg-amber-50/70 px-6 py-4">
                     <div className="flex items-start gap-3">
-                      <span className="material-symbols-outlined mt-0.5 text-amber-600 text-xl">warning</span>
+                      <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600 shrink-0" />
                       <div>
                         <p className="text-sm font-semibold text-amber-700">
                           Cần gán tài sản — vui lòng báo Quản lý
@@ -611,15 +636,15 @@ export default function StaffDashboardPage() {
                         </p>
                         <ul className="mt-2 space-y-1">
                           {booking.items.filter((item) => !item.garmentAssetId).map((item) => (
-                            <li key={item.id} className="text-xs text-amber-600 flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[14px]">inventory_2</span>
+                            <li key={item.id} className="text-xs text-amber-700 flex items-center gap-1.5">
+                              <PackageOpen className="h-3.5 w-3.5 text-amber-600" />
                               {item.garmentName ?? "Trang phục"}
                               {item.sizeLabel ? ` (${item.sizeLabel})` : ""}
                             </li>
                           ))}
                           {(booking.accessories ?? []).filter((acc) => !acc.accessoryAssetId).map((acc) => (
-                            <li key={acc.id} className="text-xs text-amber-600 flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[14px]">diamond</span>
+                            <li key={acc.id} className="text-xs text-amber-700 flex items-center gap-1.5">
+                              <Sparkles className="h-3.5 w-3.5 text-amber-600" />
                               {acc.accessoryName ?? "Phụ kiện"} (phụ kiện
                               {acc.quantity > 1 ? ` × ${acc.quantity}` : ""})
                             </li>
@@ -642,7 +667,7 @@ export default function StaffDashboardPage() {
                     !isRefunded && (
                       isPendingRefund ? (
                         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-yellow-700">
-                          <span className="material-symbols-outlined text-base mr-1 align-middle">schedule</span>
+                          <Clock className="h-4 w-4 mr-1 text-amber-700" />
                           {needsBankDetails
                             ? "Cần bổ sung tài khoản nhận hoàn trước khi Quản lý duyệt"
                             : refund.refundMethod === "bank_transfer"
@@ -799,7 +824,7 @@ export default function StaffDashboardPage() {
                   className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="Trang trước"
                 >
-                  <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                  <ChevronLeft className="h-4 w-4" />
                 </button>
                 {buildPageList(currentPage, totalPages).map((p, idx) =>
                   p === "..." ? (
@@ -826,7 +851,7 @@ export default function StaffDashboardPage() {
                   className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="Trang sau"
                 >
-                  <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -944,27 +969,30 @@ export default function StaffDashboardPage() {
                 const customerMethod = PAYMENT_METHODS.find((pm) => pm.key === selectedPaymentMethod);
                 return customerMethod ? (
                   <div className="mb-3 flex items-center gap-2 rounded-lg bg-jade/10 border border-jade/30 px-3 py-2 text-sm text-jade">
-                    <span className="material-symbols-outlined text-base">check_circle</span>
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
                     <span>Khách đã chọn: <strong>{customerMethod.label}</strong></span>
                   </div>
                 ) : null;
               })()}
               <div className="grid grid-cols-2 gap-3">
-                {PAYMENT_METHODS.map((pm) => (
-                  <button
-                    key={pm.key}
-                    type="button"
-                    onClick={() => setSelectedPaymentMethod(pm.key)}
-                    className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition ${
-                      selectedPaymentMethod === pm.key
-                        ? "border-lotus bg-parchment text-lotus"
-                        : "border-sand bg-white text-stone-600 hover:bg-mist"
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-xl">{pm.icon}</span>
-                    {pm.label}
-                  </button>
-                ))}
+                {PAYMENT_METHODS.map((pm) => {
+                  const PmIcon = pm.icon;
+                  return (
+                    <button
+                      key={pm.key}
+                      type="button"
+                      onClick={() => setSelectedPaymentMethod(pm.key)}
+                      className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition ${
+                        selectedPaymentMethod === pm.key
+                          ? "border-lotus bg-parchment text-lotus"
+                          : "border-sand bg-white text-stone-600 hover:bg-mist"
+                      }`}
+                    >
+                      <PmIcon className="h-5 w-5" />
+                      {pm.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -992,9 +1020,9 @@ export default function StaffDashboardPage() {
       {/* ── Error popup dialog ── */}
       {errorDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-md rounded-lg border border-sand bg-white p-8 shadow-2xl">
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-sand bg-white p-8 shadow-2xl">
             <div className="flex flex-col items-center text-center">
-              <span className="material-symbols-outlined text-5xl text-amber-500 mb-4">warning</span>
+              <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
               <h3 className="font-display text-2xl text-ink">Không thể chuyển trạng thái</h3>
               <p className="mt-4 text-sm leading-relaxed text-stone-600 whitespace-pre-line">
                 {errorDialog}

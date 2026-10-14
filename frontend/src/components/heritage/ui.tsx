@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
+import { useAuth } from "@/components/auth/auth-provider";
 import { StaffChatNavBadge } from "@/components/chat/staff-chat-nav-badge";
 import { ManagerReviewsNavBadge } from "@/components/dashboard/manager-reviews-nav-badge";
 import { NotificationBell } from "@/components/notifications/notification-bell";
@@ -116,10 +117,13 @@ export function BookingFlowShell({
               );
             })}
           </nav>
-          <button type="button" className="mt-6 flex items-center justify-center gap-2 rounded-lg border border-sand bg-white px-4 py-3 text-sm font-semibold text-lotus transition hover:border-lotus/30 hover:bg-lotus/5">
+          <Link
+            href="/chat"
+            className="mt-6 flex items-center justify-center gap-2 rounded-lg border border-sand bg-white px-4 py-3 text-sm font-semibold text-lotus transition hover:border-lotus/30 hover:bg-lotus/5"
+          >
             <Headphones className="h-4 w-4" />
             Hỗ trợ đặt thuê
-          </button>
+          </Link>
         </aside>
 
         <main className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-12 lg:py-12">
@@ -197,6 +201,13 @@ export function StaffPortalShell({
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell />
+            <Link
+              href="/dashboard/staff/profile"
+              className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
+            >
+              <User className="h-4 w-4" />
+              <span className="hidden sm:inline">Hồ sơ</span>
+            </Link>
             <LogoutButton className="inline-flex items-center gap-2 rounded-full border border-oxblood/30 bg-white px-3 py-2 text-sm font-semibold text-oxblood transition hover:bg-oxblood hover:text-white">
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Đăng xuất</span>
@@ -221,7 +232,7 @@ export function ManagerPortalShell({
   title,
   subtitle,
   onTabChange,
-  managerName = "Quản lý cửa hàng",
+  managerName,
   managerEmail,
   onProfile,
   onSignOut,
@@ -239,15 +250,36 @@ export function ManagerPortalShell({
   currentDateLabel?: string;
   children: ReactNode;
 }) {
-  const initials = managerName
+  const router = useRouter();
+  const { signOut, user } = useAuth();
+
+  const effectiveName = managerName ?? user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng";
+  const effectiveEmail = managerEmail !== undefined ? managerEmail : (user?.email ?? null);
+
+  const initials = effectiveName
     .split(" ")
     .filter(Boolean)
     .slice(-2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "QL";
-  // Điều hướng SPA để layout/sidebar không unmount và không re-auth lại:
-  // trang chính chuyển tab nội bộ, trang con router.push (không full reload).
-  const router = useRouter();
+
+  const handleProfile = () => {
+    if (onProfile) {
+      onProfile();
+    } else {
+      router.push("/dashboard/manager/profile");
+    }
+  };
+
+  const handleSignOut = () => {
+    if (onSignOut) {
+      onSignOut();
+    } else {
+      signOut();
+      router.replace("/login");
+    }
+  };
+
   // Manager: nút chính là thêm trang phục (đi tới inventory), không phải tạo booking
   const items: { key: ManagerNavKey; label: string; icon: LucideIcon; href: string }[] = [
     { key: "overview", label: "Tổng quan", icon: LayoutDashboard, href: "/dashboard/manager" },
@@ -279,8 +311,8 @@ export function ManagerPortalShell({
             {initials}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-ink">{managerName}</p>
-            <p className="truncate text-xs uppercase tracking-[0.16em] text-antique">{managerEmail ?? "Manager / Owner"}</p>
+            <p className="truncate text-sm font-semibold text-ink">{effectiveName}</p>
+            <p className="truncate text-xs uppercase tracking-[0.16em] text-antique">{effectiveEmail ?? "Manager / Owner"}</p>
           </div>
         </div>
         <button
@@ -335,10 +367,10 @@ export function ManagerPortalShell({
           })}
         </nav>
         <div className="mt-6 border-t border-sand pt-4">
-          <button type="button" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
+          <Link href="/chat" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
             <Headphones className="h-5 w-5 shrink-0" />
             <span>Hỗ trợ vận hành</span>
-          </button>
+          </Link>
         </div>
       </aside>
 
@@ -348,8 +380,8 @@ export function ManagerPortalShell({
             <h2 className="font-display text-3xl text-lotus">Cổ Phục Rental</h2>
             <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{subtitle}</p>
           </div>
-          <div className="hidden items-center gap-3 md:flex">
-            <div className="rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="hidden rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 xl:block">
               {currentDateLabel || "Đang đồng bộ"}
             </div>
             <NotificationBell />
@@ -359,17 +391,17 @@ export function ManagerPortalShell({
               } else {
                 router.push("/dashboard/manager#assets");
               }
-            }} className="inline-flex items-center gap-2 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood">
+            }} className="hidden items-center gap-2 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood sm:inline-flex">
               <AlertCircle className="h-4 w-4" />
               Cần xử lý
             </button>
-            <button type="button" onClick={onProfile} className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus">
+            <button type="button" onClick={handleProfile} className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus">
               <User className="h-4 w-4" />
-              Hồ sơ
+              <span className="hidden sm:inline">Hồ sơ</span>
             </button>
-            <button type="button" onClick={onSignOut} className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100">
+            <button type="button" onClick={handleSignOut} className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100">
               <LogOut className="h-4 w-4" />
-              Đăng xuất
+              <span className="hidden sm:inline">Đăng xuất</span>
             </button>
           </div>
         </header>
@@ -394,7 +426,7 @@ export function AdminPortalShell({
   title,
   subtitle,
   onTabChange,
-  adminName = "Quản trị viên",
+  adminName,
   adminEmail,
   onProfile,
   onSignOut,
@@ -412,12 +444,35 @@ export function AdminPortalShell({
   currentDateLabel?: string;
   children: ReactNode;
 }) {
-  const initials = adminName
+  const router = useRouter();
+  const { signOut, user } = useAuth();
+
+  const effectiveName = adminName ?? user?.fullName ?? user?.email?.split("@")[0] ?? "Quản trị viên";
+  const effectiveEmail = adminEmail !== undefined ? adminEmail : (user?.email ?? null);
+
+  const initials = effectiveName
     .split(" ")
     .filter(Boolean)
     .slice(-2)
     .map((part) => part[0]?.toUpperCase())
     .join("") || "AD";
+
+  const handleProfile = () => {
+    if (onProfile) {
+      onProfile();
+    } else {
+      router.push("/dashboard/admin/profile");
+    }
+  };
+
+  const handleSignOut = () => {
+    if (onSignOut) {
+      onSignOut();
+    } else {
+      signOut();
+      router.replace("/login");
+    }
+  };
 
   const items: { key: AdminNavKey; label: string; icon: LucideIcon; href: string }[] = [
     { key: "overview", label: "Tổng quan", icon: LayoutDashboard, href: "/dashboard/admin" },
@@ -440,8 +495,8 @@ export function AdminPortalShell({
             {initials}
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-ink">{adminName}</p>
-            <p className="truncate text-xs uppercase tracking-[0.16em] text-antique">{adminEmail ?? "Super Admin"}</p>
+            <p className="truncate text-sm font-semibold text-ink">{effectiveName}</p>
+            <p className="truncate text-xs uppercase tracking-[0.16em] text-antique">{effectiveEmail ?? "Super Admin"}</p>
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-2">
@@ -467,10 +522,10 @@ export function AdminPortalShell({
           })}
         </nav>
         <div className="mt-6 border-t border-sand pt-4">
-          <button type="button" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
+          <Link href="/chat" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
             <Headphones className="h-5 w-5 shrink-0" />
             <span>Hỗ trợ quản trị</span>
-          </button>
+          </Link>
         </div>
       </aside>
 
@@ -481,17 +536,17 @@ export function AdminPortalShell({
             <h2 className="font-display text-3xl text-lotus">Cổ Phục Rental</h2>
             <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{subtitle}</p>
           </div>
-          <div className="hidden items-center gap-3 md:flex">
-            <div className="rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="hidden rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 xl:block">
               {currentDateLabel || "Đang đồng bộ"}
             </div>
-            <button type="button" onClick={onProfile} className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus">
+            <button type="button" onClick={handleProfile} className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus">
               <User className="h-4 w-4" />
-              Hồ sơ
+              <span className="hidden sm:inline">Hồ sơ</span>
             </button>
-            <button type="button" onClick={onSignOut} className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100">
+            <button type="button" onClick={handleSignOut} className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100">
               <LogOut className="h-4 w-4" />
-              Đăng xuất
+              <span className="hidden sm:inline">Đăng xuất</span>
             </button>
           </div>
         </header>

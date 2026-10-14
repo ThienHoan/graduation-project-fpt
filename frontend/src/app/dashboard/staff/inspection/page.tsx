@@ -18,6 +18,22 @@ import {
   type BookingItem,
   type BookingAccessoryItem,
 } from "@/lib/api";
+import {
+  AlertTriangle,
+  Circle,
+  CheckCircle2,
+  Waves,
+  Wrench,
+  AlertOctagon,
+  SearchX,
+  Clock,
+  Sparkles,
+  Shirt,
+  ZoomIn,
+  ClipboardCheck,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 
 // ── Helpers ──
 
@@ -36,14 +52,14 @@ type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "co
 
 type AccInspectionState = "missing_asset" | "not_started" | "good" | "laundry" | "maintenance" | "damaged" | "lost";
 
-const ACC_STATE_META: Record<AccInspectionState, { label: string; color: string; icon: string }> = {
-  missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: "warning" },
-  not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: "radio_button_unchecked" },
-  good: { label: "Tốt", color: "bg-jade/10 text-jade", icon: "check_circle" },
-  laundry: { label: "Cần giặt sấy", color: "bg-amber-100 text-amber-700", icon: "dry_cleaning" },
-  maintenance: { label: "Cần bảo trì", color: "bg-orange-100 text-orange-700", icon: "build_circle" },
-  damaged: { label: "Hư hỏng", color: "bg-red-100 text-red-700", icon: "error" },
-  lost: { label: "Mất — đã tính đền", color: "bg-red-200 text-red-800", icon: "search_off" },
+const ACC_STATE_META: Record<AccInspectionState, { label: string; color: string; icon: LucideIcon }> = {
+  missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: AlertTriangle },
+  not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: Circle },
+  good: { label: "Tốt", color: "bg-jade/10 text-jade", icon: CheckCircle2 },
+  laundry: { label: "Cần giặt sấy", color: "bg-amber-100 text-amber-700", icon: Waves },
+  maintenance: { label: "Cần bảo trì", color: "bg-orange-100 text-orange-700", icon: Wrench },
+  damaged: { label: "Hư hỏng", color: "bg-red-100 text-red-700", icon: AlertOctagon },
+  lost: { label: "Mất — đã tính đền", color: "bg-red-200 text-red-800", icon: SearchX },
 };
 
 const ACC_CONDITION_OPTIONS = [
@@ -56,11 +72,11 @@ const ACC_CONDITION_OPTIONS = [
 
 const ACC_INSPECTABLE_STATUSES = ["returned", "inspection_pending"];
 
-const ITEM_STATE_META: Record<ItemInspectionState, { label: string; color: string; icon: string }> = {
-  missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: "warning" },
-  not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: "radio_button_unchecked" },
-  in_progress: { label: "Đang kiểm tra", color: "bg-lotus/10 text-lotus", icon: "pending" },
-  completed: { label: "Đã kiểm tra", color: "bg-jade/10 text-jade", icon: "check_circle" },
+const ITEM_STATE_META: Record<ItemInspectionState, { label: string; color: string; icon: LucideIcon }> = {
+  missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: AlertTriangle },
+  not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: Circle },
+  in_progress: { label: "Đang kiểm tra", color: "bg-lotus/10 text-lotus", icon: Clock },
+  completed: { label: "Đã kiểm tra", color: "bg-jade/10 text-jade", icon: CheckCircle2 },
 };
 
 const FINAL_ACTIONS = [
@@ -512,11 +528,11 @@ export default function StaffInspectionPage() {
                 src={acc.imageUrl}
                 className="h-9 w-9 rounded-md border border-sand object-cover transition group-hover:opacity-80"
               />
-              <span className="material-symbols-outlined absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" style={{ fontSize: 16 }}>zoom_in</span>
+              <ZoomIn className="absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" />
             </button>
           ) : (
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white">
-              <span className="material-symbols-outlined text-lg text-stone-300">diamond</span>
+              <Sparkles className="h-4 w-4 text-stone-300" />
             </div>
           )}
           <div className="min-w-0 flex-1">
@@ -529,10 +545,15 @@ export default function StaffInspectionPage() {
               {acc.isIncluded ? " · Kèm miễn phí" : ""}
             </p>
           </div>
-          <span className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.color}`}>
-            <span className="material-symbols-outlined text-[13px]">{meta.icon}</span>
-            {meta.label}
-          </span>
+          {(() => {
+            const MetaIcon = meta.icon;
+            return (
+              <span className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.color}`}>
+                <MetaIcon className="h-3 w-3" />
+                {meta.label}
+              </span>
+            );
+          })()}
         </div>
         {acc.conditionNote && (
           <p className="mt-1.5 text-xs italic text-stone-500">Ghi chú: {acc.conditionNote}</p>
@@ -850,11 +871,11 @@ export default function StaffInspectionPage() {
                                   src={item.imageUrl}
                                   className="h-14 w-11 rounded-md border border-sand object-cover transition group-hover:opacity-80"
                                 />
-                                <span className="material-symbols-outlined absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" style={{ fontSize: 16 }}>zoom_in</span>
+                                <ZoomIn className="absolute inset-0 m-auto hidden h-4 w-4 text-white drop-shadow group-hover:block" />
                               </button>
                             ) : (
                               <div className="flex h-14 w-11 shrink-0 items-center justify-center rounded-md bg-parchment text-stone-400">
-                                <span className="material-symbols-outlined text-xl">checkroom</span>
+                                <Shirt className="h-5 w-5" />
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
@@ -875,7 +896,7 @@ export default function StaffInspectionPage() {
                         {itemAccs.length > 0 && (
                           <div className="ml-4 space-y-2 border-l-2 border-dashed border-sand py-2 pl-3">
                             <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
-                              <span className="material-symbols-outlined text-[14px]">diamond</span>
+                              <Sparkles className="h-3.5 w-3.5" />
                               Phụ kiện đi kèm ({itemAccs.length})
                             </p>
                             {itemAccs.map((acc) => renderAccessoryCard(acc))}
@@ -887,7 +908,7 @@ export default function StaffInspectionPage() {
                   {unlinkedAccessories.length > 0 && (
                     <div className="rounded-lg border border-dashed border-sand bg-mist/40 p-3">
                       <p className="mb-2 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-400">
-                        <span className="material-symbols-outlined text-[14px]">diamond</span>
+                        <Sparkles className="h-3.5 w-3.5" />
                         Phụ kiện chung ({unlinkedAccessories.length})
                       </p>
                       <div className="space-y-2">
@@ -917,13 +938,13 @@ export default function StaffInspectionPage() {
                         className="h-40 w-28 rounded border border-sand object-cover transition group-hover:opacity-90"
                       />
                       <span className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold text-white">
-                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>zoom_in</span>
+                        <ZoomIn className="h-3.5 w-3.5" />
                         Phóng to
                       </span>
                     </button>
                   ) : (
                     <div className="flex h-40 w-28 shrink-0 items-center justify-center rounded bg-parchment text-stone-400">
-                      <span className="material-symbols-outlined text-4xl">checkroom</span>
+                      <Shirt className="h-10 w-10 text-stone-400" />
                     </div>
                   )}
                   <div>
@@ -998,7 +1019,7 @@ export default function StaffInspectionPage() {
               <section className="rounded-xl border border-sand bg-white p-10 text-center shadow-sm">
                 {selectedItemSession?.status === "completed" ? (
                   <>
-                    <span className="material-symbols-outlined text-5xl text-jade">check_circle</span>
+                    <CheckCircle2 className="mx-auto h-12 w-12 text-jade" />
                     <h3 className="mt-4 font-display text-2xl text-ink">Món này đã kiểm tra xong</h3>
                     <p className="mt-2 text-stone-500">
                       Chọn món khác trong danh sách tài sản để tiếp tục kiểm tra đơn trả.
@@ -1006,7 +1027,7 @@ export default function StaffInspectionPage() {
                   </>
                 ) : (
                   <>
-                    <span className="material-symbols-outlined text-5xl text-stone-300">search_check</span>
+                    <ClipboardCheck className="mx-auto h-12 w-12 text-stone-300" />
                     <h3 className="mt-4 font-display text-2xl text-ink">
                       Bắt đầu kiểm tra
                     </h3>
@@ -1027,7 +1048,7 @@ export default function StaffInspectionPage() {
                     ) : (
                       <div className="mt-6 space-y-3 rounded-lg border border-red-200 bg-red-50 p-5 text-left">
                         <div className="flex items-start gap-3">
-                          <span className="material-symbols-outlined mt-0.5 text-red-500 text-xl">warning</span>
+                          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
                           <div>
                             <h4 className="font-semibold text-red-700">Chưa gán tài sản vật lý</h4>
                             <p className="mt-1 text-sm leading-relaxed text-red-600">
@@ -1062,57 +1083,58 @@ export default function StaffInspectionPage() {
                     {[
                       {
                         key: "ok",
-                        icon: "check_circle",
+                        icon: CheckCircle2,
                         color: "text-jade",
                         bg: "bg-jade/5",
-                        border: "border-jade",
+                        border: "hover:border-jade",
                         title: "Không vấn đề",
                         desc: "Sẵn sàng cho làm sạch tiêu chuẩn",
                       },
                       {
                         key: "low",
-                        icon: "build_circle",
+                        icon: Wrench,
                         color: "text-orange-700",
                         bg: "bg-lotus/5",
-                        border: "border-orange-600",
+                        border: "hover:border-orange-600",
                         title: "Mòn nhẹ",
                         desc: "Cần vá nhỏ hoặc xử lý điểm bẩn",
                       },
                       {
                         key: "high",
-                        icon: "error",
+                        icon: AlertOctagon,
                         color: "text-red-700",
                         bg: "bg-red-50",
-                        border: "border-red-700",
+                        border: "hover:border-red-700",
                         title: "Hư hỏng nặng",
                         desc: "Cần chuyển phục hồi ngay",
                       },
-                    ].map((opt) => (
-                      <button
-                        key={opt.key}
-                        type="button"
-                        onClick={() => {
-                          if (!findingText.trim()) {
-                            setFindingText(
-                              opt.key === "ok"
-                                ? "Tình trạng tốt"
-                                : opt.key === "low"
-                                  ? "Mòn nhẹ / vết bẩn nhỏ"
-                                  : "Hư hỏng nặng cần phục hồi",
-                            );
-                          }
-                          if (opt.key === "low") setFindingSeverity("medium");
-                          if (opt.key === "high") setFindingSeverity("high");
-                        }}
-                        className={`rounded-lg border border-sand ${opt.bg} p-4 text-center transition hover:${opt.border}`}
-                      >
-                        <span className={`material-symbols-outlined text-3xl ${opt.color}`}>
-                          {opt.icon}
-                        </span>
-                        <h3 className="mt-2 font-semibold text-ink">{opt.title}</h3>
-                        <p className="mt-1 text-sm text-stone-600">{opt.desc}</p>
-                      </button>
-                    ))}
+                    ].map((opt) => {
+                      const OptIcon = opt.icon;
+                      return (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => {
+                            if (!findingText.trim()) {
+                              setFindingText(
+                                opt.key === "ok"
+                                  ? "Tình trạng tốt"
+                                  : opt.key === "low"
+                                    ? "Mòn nhẹ / vết bẩn nhỏ"
+                                    : "Hư hỏng nặng cần phục hồi",
+                              );
+                            }
+                            if (opt.key === "low") setFindingSeverity("medium");
+                            if (opt.key === "high") setFindingSeverity("high");
+                          }}
+                          className={`rounded-lg border border-sand ${opt.bg} p-4 text-center transition ${opt.border}`}
+                        >
+                          <OptIcon className={`mx-auto h-8 w-8 ${opt.color}`} />
+                          <h3 className="mt-2 font-semibold text-ink">{opt.title}</h3>
+                          <p className="mt-1 text-sm text-stone-600">{opt.desc}</p>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div className="mt-6">
@@ -1219,7 +1241,9 @@ export default function StaffInspectionPage() {
                           className="aspect-square w-full object-cover transition group-hover:opacity-90"
                           src={p.imageUrl}
                         />
-                        <span className="material-symbols-outlined absolute bottom-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white" style={{ fontSize: 16 }}>zoom_in</span>
+                        <span className="absolute bottom-1.5 right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white">
+                          <ZoomIn className="h-3.5 w-3.5" />
+                        </span>
                       </button>
                     ))}
                     {/* Add photo slot */}
@@ -1301,7 +1325,7 @@ export default function StaffInspectionPage() {
             className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/25"
             aria-label="Đóng ảnh phóng to"
           >
-            <span className="material-symbols-outlined text-2xl">close</span>
+            <X className="h-6 w-6" />
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

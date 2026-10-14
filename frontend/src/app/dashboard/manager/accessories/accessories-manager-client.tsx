@@ -19,6 +19,7 @@ import {
   type AccessoryPayload,
   type LinkedGarment,
 } from "@/lib/api";
+import { Search, Plus, Sparkles, X } from "lucide-react";
 
 const ASSET_STATUS_LABELS: Record<string, string> = {
   available: "Sẵn sàng",
@@ -200,7 +201,7 @@ export function AccessoriesManagerClient() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
-          <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -238,7 +239,7 @@ export function AccessoriesManagerClient() {
           onClick={openCreate}
           className="inline-flex items-center gap-2 rounded-lg bg-lotus px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Plus className="h-4 w-4" />
           Thêm phụ kiện
         </button>
       </div>
@@ -266,7 +267,7 @@ export function AccessoriesManagerClient() {
                     <img src={a.imageUrl} alt={a.name} className="h-14 w-14 shrink-0 rounded-lg border border-sand object-cover" />
                   ) : (
                     <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-sand bg-mist">
-                      <span className="material-symbols-outlined text-xl text-stone-300">diamond</span>
+                      <Sparkles className="h-5 w-5 text-stone-300" />
                     </div>
                   )}
                   <div className="min-w-0">
@@ -495,7 +496,7 @@ function AssetsPanel({
             onClick={onAddAsset}
             className="inline-flex items-center gap-2 rounded-lg bg-jade px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Plus className="h-4 w-4" />
             Thêm tài sản
           </button>
           <button
@@ -505,7 +506,7 @@ function AssetsPanel({
             aria-label="Đóng bảng tài sản"
             title="Đóng bảng tài sản"
           >
-            <span className="material-symbols-outlined text-[20px]">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -773,7 +774,7 @@ function AccessoryFormModal({
         <div className="mb-6 flex items-center justify-between">
           <h3 className="font-display text-2xl text-ink">{initial ? "Sửa phụ kiện" : "Thêm phụ kiện"}</h3>
           <button type="button" onClick={() => void handleClose()} className="text-stone-500 hover:text-lotus">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4">
@@ -863,7 +864,7 @@ function AccessoryFormModal({
                   className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                   aria-label="Gỡ ảnh"
                 >
-                  <span className="material-symbols-outlined text-[14px]">close</span>
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             ) : (
@@ -931,7 +932,7 @@ function AccessoryAssetFormModal({
         <div className="mb-6 flex items-center justify-between">
           <h3 className="font-display text-2xl text-ink">Thêm tài sản mới</h3>
           <button type="button" onClick={onClose} className="text-stone-500 hover:text-lotus">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <p className="mb-4 text-sm text-stone-500">

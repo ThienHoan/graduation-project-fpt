@@ -10,6 +10,27 @@ import {
   type ProductStatsResponse,
 } from "@/lib/api";
 
+import {
+  Shirt,
+  Tag,
+  Megaphone,
+  Archive,
+  ShoppingBag,
+  ClipboardCheck,
+  Banknote,
+  CalendarCheck,
+  CalendarX,
+  Eye,
+  Sparkles,
+  Flame,
+  TrendingDown,
+  ArrowRight,
+  ArrowDown,
+  ArrowUp,
+  AlertCircle,
+  type LucideIcon,
+} from "lucide-react";
+
 const formatVND = (n: number) => `${Math.round(n).toLocaleString("vi-VN")}đ`;
 const pct = (n: number | null) => (n == null ? "—" : `${(n * 100).toFixed(n < 0.1 && n > 0 ? 1 : 0)}%`);
 
@@ -20,12 +41,12 @@ const CLASS_META: Record<ProductStat["classification"], { label: string; cls: st
   NEW: { label: "Mới", cls: "bg-sky-50 text-sky-700" },
 };
 
-const REC_ICON: Record<string, string> = {
-  discount: "sell",
-  promote: "campaign",
-  discontinue_review: "inventory",
-  reduce_stock: "remove_shopping_cart",
-  quality_check: "fact_check",
+const REC_ICON: Record<string, LucideIcon> = {
+  discount: Tag,
+  promote: Megaphone,
+  discontinue_review: Archive,
+  reduce_stock: ShoppingBag,
+  quality_check: ClipboardCheck,
 };
 
 const inputClass =
@@ -55,7 +76,7 @@ function Thumb({ s }: { s: ProductStat }) {
     <img src={s.imageUrl} alt="" className="h-12 w-10 shrink-0 rounded object-cover" />
   ) : (
     <div className="flex h-12 w-10 shrink-0 items-center justify-center rounded bg-lotus/10">
-      <span className="material-symbols-outlined text-antique/60">checkroom</span>
+      <Shirt className="h-5 w-5 text-antique/60" />
     </div>
   );
 }
@@ -156,30 +177,33 @@ export function ProductStatsClient() {
           {/* KPI */}
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { label: "Tổng lượt thuê", value: data.summary.totalRentals.toLocaleString("vi-VN"), icon: "shopping_bag" },
-              { label: "Doanh thu thuê", value: formatVND(data.summary.totalRevenue), icon: "payments" },
-              { label: "Tỷ lệ được đặt TB", value: pct(data.summary.avgOccupancyRate), icon: "event_available" },
-              { label: "Tỷ lệ huỷ", value: pct(data.summary.cancelRate), icon: "event_busy" },
-              { label: "Lượt xem", value: data.summary.totalViews.toLocaleString("vi-VN"), icon: "visibility" },
-              { label: "Lượt thử AI", value: data.summary.totalTryons.toLocaleString("vi-VN"), icon: "auto_awesome" },
-              { label: "Sản phẩm HOT", value: String(data.summary.hotCount), icon: "local_fire_department" },
-              { label: "Ít được thuê", value: String(data.summary.lowDemandCount), icon: "trending_down" },
-            ].map((k) => (
-              <div key={k.label} className="rounded-xl border border-sand bg-white p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
-                  <span className="material-symbols-outlined text-[18px] text-antique">{k.icon}</span>
-                  {k.label}
+              { label: "Tổng lượt thuê", value: data.summary.totalRentals.toLocaleString("vi-VN"), icon: ShoppingBag },
+              { label: "Doanh thu thuê", value: formatVND(data.summary.totalRevenue), icon: Banknote },
+              { label: "Tỷ lệ được đặt TB", value: pct(data.summary.avgOccupancyRate), icon: CalendarCheck },
+              { label: "Tỷ lệ huỷ", value: pct(data.summary.cancelRate), icon: CalendarX },
+              { label: "Lượt xem", value: data.summary.totalViews.toLocaleString("vi-VN"), icon: Eye },
+              { label: "Lượt thử AI", value: data.summary.totalTryons.toLocaleString("vi-VN"), icon: Sparkles },
+              { label: "Sản phẩm HOT", value: String(data.summary.hotCount), icon: Flame },
+              { label: "Ít được thuê", value: String(data.summary.lowDemandCount), icon: TrendingDown },
+            ].map((k) => {
+              const Icon = k.icon;
+              return (
+                <div key={k.label} className="rounded-xl border border-sand bg-white p-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+                    <Icon className="h-4 w-4 text-antique" />
+                    {k.label}
+                  </div>
+                  <p className="mt-2 font-display text-3xl text-ink">{k.value}</p>
                 </div>
-                <p className="mt-2 font-display text-3xl text-ink">{k.value}</p>
-              </div>
-            ))}
+              );
+            })}
           </section>
 
           <div className="grid gap-6 xl:grid-cols-2">
             {/* HOT */}
             <section className="rounded-xl border border-sand bg-white p-5">
               <h2 className="mb-1 flex items-center gap-2 font-display text-2xl text-ink">
-                <span className="material-symbols-outlined text-lotus">local_fire_department</span>
+                <Flame className="h-6 w-6 text-lotus" />
                 Sản phẩm HOT
               </h2>
               <p className="mb-4 text-xs text-stone-500">
@@ -217,7 +241,7 @@ export function ProductStatsClient() {
             {/* LOW DEMAND */}
             <section className="rounded-xl border border-sand bg-white p-5">
               <h2 className="mb-1 flex items-center gap-2 font-display text-2xl text-ink">
-                <span className="material-symbols-outlined text-amber-600">trending_down</span>
+                <TrendingDown className="h-6 w-6 text-amber-600" />
                 Ít được thuê
               </h2>
               <p className="mb-4 text-xs text-stone-500">
@@ -238,17 +262,20 @@ export function ProductStatsClient() {
                       </div>
                     </div>
                     <ul className="mt-2 space-y-1">
-                      {s.recommendations.map((r) => (
-                        <li key={r.action} className="flex items-start gap-2 text-xs text-stone-700">
-                          <span className="material-symbols-outlined text-[16px] text-amber-700">{REC_ICON[r.action]}</span>
-                          <span>{r.message}</span>
-                        </li>
-                      ))}
+                      {s.recommendations.map((r) => {
+                        const RecIcon = REC_ICON[r.action] ?? AlertCircle;
+                        return (
+                          <li key={r.action} className="flex items-start gap-2 text-xs text-stone-700">
+                            <RecIcon className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                            <span>{r.message}</span>
+                          </li>
+                        );
+                      })}
                     </ul>
                     {s.recommendations.some((r) => r.action === "discount") && (
-                      <Link href="/dashboard/manager/pricing" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-lotus hover:underline">
+                      <Link href="/dashboard/manager/pricing" className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-lotus hover:underline">
                         Tạo luật giảm giá
-                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
                       </Link>
                     )}
                   </li>
@@ -289,7 +316,11 @@ export function ProductStatsClient() {
                         >
                           {c.label}
                           {tableSort.key === c.key && (
-                            <span className="material-symbols-outlined text-[14px]">{tableSort.dir === -1 ? "arrow_downward" : "arrow_upward"}</span>
+                            tableSort.dir === -1 ? (
+                              <ArrowDown className="h-3.5 w-3.5 text-lotus" />
+                            ) : (
+                              <ArrowUp className="h-3.5 w-3.5 text-lotus" />
+                            )
                           )}
                         </button>
                       </th>

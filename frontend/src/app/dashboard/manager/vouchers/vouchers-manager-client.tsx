@@ -12,6 +12,7 @@ import {
   type VoucherPayload,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
+import { Plus, PauseCircle, PlayCircle, Pencil, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
 
 const STATUS_META: Record<Voucher["status"], { label: string; cls: string }> = {
   active: { label: "Đang chạy", cls: "bg-jade/10 text-jade" },
@@ -193,7 +194,7 @@ export function VouchersManagerClient() {
           onClick={() => { setEditing(null); setForm(emptyForm()); setFormOpen(true); }}
           className="inline-flex items-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-sm font-semibold text-white hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Plus className="h-4 w-4" />
           Tạo voucher
         </button>
       </div>
@@ -243,14 +244,14 @@ export function VouchersManagerClient() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_META[v.status].cls}`}>{STATUS_META[v.status].label}</span>
                 </td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
-                  <button type="button" onClick={() => quickToggle(v)} className="mr-2 text-stone-500 hover:text-lotus" title={v.isActive ? "Tạm tắt" : "Bật lại"}>
-                    <span className="material-symbols-outlined text-[20px]">{v.isActive ? "pause_circle" : "play_circle"}</span>
+                  <button type="button" onClick={() => quickToggle(v)} className="mr-2 text-stone-500 hover:text-lotus inline-flex items-center" title={v.isActive ? "Tạm tắt" : "Bật lại"}>
+                    {v.isActive ? <PauseCircle className="h-5 w-5" /> : <PlayCircle className="h-5 w-5" />}
                   </button>
-                  <button type="button" onClick={() => { setEditing(v); setForm(fromVoucher(v)); setFormOpen(true); }} className="mr-2 text-stone-500 hover:text-lotus" title="Sửa">
-                    <span className="material-symbols-outlined text-[20px]">edit</span>
+                  <button type="button" onClick={() => { setEditing(v); setForm(fromVoucher(v)); setFormOpen(true); }} className="mr-2 text-stone-500 hover:text-lotus inline-flex items-center" title="Sửa">
+                    <Pencil className="h-5 w-5" />
                   </button>
-                  <button type="button" onClick={() => setToDelete(v)} className="text-stone-500 hover:text-red-600" title="Xoá">
-                    <span className="material-symbols-outlined text-[20px]">delete</span>
+                  <button type="button" onClick={() => setToDelete(v)} className="text-stone-500 hover:text-red-600 inline-flex items-center" title="Xoá">
+                    <Trash2 className="h-5 w-5" />
                   </button>
                 </td>
               </tr>
@@ -357,8 +358,8 @@ export function VouchersManagerClient() {
       />
 
       {toast && (
-        <div className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold shadow-lg ${toast.kind === "success" ? "border-jade/30 bg-jade/5 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
-          <span className="material-symbols-outlined text-[20px]">{toast.kind === "success" ? "check_circle" : "error"}</span>
+        <div className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg ${toast.kind === "success" ? "border-jade/30 bg-jade/5 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
+          {toast.kind === "success" ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
           {toast.message}
         </div>
       )}

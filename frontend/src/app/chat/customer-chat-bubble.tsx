@@ -6,7 +6,7 @@ import { getBookingCardData, getProductCardData, uploadChatFile } from "@/lib/ch
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
 import { ProductCard } from "@/components/chat/product-card";
-import { Paperclip } from "lucide-react";
+import { Paperclip, X, RotateCcw, Minus, MessageCircle, Send, Bot, Loader2 } from "lucide-react";
 
 const CHAT_BUBBLE_OPEN_KEY = "co_phuc_chat_bubble_open";
 
@@ -130,20 +130,20 @@ export function CustomerChatBubble({
     <div className="fixed bottom-4 right-4 z-50 flex flex-col">
       {/* Chat Widget */}
       {isOpen && (
-        <div className="mb-3 w-80 flex flex-col h-[600px] rounded-lg border border-sand bg-white shadow-lg overflow-hidden">
+        <div className="mb-3 flex h-[600px] w-88 flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
           {/* Header */}
-          <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-oxblood to-red-800 px-4 py-4 shrink-0">
+          <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-r from-oxblood to-lotus px-4 py-3.5 text-white">
             <div className="flex-1">
-              <h3 className="text-sm font-semibold text-white">Hộp thư CSKH</h3>
-              <p className="text-xs text-red-100">Nhân viên hỗ trợ 24/7</p>
+              <h3 className="font-display text-base font-semibold tracking-wide text-white">Hộp thư CSKH</h3>
+              <p className="text-xs text-stone-200">Đội ngũ Cổ Phục hỗ trợ 24/7</p>
             </div>
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="inline-flex items-center justify-center rounded-full w-6 h-6 hover:bg-red-950 transition text-white"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
               aria-label="Đóng chat"
             >
-              ✕
+              <X className="h-4 w-4" />
             </button>
           </div>
 
@@ -166,7 +166,9 @@ export function CustomerChatBubble({
             ) : loadingMessages ? (
               <div className="text-xs text-stone-500">Đang tải tin nhắn...</div>
             ) : messages.length === 0 ? (
-              <div className="text-xs text-stone-500">Chào bạn! 👋 Đây là hộp chat với đội hỗ trợ của chúng tôi. Hãy bắt đầu cuộc trò chuyện.</div>
+              <div className="rounded-xl border border-sand/70 bg-white/80 p-3 text-xs leading-relaxed text-stone-600">
+                Kính chào quý khách! Đây là hộp thư hỗ trợ trực tuyến của Cổ Phục. Quý khách có thể để lại tin nhắn hoặc yêu cầu hỗ trợ đơn thuê.
+              </div>
             ) : (
               <>
                 {messages.map((message) => {
@@ -224,8 +226,10 @@ export function CustomerChatBubble({
                             );
                           })()
                           ) : message.sender_type === "ai" ? (
-                          <div className="rounded-lg border border-sand/70 bg-stone-50 px-3 py-2 text-xs shadow-sm max-w-[90%]">
-                            <p className="text-[10px] font-semibold text-stone-500 mb-1">🤖 Trợ lý AI</p>
+                          <div className="rounded-xl border border-sand/70 bg-stone-50 px-3 py-2 text-xs shadow-sm max-w-[90%]">
+                            <p className="flex items-center gap-1 text-[10px] font-semibold text-stone-500 mb-1">
+                              <Bot className="h-3 w-3 text-lotus" /> Trợ lý Cổ Phục AI
+                            </p>
                             <p className="leading-5 text-stone-800">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70 text-stone-500">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
@@ -235,7 +239,7 @@ export function CustomerChatBubble({
                           <div
                             className={`${
                               isMine ? "bg-lotus text-white" : "bg-white border border-sand/70 text-stone-900"
-                            } rounded-lg px-3 py-2 text-xs shadow-sm`}
+                            } rounded-xl px-3.5 py-2 text-xs shadow-xs`}
                           >
                             <p className="leading-5">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70">
@@ -244,15 +248,15 @@ export function CustomerChatBubble({
                           </div>
                         )}
                       </div>
-                      {/* Delete button - only show for own messages on hover, not for already-deleted */}
+                      {/* Delete button */}
                       {isMine && !message.deleted_at && hoveredMessageId === message.id && (
                         <button
                           type="button"
                           onClick={() => onDeleteMessage(message.id)}
-                          className="absolute -top-2 -right-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white text-[10px] shadow-sm hover:bg-red-600 transition"
+                          className="absolute -top-2 -right-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white shadow-sm hover:bg-red-700 transition"
                           title="Xoá tin nhắn"
                         >
-                          ✕
+                          <X className="h-3 w-3" />
                         </button>
                       )}
                       {/* Retry button for failed messages */}
@@ -260,10 +264,10 @@ export function CustomerChatBubble({
                         <button
                           type="button"
                           onClick={() => onRetryMessage?.(message.content)}
-                          className="absolute -bottom-2 -right-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] shadow-sm hover:bg-amber-600 transition"
+                          className="absolute -bottom-2 -right-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition"
                           title="Gửi lại"
                         >
-                          ↻
+                          <RotateCcw className="h-3 w-3" />
                         </button>
                       )}
                     </div>
@@ -275,33 +279,16 @@ export function CustomerChatBubble({
 
             {typingUsers["ai-assistant"] && (
               <div className="flex justify-start">
-                <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
-                  <span className="inline-block">🤖 AI đang chuẩn bị câu trả lời</span>
-                  <span className="ml-1 inline-block">
-                    <span className="animate-bounce">·</span>
-                    <span className="animate-bounce" style={{ animationDelay: "0.2s" }}>
-                      ·
-                    </span>
-                    <span className="animate-bounce" style={{ animationDelay: "0.4s" }}>
-                      ·
-                    </span>
-                  </span>
+                <div className="flex items-center gap-1.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-900 shadow-xs">
+                  <Bot className="h-3.5 w-3.5 text-amber-700" />
+                  <span>Trợ lý AI đang soạn câu trả lời...</span>
                 </div>
               </div>
             )}
             {typingEntries.some((id) => id !== "ai-assistant") && (
               <div className="flex justify-start">
-                <div className="bg-white border border-sand/70 rounded-lg px-3 py-2 text-xs text-stone-600">
-                  <span className="inline-block">Nhân viên đang nhập</span>
-                  <span className="ml-1 inline-block">
-                    <span className="animate-bounce">·</span>
-                    <span className="animate-bounce" style={{ animationDelay: "0.2s" }}>
-                      ·
-                    </span>
-                    <span className="animate-bounce" style={{ animationDelay: "0.4s" }}>
-                      ·
-                    </span>
-                  </span>
+                <div className="flex items-center gap-1.5 bg-white border border-sand/70 rounded-xl px-3 py-2 text-xs text-stone-600 shadow-xs">
+                  <span>Nhân viên đang soạn tin...</span>
                 </div>
               </div>
             )}
@@ -321,10 +308,10 @@ export function CustomerChatBubble({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading || !conversation}
-                className="inline-flex items-center justify-center rounded-full w-9 h-9 border border-sand bg-white text-stone-500 transition hover:bg-sand/50 hover:text-stone-700 disabled:opacity-50 shrink-0 relative"
+                className="inline-flex items-center justify-center rounded-xl w-9 h-9 border border-sand bg-mist text-stone-500 transition hover:bg-sand/40 hover:text-stone-700 disabled:opacity-50 shrink-0"
                 aria-label="Đính kèm file"
               >
-                {uploading ? <span className="text-xs">⏳</span> : <Paperclip className="w-4 h-4" />}
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin text-lotus" /> : <Paperclip className="w-4 h-4" />}
               </button>
               <textarea
                 rows={2}
@@ -332,7 +319,7 @@ export function CustomerChatBubble({
                 onChange={(event) => setMessageText(event.currentTarget.value)}
                 onFocus={() => onTyping(true)}
                 onBlur={() => onTyping(false)}
-                className="flex-1 rounded-lg border border-sand bg-white px-3 py-2 text-xs outline-none focus:border-lotus resize-none"
+                className="flex-1 rounded-xl border border-sand bg-mist px-3 py-2 text-xs outline-none focus:border-lotus focus:bg-white resize-none"
                 placeholder="Nhập tin nhắn..."
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -344,12 +331,10 @@ export function CustomerChatBubble({
               <button
                 type="button"
                 onClick={onSendMessage}
-                className="inline-flex items-center justify-center rounded-full w-9 h-9 bg-oxblood text-white transition hover:bg-red-950 shrink-0"
+                className="inline-flex items-center justify-center rounded-xl w-9 h-9 bg-lotus text-white transition hover:bg-oxblood shrink-0 shadow-sm"
                 aria-label="Gửi"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                  <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
-                </svg>
+                <Send className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -367,17 +352,17 @@ export function CustomerChatBubble({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`inline-flex items-center justify-center w-14 h-14 rounded-full shadow-lg font-semibold text-white transition ${
+        className={`inline-flex items-center justify-center w-14 h-14 rounded-full shadow-xl font-semibold text-white transition transform active:scale-95 ${
           isOpen
-            ? "bg-stone-400 hover:bg-stone-500"
-            : "bg-oxblood hover:bg-red-950"
+            ? "bg-stone-500 hover:bg-stone-600"
+            : "bg-oxblood hover:bg-lotus"
         }`}
         aria-label={isOpen ? "Đóng chat" : "Mở chat"}
       >
         {isOpen ? (
-          <span className="text-lg">−</span>
+          <Minus className="h-6 w-6" />
         ) : (
-          <span className="text-xl">💬</span>
+          <MessageCircle className="h-6 w-6" />
         )}
       </button>
     </div>

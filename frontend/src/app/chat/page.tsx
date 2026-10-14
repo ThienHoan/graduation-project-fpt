@@ -759,12 +759,13 @@ export default function ChatPage() {
 
 const chatContent = (
   <>
-    {/* HEADER STATUS (giữ lại nếu muốn) */}
+    {/* HEADER STATUS */}
     <div className="mb-4 flex justify-end">
-      <div className="rounded-lg bg-white px-5 py-2 text-sm text-stone-700 shadow-sm border border-sand">
-        Socket:{" "}
-        <span className="font-semibold">
-          {connected ? "Đã nối" : "Chưa nối"}
+      <div className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-3.5 py-1.5 text-xs text-stone-600 shadow-xs">
+        <span className={`h-2 w-2 rounded-full ${connected ? "bg-jade animate-pulse" : "bg-stone-300"}`} />
+        <span>Trạng thái kết nối:</span>
+        <span className={`font-medium ${connected ? "text-jade" : "text-stone-500"}`}>
+          {connected ? "Thời gian thực" : "Đang kết nối..."}
         </span>
       </div>
     </div>

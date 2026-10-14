@@ -4,6 +4,40 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uploadFile, deleteUploadedFile } from "@/lib/upload";
 import { useRouter } from "next/navigation";
 import { ManagerPortalShell, ConfirmModal } from "@/components/heritage/ui";
+import {
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  Sparkles,
+  Shirt,
+  Plus,
+  X,
+  Search,
+  Pencil,
+  Trash2,
+  Images,
+  TrendingUp,
+  TrendingDown,
+  ChevronRight,
+  ArrowRight,
+  Upload,
+  MessageSquare,
+  Ban,
+  ArrowLeftRight,
+  ClipboardCheck,
+  Waves,
+  Wrench,
+  Banknote,
+  Wallet,
+  RotateCcw,
+  Receipt,
+  Calendar,
+  PieChart,
+  Package,
+  BarChart3,
+  type LucideIcon,
+} from "lucide-react";
+
 import { useAuth } from "@/components/auth/auth-provider";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
@@ -1432,9 +1466,7 @@ export default function ManagerDashboardPage() {
                 : "border-red-200 bg-white text-red-700")
             }
           >
-            <span className="material-symbols-outlined text-xl">
-              {toast.type === "success" ? "check_circle" : "error"}
-            </span>
+            {toast.type === "success" ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
             <p className="flex-1 text-sm font-medium">{toast.message}</p>
             <button
               type="button"
@@ -1442,9 +1474,7 @@ export default function ManagerDashboardPage() {
               className="text-stone-400 transition hover:text-stone-600"
               aria-label="Đóng thông báo"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                close
-              </span>
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -1509,9 +1539,7 @@ function UnassignedAssetRow({
           className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
           onClick={onOpen}
         >
-          <span className="material-symbols-outlined mr-1 align-middle text-[16px]">
-            add
-          </span>
+          <Plus className="mr-1 inline h-4 w-4 align-middle" />
           Gán tài sản
         </button>
       ) : state.loading ? (
@@ -1571,7 +1599,7 @@ function UnassignedAssetRow({
       </div>
       {error && (
         <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-700">
-          <span className="material-symbols-outlined text-[15px]">error</span>
+          <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </p>
       )}
@@ -1624,9 +1652,7 @@ function AssetsAssignTab({
     <div className="space-y-6">
       {bookingsNeedingAssets.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined mb-4 block text-5xl text-stone-200">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Tất cả đơn đều đã được gán tài sản. Không có gì cần xử lý.
         </div>
       ) : (
@@ -1647,9 +1673,7 @@ function AssetsAssignTab({
             <div key={booking.id}>
               {successAssignId === booking.id && (
                 <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
-                  <span className="material-symbols-outlined text-[18px]">
-                    check_circle
-                  </span>
+                  <CheckCircle2 className="h-4 w-4 text-jade" />
                   <span>{successAssignMsg}</span>
                 </div>
               )}
@@ -1673,9 +1697,7 @@ function AssetsAssignTab({
                 </div>
                 <div className="space-y-3 px-6 py-4">
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                    <span className="material-symbols-outlined text-[16px]">
-                      warning
-                    </span>
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
                     {totalUnassigned} món chưa gán tài sản
                     {unassignedAccessories.length > 0 && (
                       <span className="normal-case tracking-normal">
@@ -1734,9 +1756,7 @@ function AssetsAssignTab({
                   {unassignedAccessories.length > 0 && (
                     <div className="pt-1">
                       <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                        <span className="material-symbols-outlined text-[16px]">
-                          diamond
-                        </span>
+                        <Sparkles className="h-4 w-4 text-antique" />
                         Phụ kiện chưa gán tài sản
                       </p>
                       <p className="mt-1 text-[11px] leading-5 text-stone-500">
@@ -1758,9 +1778,7 @@ function AssetsAssignTab({
                         key={itemKey}
                         title={
                           <>
-                            <span className="material-symbols-outlined mr-1 align-middle text-[16px] text-amber-600">
-                              diamond
-                            </span>
+                            <Sparkles className="mr-1 inline h-4 w-4 align-middle text-amber-600" />
                             {acc.accessoryName ?? "Phụ kiện"}
                             {acc.quantity > 1 && (
                               <span className="ml-1 text-stone-500">
@@ -1884,28 +1902,28 @@ function OverviewTab({
           label="Doanh thu (đang phát sinh)"
           value={formatVND(totalRentalRevenue)}
           hint="Từ đơn completed + đang thuê"
-          icon="payments"
+          icon={Banknote}
           tone="lotus"
         />
         <SnapshotCard
           label="Tiền cọc đang giữ"
           value={formatVND(totalDepositHeld)}
           hint={`${depositHoldingCount} đơn đang giữ cọc — trừ khi duyệt hoàn`}
-          icon="account_balance_wallet"
+          icon={Wallet}
           tone="antique"
         />
         <SnapshotCard
           label="Đơn đặt chỗ hiện tại"
           value={String(activeBookings.length)}
           hint="Đang trong luồng vận hành"
-          icon="calendar_month"
+          icon={Calendar}
           tone="jade"
         />
         <SnapshotCard
           label="Hiệu suất lấp đầy"
           value={garments.length === 0 ? "—" : `${utilizationPct}%`}
           hint={`${rentedItemCount} đang thuê / ${utilizationDenominator} khả dụng`}
-          icon="pie_chart"
+          icon={PieChart}
           tone="bronze"
           progress={garments.length === 0 ? null : utilizationPct}
         />
@@ -1924,34 +1942,32 @@ function OverviewTab({
                 Ưu tiên vận hành trong ngày
               </p>
             </div>
-            <span className="material-symbols-outlined text-lotus">
-              task_alt
-            </span>
+            <CheckCircle2 className="h-5 w-5 text-lotus" />
           </div>
           <div className="flex flex-1 flex-col justify-between gap-3">
             <QuickWorkItem
-              icon="cancel"
+              icon={Ban}
               label="Từ chối bàn giao"
               value={rejectedHandoversCount}
               tone="red"
               onClick={() => onGoToTab("rejected-handovers")}
             />
             <QuickWorkItem
-              icon="swap_horiz"
+              icon={ArrowLeftRight}
               label="Cần gán tài sản"
               value={bookingsNeedingAssets.length}
               tone="amber"
               onClick={() => onGoToTab("assets")}
             />
             <QuickWorkItem
-              icon="search_check"
+              icon={ClipboardCheck}
               label="Chờ kiểm tra"
               value={returnedWaiting}
               tone="orange"
               onClick={() => onGoToTab("inspection-log")}
             />
             <QuickWorkItem
-              icon="dry_cleaning"
+              icon={Waves}
               label="Đang giặt sấy"
               value={Math.max(
                 laundryTickets.length,
@@ -1961,7 +1977,7 @@ function OverviewTab({
               onClick={() => onGoToTab("laundry")}
             />
             <QuickWorkItem
-              icon="build"
+              icon={Wrench}
               label="Cần bảo trì"
               value={Math.max(
                 maintenanceJobs.filter(
@@ -2060,9 +2076,7 @@ function OverviewTab({
           </h2>
           <BookingPipelineChart countBy={countBy} />
           <div className="mt-5 flex items-start gap-4 rounded-r-lg border-l-4 border-lotus bg-parchment p-4">
-            <span className="material-symbols-outlined mt-0.5 text-lotus">
-              warning
-            </span>
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-lotus" />
             <div>
               <h3 className="text-sm font-semibold text-ink">
                 Cảnh Báo Vận Hành
@@ -2099,20 +2113,20 @@ function OverviewTab({
             </h2>
             <div className="flex flex-1 flex-col gap-3">
               <ShortcutButton
-                icon="inventory_2"
+                icon={Package}
                 label="Kho trang phục"
                 badge={bookingsNeedingAssets.length}
                 tone="bronze"
                 onClick={() => onGoToTab("assets")}
               />
               <ShortcutButton
-                icon="fact_check"
+                icon={ClipboardCheck}
                 label="Nhật ký kiểm tra"
                 tone="jade"
                 onClick={() => onGoToTab("inspection-log")}
               />
               <ShortcutButton
-                icon="bar_chart"
+                icon={BarChart3}
                 label="Báo cáo tài chính"
                 tone="antique"
                 onClick={() => onGoToTab("finance")}
@@ -2241,15 +2255,13 @@ function InventoryTab({
             onClick={onCreateGarment}
             className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[16px]">add</span>
+            <Plus className="h-4 w-4" />
             Thêm trang phục
           </button>
         </div>
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-              search
-            </span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
             <input
               value={garmentSearch}
               onChange={(e) => setGarmentSearch(e.target.value)}
@@ -2291,9 +2303,7 @@ function InventoryTab({
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                            <span className="material-symbols-outlined text-[48px] text-antique/30">
-                              checkroom
-                            </span>
+                            <Shirt className="h-12 w-12 text-antique/30" />
                           </div>
                         )}
                         <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
@@ -2324,9 +2334,7 @@ function InventoryTab({
                         className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
                         aria-label="Chỉnh sửa"
                       >
-                        <span className="material-symbols-outlined text-[16px]">
-                          edit
-                        </span>
+                        <Pencil className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
@@ -2334,9 +2342,7 @@ function InventoryTab({
                         className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
                         aria-label="Xoá"
                       >
-                        <span className="material-symbols-outlined text-[16px]">
-                          delete
-                        </span>
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -2362,7 +2368,7 @@ function InventoryTab({
               onClick={onCreateAsset}
               className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
             >
-              <span className="material-symbols-outlined text-[16px]">add</span>
+              <Plus className="h-4 w-4" />
               Thêm tài sản
             </button>
           )}
@@ -2370,9 +2376,7 @@ function InventoryTab({
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-                search
-              </span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
               <input
                 value={assetSearch}
                 onChange={(e) => setAssetSearch(e.target.value)}
@@ -2476,7 +2480,7 @@ function InventoryTab({
                     onClick={() => onSelectAsset(null)}
                     className="text-stone-500 hover:text-lotus"
                   >
-                    <span className="material-symbols-outlined">close</span>
+                    <X className="h-5 w-5" />
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
@@ -2493,9 +2497,7 @@ function InventoryTab({
                         />
                       ) : (
                         <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                          <span className="material-symbols-outlined text-[48px] text-antique/30">
-                            checkroom
-                          </span>
+                          <Shirt className="h-12 w-12 text-antique/30" />
                         </div>
                       )}
                     </div>
@@ -2967,7 +2969,7 @@ function GarmentFormModal({
             onClick={handleClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
 
@@ -2997,10 +2999,7 @@ function GarmentFormModal({
                   onClick={() => setAddingCategory(true)}
                   className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
                 >
-                  <span className="material-symbols-outlined text-[14px]">
-                    add
-                  </span>{" "}
-                  Thêm mới
+                  <Plus className="h-3.5 w-3.5" /> Thêm mới
                 </button>
               )}
             </div>
@@ -3076,10 +3075,7 @@ function GarmentFormModal({
                     onClick={() => setAddingSize(true)}
                     className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
                   >
-                    <span className="material-symbols-outlined text-[14px]">
-                      add
-                    </span>{" "}
-                    Thêm mới
+                    <Plus className="h-3.5 w-3.5" /> Thêm mới
                   </button>
                 )}
               </div>
@@ -3377,9 +3373,7 @@ function GarmentFormModal({
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh"
                     >
-                      <span className="material-symbols-outlined text-[14px]">
-                        close
-                      </span>
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -3410,9 +3404,7 @@ function GarmentFormModal({
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh mới"
                     >
-                      <span className="material-symbols-outlined text-[14px]">
-                        close
-                      </span>
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -3557,7 +3549,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
           }}
           className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[16px]">add</span>
+          <Plus className="h-4 w-4" />
           Gắn phụ kiện
         </button>
       </div>
@@ -3588,9 +3580,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   />
                 ) : (
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white">
-                    <span className="material-symbols-outlined text-lg text-stone-300">
-                      diamond
-                    </span>
+                    <Sparkles className="h-5 w-5 text-stone-300" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
@@ -3619,9 +3609,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-lotus"
                   aria-label="Sửa"
                 >
-                  <span className="material-symbols-outlined text-[16px]">
-                    edit
-                  </span>
+                  <Pencil className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
@@ -3629,9 +3617,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-red-500"
                   aria-label="Gỡ"
                 >
-                  <span className="material-symbols-outlined text-[16px]">
-                    delete
-                  </span>
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </li>
             ))}
@@ -3737,7 +3723,7 @@ function GarmentAccessoryLinkModal({
             onClick={onClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4">
@@ -3950,7 +3936,7 @@ function AssetFormModal({
             onClick={onClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <p className="mb-4 text-sm text-stone-500">
@@ -4141,8 +4127,8 @@ function InspectionLogTab({
           <div className="flex gap-2 rounded-xl border border-sand bg-white p-1.5 shadow-sm">
             {(
               [
-                { key: "garments", label: `Trang phục (${log.length})`, icon: "checkroom" },
-                { key: "accessories", label: `Phụ kiện (${accLog.length})`, icon: "diamond" },
+                { key: "garments", label: `Trang phục (${log.length})`, icon: Shirt },
+                { key: "accessories", label: `Phụ kiện (${accLog.length})`, icon: Sparkles },
               ] as const
             ).map((t) => (
               <button
@@ -4155,7 +4141,7 @@ function InspectionLogTab({
                     : "text-stone-500 hover:bg-mist"
                 }`}
               >
-                <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
+                {(() => { const TabIcon = t.icon; return <TabIcon className="h-4 w-4" />; })()}
                 {t.label}
               </button>
             ))}
@@ -4163,9 +4149,7 @@ function InspectionLogTab({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-64">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-                search
-              </span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -4348,7 +4332,7 @@ function InspectionLogTab({
                                 }
                                 className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-parchment"
                               >
-                                <span className="material-symbols-outlined text-[15px]">imagesmode</span>
+                                <Images className="h-4 w-4" />
                                 Xem ảnh ({(entry.imageUrls ?? []).length})
                               </button>
                             ) : (
@@ -4393,7 +4377,7 @@ function InspectionLogTab({
                 className="rounded-full p-1.5 text-stone-400 transition hover:bg-mist hover:text-ink"
                 aria-label="Đóng"
               >
-                <span className="material-symbols-outlined">close</span>
+                <X className="h-5 w-5" />
               </button>
             </div>
             <div className="grid max-h-[70vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
@@ -4496,7 +4480,7 @@ function LaundryTab({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="flex items-center gap-1.5 font-semibold text-ink">
-                    <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                    <Sparkles className="h-4 w-4 text-antique" />
                     {a.assetCode}
                   </p>
                   <p className="mt-0.5 text-sm text-stone-500">
@@ -4697,7 +4681,7 @@ function DamagedTab({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="flex items-center gap-1.5 font-semibold text-ink">
-                      <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                      <Sparkles className="h-4 w-4 text-antique" />
                       {a.assetCode}
                     </p>
                     <p className="mt-0.5 text-sm text-stone-500">
@@ -5002,39 +4986,39 @@ function FinanceTab({
             <KPICard
               label="Doanh thu cho thuê"
               value={formatVND(summary.rentalRevenue)}
-              icon="payments"
+              icon={Banknote}
               tone="jade"
               hint="Không bao gồm tiền cọc"
             />
             <KPICard
               label="Tiền cọc đang giữ"
               value={formatVND(summary.depositHeld)}
-              icon="account_balance_wallet"
+              icon={Wallet}
               tone="amber"
               hint={`${summary.depositHeldCount} đơn`}
             />
             <KPICard
               label="Đã hoàn cọc"
               value={formatVND(summary.refundedDeposit)}
-              icon="currency_exchange"
+              icon={RotateCcw}
               tone="blue"
             />
             <KPICard
               label="Khấu trừ hư hỏng"
               value={formatVND(summary.damageDeduction)}
-              icon="warning"
+              icon={AlertTriangle}
               tone="red"
             />
             <KPICard
               label="Cọc bị giữ"
               value={formatVND(summary.forfeitedDeposit)}
-              icon="block"
+              icon={Ban}
               tone="stone"
             />
             <KPICard
               label="Số giao dịch"
               value={String(summary.totalTransactions)}
-              icon="receipt_long"
+              icon={Receipt}
               tone="purple"
             />
           </div>
@@ -5398,13 +5382,13 @@ function FinanceTab({
 function KPICard({
   label,
   value,
-  icon,
+  icon: Icon,
   tone,
   hint,
 }: {
   label: string;
   value: string;
-  icon: string;
+  icon: LucideIcon;
   tone: string;
   hint?: string;
 }) {
@@ -5429,11 +5413,7 @@ function KPICard({
       className={`rounded-xl border p-4 shadow-sm ${toneMap[tone] ?? "border-sand bg-white"}`}
     >
       <div className="flex items-center gap-2 mb-2">
-        <span
-          className={`material-symbols-outlined text-[18px] ${textMap[tone] ?? "text-stone-500"}`}
-        >
-          {icon}
-        </span>
+        <Icon className={`h-4 w-4 ${textMap[tone] ?? "text-stone-500"}`} />
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500 leading-tight">
           {label}
         </p>
@@ -5547,17 +5527,13 @@ function MonthlyFinanceChart({
           <span
             className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${delta >= 0 ? "bg-jade/10 text-jade" : "bg-red-50 text-red-600"}`}
           >
-            <span className="material-symbols-outlined text-[16px]">
-              {delta >= 0 ? "trending_up" : "trending_down"}
-            </span>
+            {delta >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
             {delta >= 0 ? "+" : ""}
             {delta}% so với tháng trước
           </span>
         ) : current.revenue > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-3 py-1 text-xs font-semibold text-jade">
-            <span className="material-symbols-outlined text-[16px]">
-              trending_up
-            </span>
+            <TrendingUp className="h-4 w-4" />
             Tháng trước chưa có doanh thu
           </span>
         ) : null}
@@ -5788,13 +5764,13 @@ function AssetDonutChart({
 }
 
 function QuickWorkItem({
-  icon,
+  icon: Icon,
   label,
   value,
   tone,
   onClick,
 }: {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   value: number;
   tone: "amber" | "orange" | "laundry" | "red";
@@ -5815,7 +5791,7 @@ function QuickWorkItem({
       <span
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${chip}`}
       >
-        <span className="material-symbols-outlined text-[22px]">{icon}</span>
+        <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
@@ -5832,9 +5808,7 @@ function QuickWorkItem({
           Cần xử lý
         </span>
       )}
-      <span className="material-symbols-outlined text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus">
-        chevron_right
-      </span>
+      <ChevronRight className="h-4 w-4 text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus" />
     </button>
   );
 }
@@ -5843,14 +5817,14 @@ function SnapshotCard({
   label,
   value,
   hint,
-  icon,
+  icon: Icon,
   tone,
   progress,
 }: {
   label: string;
   value: string;
   hint: string;
-  icon: string;
+  icon: LucideIcon;
   tone: "lotus" | "antique" | "jade" | "bronze";
   progress?: number | null;
 }) {
@@ -5859,11 +5833,7 @@ function SnapshotCard({
     <div className="relative overflow-hidden rounded-xl border border-sand bg-white p-6 shadow-xs">
       <div className="mb-4 flex items-start justify-between">
         <span className="text-sm font-semibold text-stone-500">{label}</span>
-        <span
-          className={`material-symbols-outlined rounded-lg p-2 ${t.text} ${t.bg}`}
-        >
-          {icon}
-        </span>
+        <span className={`rounded-lg p-2 ${t.text} ${t.bg}`}><Icon className="h-5 w-5" /></span>
       </div>
       <div className="mb-2 font-display text-3xl text-ink">{value}</div>
       {typeof progress === "number" ? (
@@ -5929,13 +5899,13 @@ function StatusCell({
 }
 
 function ShortcutButton({
-  icon,
+  icon: Icon,
   label,
   badge,
   tone,
   onClick,
 }: {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   badge?: number;
   tone: "bronze" | "jade" | "antique";
@@ -5956,7 +5926,7 @@ function ShortcutButton({
         <div
           className={`rounded-md bg-bronze/10 p-2 ${TONE_CLASSES[tone].text} transition group-hover:bg-current`}
         >
-          <span className="material-symbols-outlined text-[20px]">{icon}</span>
+          <Icon className="h-5 w-5" />
         </div>
         <span className="text-sm font-semibold text-ink">{label}</span>
       </div>
@@ -5966,9 +5936,7 @@ function ShortcutButton({
             {badge}
           </span>
         )}
-        <span className="material-symbols-outlined text-stone-400 group-hover:text-current">
-          arrow_forward
-        </span>
+        <ArrowRight className="h-4 w-4 text-stone-400 group-hover:text-current" />
       </div>
     </button>
   );
@@ -6079,7 +6047,7 @@ function RefundCard({
                   />
                 ) : (
                   <div className="flex h-14 w-14 items-center justify-center rounded-md bg-stone-100 text-stone-400">
-                    <span className="material-symbols-outlined">checkroom</span>
+                    <Shirt className="h-6 w-6 text-stone-400" />
                   </div>
                 )}
                 <div>
@@ -6150,9 +6118,7 @@ function RefundCard({
               <label
                 className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof || !bankDetailsComplete ? "pointer-events-none opacity-50" : ""}`}
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  upload
-                </span>
+                <Upload className="h-4 w-4" />
                 {uploadingProof
                   ? "Đang tải ảnh..."
                   : proofImageUrl
@@ -6221,9 +6187,7 @@ function RefundCard({
               }
               className="inline-flex items-center gap-2 rounded-lg border border-sand px-5 py-3 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                chat
-              </span>
+              <MessageSquare className="h-4 w-4" />
               Nhắn khách xin thông tin chuyển khoản
             </a>
           )}
@@ -6315,9 +6279,7 @@ function RefundsTab({
       {!loadingRefunds && pendingRefunds.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[240px] max-w-md">
-            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-stone-400">
-              search
-            </span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-stone-400" />
             <input
               className="w-full rounded-lg border border-sand bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique"
               placeholder="Tìm theo mã đơn hoặc tên khách..."
@@ -6336,9 +6298,7 @@ function RefundsTab({
         </div>
       ) : pendingRefunds.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Không có yêu cầu hoàn cọc nào đang chờ duyệt.
         </div>
       ) : filteredRefunds.length === 0 ? (
@@ -6417,9 +6377,7 @@ function RejectedHandoversTab({
     <div className="space-y-6">
       {bookings.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Không có biên bản bàn giao nào bị từ chối.
         </div>
       ) : (
@@ -6480,7 +6438,7 @@ function RejectedHandoversTab({
                 onClick={() => setSelectedBooking(null)}
                 className="text-stone-400 hover:text-ink"
               >
-                <span className="material-symbols-outlined">close</span>
+                <X className="h-5 w-5" />
               </button>
             </div>
 
