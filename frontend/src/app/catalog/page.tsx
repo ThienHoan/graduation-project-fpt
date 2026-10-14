@@ -7,6 +7,7 @@ import { CustomerFooter } from "@/components/customer/footer";
 import {
   getGarmentCategories,
   getGarmentsGrouped,
+  trackGarmentView,
   type GarmentCategory,
   type GarmentGrouped,
 } from "@/lib/api";
@@ -27,6 +28,152 @@ import {
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+}
+
+function CatalogGarmentCard({
+  group,
+  selectedGarmentId,
+  selectedSize,
+  onSelectSize,
+  onAddToCart,
+}: {
+  group: GarmentGrouped;
+  selectedGarmentId: string;
+  selectedSize: any;
+  onSelectSize: (sizeId: string) => void;
+  onAddToCart: () => void;
+}) {
+  const cardRef = useRef<HTMLElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  // Lazy view tracking: chỉ đếm khi thẻ sản phẩm lọt vào tầm mắt ít nhất 1.2s
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !group.garmentId) return;
+
+    let timer: NodeJS.Timeout | null = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          timer = setTimeout(() => {
+            void trackGarmentView(group.garmentId);
+            observer.disconnect();
+          }, 1200);
+        } else if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      },
+      { threshold: 0.4 },
+    );
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [group.garmentId]);
+
+  return (
+    <article
+      ref={cardRef}
+      className="group flex flex-col overflow-hidden rounded-xl border border-sand bg-white shadow-xs transition-all duration-300 hover:border-lotus hover:shadow-lg"
+    >
+      {/* Ảnh cổ phục với Lazy Load & Smooth Fade-in */}
+      <Link
+        href={`/catalog/${selectedGarmentId}`}
+        className="relative aspect-[3/4] overflow-hidden bg-stone-100"
+      >
+        {group.imageUrl ? (
+          <img
+            src={group.imageUrl}
+            alt={group.name}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setImgLoaded(true)}
+            className={`h-full w-full object-cover transition-all duration-500 group-hover:scale-105 ${
+              imgLoaded ? "opacity-100" : "opacity-0"
+            }`}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
+            Cổ phục di sản
+          </div>
+        )}
+        <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+          {group.categoryName ?? "Triều Nguyễn"}
+        </span>
+      </Link>
+
+      {/* Thông tin card */}
+      <div className="flex flex-1 flex-col p-4">
+        <Link href={`/catalog/${selectedGarmentId}`} className="hover:underline">
+          <h3 className="font-display text-xl font-bold text-oxblood line-clamp-1">
+            {group.name}
+          </h3>
+        </Link>
+
+        {/* Size pills */}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {group.sizes.map((s) => {
+            const isSel = selectedGarmentId === s.garmentSizeId;
+            return (
+              <button
+                key={s.garmentSizeId}
+                type="button"
+                onClick={() => onSelectSize(s.garmentSizeId)}
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${
+                  isSel
+                    ? "bg-lotus text-white"
+                    : "bg-parchment text-stone-600 hover:bg-lotus/15"
+                }`}
+              >
+                {s.sizeLabel ?? "—"}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Giá thuê & Cọc */}
+        <div className="mt-auto border-t border-sand pt-3 space-y-1">
+          <div className="flex items-baseline justify-between text-xs">
+            <span className="text-stone-500 font-medium">Giá thuê</span>
+            <span className="text-sm font-bold text-lotus">
+              {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
+              <span className="text-xs font-normal text-stone-500">/ngày</span>
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-stone-500">Cọc</span>
+            <span className="font-semibold text-ink">
+              {selectedSize ? formatVND(selectedSize.depositAmount) : "—"}
+            </span>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Link
+            href={`/try-on?garmentSizeId=${selectedGarmentId}`}
+            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg border border-sand bg-mist px-2 text-[11px] font-bold text-ink transition hover:border-lotus hover:text-lotus"
+          >
+            <Camera className="h-3 w-3 text-lotus" />
+            <span>Ướm AI</span>
+          </Link>
+
+          <button
+            type="button"
+            onClick={onAddToCart}
+            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg bg-lotus px-2 text-[11px] font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
+          >
+            <ShoppingBag className="h-3 w-3" />
+            <span>Thuê</span>
+          </button>
+        </div>
+      </div>
+    </article>
+  );
 }
 
 export default function CatalogPage() {
@@ -398,6 +545,8 @@ export default function CatalogPage() {
                               <img
                                 src={p.imageUrl}
                                 alt={p.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="h-full w-full object-cover"
                               />
                             ) : (
@@ -480,6 +629,8 @@ export default function CatalogPage() {
                     <img
                       src={featured.imageUrl}
                       alt={featured.name}
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full object-cover"
                     />
                   ) : (
@@ -626,98 +777,14 @@ export default function CatalogPage() {
                     group.sizes[0];
 
                   return (
-                    <article
+                    <CatalogGarmentCard
                       key={group.slug}
-                      className="group flex flex-col overflow-hidden rounded-xl border border-sand bg-white shadow-xs transition-all duration-300 hover:border-lotus hover:shadow-lg"
-                    >
-                      {/* Ảnh cổ phục */}
-                      <Link
-                        href={`/catalog/${selectedGarmentId}`}
-                        className="relative aspect-[3/4] overflow-hidden bg-stone-100"
-                      >
-                        {group.imageUrl ? (
-                          <img
-                            src={group.imageUrl}
-                            alt={group.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
-                            Cổ phục di sản
-                          </div>
-                        )}
-                        <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
-                          {group.categoryName ?? "Triều Nguyễn"}
-                        </span>
-                      </Link>
-
-                      {/* Thông tin card */}
-                      <div className="flex flex-1 flex-col p-4">
-                        <Link href={`/catalog/${selectedGarmentId}`} className="hover:underline">
-                          <h3 className="font-display text-xl font-bold text-oxblood line-clamp-1">
-                            {group.name}
-                          </h3>
-                        </Link>
-
-                        {/* Size pills */}
-                        <div className="mt-2.5 flex flex-wrap gap-1.5">
-                          {group.sizes.map((s) => {
-                            const isSel = selectedGarmentId === s.garmentSizeId;
-                            return (
-                              <button
-                                key={s.garmentSizeId}
-                                type="button"
-                                onClick={() => handleSelectSize(group.slug, s.garmentSizeId)}
-                                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${
-                                  isSel
-                                    ? "bg-lotus text-white"
-                                    : "bg-parchment text-stone-600 hover:bg-lotus/15"
-                                }`}
-                              >
-                                {s.sizeLabel ?? "—"}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Giá thuê & Cọc */}
-                        <div className="mt-auto border-t border-sand pt-3 space-y-1">
-                          <div className="flex items-baseline justify-between text-xs">
-                            <span className="text-stone-500 font-medium">Giá thuê</span>
-                            <span className="text-sm font-bold text-lotus">
-                              {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
-                              <span className="text-xs font-normal text-stone-500">/ngày</span>
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-stone-500">Cọc</span>
-                            <span className="font-semibold text-ink">
-                              {selectedSize ? formatVND(selectedSize.depositAmount) : "—"}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="mt-4 grid grid-cols-2 gap-2">
-                          <Link
-                            href={`/try-on?garmentSizeId=${selectedGarmentId}`}
-                            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg border border-sand bg-mist px-2 text-[11px] font-bold text-ink transition hover:border-lotus hover:text-lotus"
-                          >
-                            <Camera className="h-3 w-3 text-lotus" />
-                            <span>Ướm AI</span>
-                          </Link>
-
-                          <button
-                            type="button"
-                            onClick={() => handleAddToCart(group)}
-                            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg bg-lotus px-2 text-[11px] font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
-                          >
-                            <ShoppingBag className="h-3 w-3" />
-                            <span>Thuê</span>
-                          </button>
-                        </div>
-                      </div>
-                    </article>
+                      group={group}
+                      selectedGarmentId={selectedGarmentId}
+                      selectedSize={selectedSize}
+                      onSelectSize={(sizeId) => handleSelectSize(group.slug, sizeId)}
+                      onAddToCart={() => handleAddToCart(group)}
+                    />
                   );
                 })}
             </div>

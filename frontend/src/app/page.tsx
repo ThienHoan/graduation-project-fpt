@@ -173,7 +173,7 @@ export default function HomePage() {
             </Link>
 
             <Link
-              href="/booking/review"
+              href="/booking/date-selection"
               className="relative flex h-10 w-10 items-center justify-center rounded-full border border-sand text-ink transition hover:border-lotus"
               aria-label="Giỏ thuê đồ"
             >
@@ -353,6 +353,8 @@ export default function HomePage() {
                 <img
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuAp8QntSX86-npLy6GZhzDW3S6hDsmK_e0194JUyIehNfQKRhE9vUF35IBAk74jbWLnJDbSY5CxzXa9AfzYnepenhDwTtGl9GlAtITr3j_tYnhzVdMESPHHVvCtJMLH95tqwn1olV8v5veytJaiVZetmkvmHe6wgjJyNSG4p-2C5RF61y_YXkDUSeNIp-XWXYoHT4HyAdzpSJ0i9sKrzvlJPzxMibEHs2G9xKp4cMvVMV81eICncFd31Vq-S_G8HK8GEIPiOZ6dxl2O"
                   alt="Áo Tấc Lam Thượng"
+                  loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
                 <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
@@ -380,6 +382,8 @@ export default function HomePage() {
                 <img
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuDS1o5lSmGpkTUXc5LH4apMFHlcKEbyL3m8Z8RgdQROFBvi-EDOwrPRIdNCQ9PXjHlWVZcnVBJitf0PhQPkfPCnb91euyVXyXmEjGH22LyYBCWx9tIZUtohpM8mddPADbGjhomL0P10yhDjoWJvUVy3zdHCEPBS6Jxc2dQXB9H04gP_Pc-tbIec8mGliSs3Ny9q-elFSPeu7fojwL3nKXsVaM970qq_IoiXasEdVlGaBNW-BdsVVcsi52wgkajLfqkJMTYSAX-fJaR9"
                   alt="Áo Dài Phụng Vũ"
+                  loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
                 <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
@@ -408,6 +412,8 @@ export default function HomePage() {
                 <img
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpdew3ggLs6xlVpmJgHap9WUw51NiN8-SxZWc86HUd9JvUYXaAk5-M3DypF1FMxsO3kNu01OGy-kQjU1PAp0AXHNP7Jf7L9-ulP3kBMVjnSPdqbrW4WB_Klqenl5xpyMrEanc_WAZ9CVkvIEIlBxsT5uOv76VGhgt_WPLW3zGg_0HBn3ppgZUi3J1zHml8--uq-_9PpHGmkfACxuONpGtfDGiC9h0jrET4HMI_c6BDLqq37iaAcUrMvRKL2JuFJkLPnlJaEKugt7ic"
                   alt="Ngũ Thân Cát Tường"
+                  loading="lazy"
+                  decoding="async"
                   className="h-full w-full object-cover"
                 />
                 <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800">
@@ -573,6 +579,8 @@ export default function HomePage() {
                     <img
                       src={originalPortrait}
                       alt="Chân dung gốc"
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full rounded object-cover opacity-80"
                     />
                     <span className="shadow-xs absolute bottom-2 left-2 right-2 rounded bg-white/95 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
@@ -585,6 +593,8 @@ export default function HomePage() {
                     <img
                       src={isOriginalView ? originalPortrait : currentPresetData.img}
                       alt="AI Tryon Result"
+                      loading="lazy"
+                      decoding="async"
                       className="h-full w-full rounded object-cover transition-opacity duration-300"
                     />
                     {!isOriginalView && isScanning && <div className="animate-ai-scan" />}

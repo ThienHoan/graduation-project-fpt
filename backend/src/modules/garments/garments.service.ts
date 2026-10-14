@@ -15,6 +15,7 @@ import type { AddGarmentImageDto } from "./dto/add-image.dto";
 import type { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.dto";
 import type { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { normalizeStringArray, type GarmentMeasurementsDto } from "./dto/garment-details.dto";
+import { RedisService } from "../redis/redis.service";
 
 type GarmentWithCategory = {
   id: string;
@@ -36,7 +37,10 @@ type GarmentWithImages = GarmentWithCategory & {
 
 @Injectable()
 export class GarmentsService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redisService?: RedisService,
+  ) { }
 
   async findAll() {
     const garments = await this.prisma.garment.findMany({
@@ -115,6 +119,7 @@ export class GarmentsService {
       },
     });
 
+    await this.redisService?.delPattern("garments:*");
     return ok(this.serialize(garment));
   }
 
@@ -164,6 +169,7 @@ export class GarmentsService {
       },
     });
 
+    await this.redisService?.delPattern("garments:*");
     return ok(this.serialize(updated));
   }
 
@@ -304,6 +310,12 @@ export class GarmentsService {
   }
 
   async findAllGrouped(search?: string, category?: string) {
+    const cacheKey = `garments:grouped:${search?.trim().toLowerCase() || "all"}:${category || "all"}`;
+    const cached = await this.redisService?.get(cacheKey);
+    if (cached) {
+      return cached as any;
+    }
+
     // occasion là TEXT[] → Prisma không hỗ trợ ILIKE trên phần tử mảng,
     // nên lấy id khớp dịp bằng raw query rồi đưa vào OR cùng name/description/color.
     const keyword = search?.trim();
@@ -497,7 +509,7 @@ export class GarmentsService {
       }
     }
 
-    return ok(
+    const result = ok(
       Array.from(grouped.values()).map((group, idx) => ({
         name: group.name,
         slug: `group-${idx}-${group.name.toLowerCase().replace(/\s+/g, "-")}`,
@@ -515,6 +527,8 @@ export class GarmentsService {
         accessories: Array.from(group.accessoryMap.values()).sort((a, b) => a.name.localeCompare(b.name, "vi")),
       })),
     );
+    await this.redisService?.set(cacheKey, result, 300); // 5 phút TTL
+    return result;
   }
 
   // ── Garment accessories (phụ kiện đi kèm) ─────────────────────────────────
@@ -704,11 +718,15 @@ export class GarmentsService {
   }
 
   async findAllCategories() {
+    const cacheKey = "garments:categories";
+    const cached = await this.redisService?.get(cacheKey);
+    if (cached) return cached as any;
+
     const categories = await this.prisma.garmentCategory.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
     });
-    return ok(
+    const result = ok(
       categories.map((c) => ({
         id: c.id,
         name: c.name,
@@ -716,6 +734,8 @@ export class GarmentsService {
         isActive: c.isActive,
       })),
     );
+    await this.redisService?.set(cacheKey, result, 600); // 10 phút TTL
+    return result;
   }
 
   async createCategory(name: string, description?: string) {

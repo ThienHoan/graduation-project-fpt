@@ -13,33 +13,55 @@ import {
 const VIEW_DEDUPE_MS = 30 * 60 * 1000;
 const NON_RENTABLE_ASSET_STATUSES = ["retired", "lost"] as const;
 
+import { RedisService } from "../redis/redis.service";
+
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redisService?: RedisService,
+  ) {}
 
-  /** Ghi nhận 1 lượt xem; cùng visitor + sản phẩm trong 30 phút chỉ tính 1 lần. */
+  /** Ghi nhận 1 lượt xem; dùng Redis Atomic Deduplication (TTL 30 phút) để tối ưu tải */
   async trackView(dto: TrackViewDto, viewerId?: string | null) {
     const visitorKey = dto.visitorKey.trim().slice(0, 64);
     if (!visitorKey) throw new BadRequestException("visitorKey không hợp lệ.");
+
+    if (this.redisService) {
+      // Chống đếm trùng 30 phút bằng Redis SET NX
+      const dedupeKey = `view:dedupe:${dto.garmentId}:${visitorKey}`;
+      const isNew = await this.redisService.setNx(dedupeKey, "1", 1800);
+      if (!isNew) {
+        return ok({ counted: false, cached: true });
+      }
+    } else {
+      const recent = await this.prisma.garment_views.findFirst({
+        where: {
+          garment_id: dto.garmentId,
+          visitor_key: visitorKey,
+          created_at: { gte: new Date(Date.now() - VIEW_DEDUPE_MS) },
+        },
+        select: { id: true },
+      });
+      if (recent) return ok({ counted: false });
+    }
+
     const garment = await this.prisma.garment.findFirst({
       where: { id: dto.garmentId, deletedAt: null },
       select: { id: true },
     });
     if (!garment) return ok({ counted: false });
 
-    const recent = await this.prisma.garment_views.findFirst({
-      where: {
-        garment_id: dto.garmentId,
-        visitor_key: visitorKey,
-        created_at: { gte: new Date(Date.now() - VIEW_DEDUPE_MS) },
-      },
-      select: { id: true },
-    });
-    if (recent) return ok({ counted: false });
+    // Tăng atomic counter trên RAM nếu có redis
+    if (this.redisService) {
+      void this.redisService.incr(`garment:views:${dto.garmentId}`);
+      void this.redisService.incr(`site:views:total`);
+    }
 
     await this.prisma.garment_views.create({
       data: { garment_id: dto.garmentId, visitor_key: visitorKey, viewer_id: viewerId ?? null },
     });
+
     return ok({ counted: true });
   }
 

@@ -74,12 +74,11 @@ export function BookingFlowShell({
 
               return (
                 <div key={step.key} className="relative z-10">
-                  <Link
-                    href={step.href}
-                    className={`flex items-center gap-4 rounded-lg px-2 py-2 transition-all ${
+                  <div
+                    className={`flex items-center gap-4 rounded-lg px-2 py-2 select-none ${
                       isActive
                         ? "bg-white shadow-sm ring-1 ring-lotus/20"
-                        : "hover:bg-white/50"
+                        : ""
                     }`}
                   >
                     {/* Step indicator circle */}
@@ -112,7 +111,7 @@ export function BookingFlowShell({
                         Bước {index + 1}
                       </span>
                     </div>
-                  </Link>
+                  </div>
                 </div>
               );
             })}

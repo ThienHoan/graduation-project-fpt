@@ -23,11 +23,13 @@ import { RealtimeModule } from "./modules/realtime/realtime.module";
 import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { RedisModule } from "./modules/redis/redis.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    RedisModule,
     PrismaModule,
     AdminModule,
     AssetsModule,
