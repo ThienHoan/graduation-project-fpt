@@ -37,10 +37,12 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
     if (!isCustomer) return false;
 
     return (
+      pathname === "/" ||
       pathname.startsWith("/catalog") ||
       pathname.startsWith("/garment") ||
       pathname.startsWith("/booking") ||
-      pathname.startsWith("/dashboard/customer")
+      pathname.startsWith("/dashboard/customer") ||
+      pathname.startsWith("/try-on")
     );
   }, [pathname, isCustomer]);
 
@@ -204,6 +206,22 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
     if (!session || !isCustomer || !enabled) return;
     void loadConversation();
   }, [session, isCustomer, enabled]);
+
+  // Lắng nghe sự kiện mở chat từ các màn hình (vd: Tư vấn size, gửi khiếu nại)
+  // để nạp lại tin nhắn mới nhất ngay lập tức
+  useEffect(() => {
+    if (!enabled) return;
+    const handleChatOpen = () => {
+      const convId = selectedConversationRef.current?.id;
+      if (convId) {
+        void loadMessages(convId);
+      } else {
+        void loadConversation();
+      }
+    };
+    window.addEventListener("chat:open", handleChatOpen);
+    return () => window.removeEventListener("chat:open", handleChatOpen);
+  }, [enabled]);
 
   async function loadConversation() {
     const result = await getMyChatConversation();

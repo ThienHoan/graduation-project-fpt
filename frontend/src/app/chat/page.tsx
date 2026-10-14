@@ -422,29 +422,17 @@ export default function ChatPage() {
   }, [session, sidebarTab]);
 
   useEffect(() => {
-    if (isHydrated && status !== "loading" && session && !isStaff) {
-      router.replace("/"); // hoặc "/dashboard/customer"
+    if (!isHydrated || status === "loading") return;
+
+    if (status === "unauthenticated") {
+      router.replace("/login");
+      return;
     }
-  }, [isHydrated, status, session, isStaff]);
 
-    useEffect(() => {
-    if (isHydrated && status === "unauthenticated") {
-      router.replace("/");
+    if (session && !isStaff) {
+      router.replace("/dashboard/customer?chat=open");
     }
-  }, [isHydrated, status]);
-
-  useEffect(() => {
-  if (!isHydrated || status === "loading") return;
-
-  if (status === "unauthenticated") {
-    router.replace("/");
-    return;
-  }
-
-  if (session && !isStaff) {
-    router.replace("/");
-  }
-}, [isHydrated, status, session, isStaff]);
+  }, [isHydrated, status, session, isStaff, router]);
 
   useEffect(() => {
     if (!socket || !selectedConversation) return;

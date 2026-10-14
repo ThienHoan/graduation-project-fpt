@@ -122,6 +122,18 @@ export default function CustomerDashboardPage() {
     const interval = setInterval(fetchTracking, 10000);
     return () => clearInterval(interval);
   }, [bookings]);
+
+  // Tự động mở khung chat nếu được điều hướng tới có query ?chat=open
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("chat") === "open") {
+      const timer = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("chat:open"));
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, []);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [sendingBookingId, setSendingBookingId] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);

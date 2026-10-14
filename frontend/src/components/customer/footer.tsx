@@ -48,9 +48,15 @@ export function CustomerFooter() {
                 </Link>
               </li>
               <li>
-                <Link href="/chat" className="text-sm text-white/70 transition hover:text-white">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("chat:open"));
+                  }}
+                  className="text-left text-sm text-white/70 transition hover:text-white"
+                >
                   Chăm sóc khách hàng
-                </Link>
+                </button>
               </li>
               <li>
                 <a href="#" className="text-sm text-white/70 transition hover:text-white">

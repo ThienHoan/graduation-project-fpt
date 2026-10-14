@@ -383,12 +383,14 @@ function extractKeyword(text: string): string | undefined {
 }
 
 export function extractFilters(message: string): ProductFilters {
-  const category = extractCategory(message);
-  const color = extractColor(message);
-  const size = extractSize(message);
-  const budget = extractBudget(message);
-  const occasion = extractOccasion(message);
-  const keyword = extractKeyword(message);
+  // Loại bỏ các tiền tố hệ thống dạng [Đã gửi sản phẩm], [đã gửi...] để không làm sai lệch từ khoá
+  const cleanMessage = message.replace(/\[.*?\]/g, " ").replace(/\s+/g, " ").trim();
+  const category = extractCategory(cleanMessage);
+  const color = extractColor(cleanMessage);
+  const size = extractSize(cleanMessage);
+  const budget = extractBudget(cleanMessage);
+  const occasion = extractOccasion(cleanMessage);
+  const keyword = extractKeyword(cleanMessage);
 
   return {
     ...(category ? { category } : {}),

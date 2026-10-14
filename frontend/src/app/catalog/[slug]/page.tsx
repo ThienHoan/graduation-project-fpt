@@ -33,6 +33,7 @@ import {
   Check,
   Plus,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
 
 function formatVND(amount: number) {
@@ -60,6 +61,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [consultMsg, setConsultMsg] = useState<string | null>(null);
+  const [isConsulting, setIsConsulting] = useState(false);
   const [reviewsData, setReviewsData] = useState<{
     reviews: ReviewResponse[];
     averageRating: number;
@@ -161,18 +163,33 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     group?.sizes.find((s) => s.garmentSizeId === selectedGarmentId) ?? group?.sizes[0];
 
   async function handleConsult() {
-    if (!group || !selectedSize) return;
-    const convRes = await getMyChatConversation();
-    if (!convRes.success || !convRes.data) {
-      setConsultMsg("Chưa thể kết nối tư vấn. Vui lòng đăng nhập.");
-      setTimeout(() => setConsultMsg(null), 3000);
-      return;
+    if (!group || !selectedSize || isConsulting) return;
+    setIsConsulting(true);
+    try {
+      const convRes = await getMyChatConversation();
+      if (!convRes.success || !convRes.data) {
+        setConsultMsg("Vui lòng đăng nhập tài khoản khách hàng để kết nối tư vấn trực tuyến.");
+        setTimeout(() => setConsultMsg(null), 3500);
+        return;
+      }
+      const sendRes = await sendProductCardMessage({
+        conversationId: convRes.data.id,
+        productId: group.garmentId,
+      });
+      if (sendRes.success) {
+        setConsultMsg("Đã gửi thông tin trang phục vào khung chat tư vấn!");
+        // Mở khung chat nổi của khách hàng ngay trên trang chi tiết sản phẩm
+        window.dispatchEvent(new CustomEvent("chat:open"));
+      } else {
+        setConsultMsg(sendRes.message ?? "Không thể gửi tin nhắn tư vấn. Vui lòng thử lại.");
+      }
+      setTimeout(() => setConsultMsg(null), 3500);
+    } catch {
+      setConsultMsg("Lỗi khi kết nối tới hệ thống tư vấn.");
+      setTimeout(() => setConsultMsg(null), 3500);
+    } finally {
+      setIsConsulting(false);
     }
-    await sendProductCardMessage({
-      conversationId: convRes.data.id,
-      productId: group.garmentId,
-    });
-    router.push("/chat");
   }
 
   function handleAddToCart() {
@@ -633,10 +650,15 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                   <button
                     type="button"
                     onClick={handleConsult}
-                    className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-sand bg-mist px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-stone-700 transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
+                    disabled={isConsulting}
+                    className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-sand bg-mist px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-stone-700 transition hover:border-lotus hover:text-lotus disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98]"
                   >
-                    <Headphones className="h-4 w-4 text-lotus" />
-                    <span>Tư Vấn Size</span>
+                    {isConsulting ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-lotus" />
+                    ) : (
+                      <Headphones className="h-4 w-4 text-lotus" />
+                    )}
+                    <span>{isConsulting ? "Đang gửi..." : "Tư Vấn Size"}</span>
                   </button>
                 </div>
 
