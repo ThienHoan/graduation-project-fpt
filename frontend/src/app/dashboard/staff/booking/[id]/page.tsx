@@ -38,7 +38,8 @@ function formatDateTime(iso: string) {
 }
 
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+  const rounded = Math.round(Number(amount) || 0);
+  return `${new Intl.NumberFormat("vi-VN").format(rounded)} ₫`;
 }
 
 const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; style: string }[]>> = {

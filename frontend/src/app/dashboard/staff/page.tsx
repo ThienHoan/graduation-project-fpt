@@ -41,6 +41,8 @@ import {
   Eye,
   X,
   AlertCircle,
+  LayoutDashboard,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
 
@@ -49,8 +51,49 @@ function formatDate(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+function formatDateTime(iso: string | undefined) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${hours}:${minutes} · ${day}/${month}/${year}`;
+  } catch {
+    return iso;
+  }
+}
+
+function getOrderRecency(iso: string | undefined) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const time = d.getTime();
+  if (isNaN(time)) return null;
+  const now = Date.now();
+  const diffMs = now - time;
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Đơn mới nếu tạo trong vòng 24 giờ
+  const isNew = diffHours >= 0 && diffHours < 24;
+
+  let label = "";
+  if (diffMinutes < 1) label = "Vừa xong";
+  else if (diffMinutes < 60) label = `${diffMinutes} phút trước`;
+  else if (diffHours < 24) label = `${Math.floor(diffHours)} giờ trước`;
+  else {
+    const days = Math.floor(diffHours / 24);
+    label = `${days} ngày trước`;
+  }
+  return { isNew, label, diffHours, diffMinutes };
+}
+
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+  const rounded = Math.round(Number(amount) || 0);
+  return `${new Intl.NumberFormat("vi-VN").format(rounded)} ₫`;
 }
 
 const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; style: string }[]>> = {
@@ -172,6 +215,18 @@ export default function StaffDashboardPage() {
   const [refundBankName, setRefundBankName] = useState("");
   const [refundBankAccount, setRefundBankAccount] = useState("");
   const [refundBankHolder, setRefundBankHolder] = useState("");
+
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash.replace("#", "") as Tab;
+      if (hash === "pending" || hash === "all" || hash === "refunds" || hash === "map") {
+        setTab(hash);
+      }
+    };
+    handleHash();
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -433,72 +488,91 @@ export default function StaffDashboardPage() {
 
   return (
     <StaffPortalShell
-      active="overview"
+      active={tab === "pending" ? "pending" : tab === "refunds" ? "refunds" : tab === "map" ? "map" : "overview"}
       title="Quản lý đơn thuê"
       subtitle="Xác nhận, theo dõi và điều phối vòng đời đơn thuê trang phục."
+      onTabChange={(key) => {
+        if (key === "pending" || key === "all" || key === "refunds" || key === "map") {
+          setTab(key as Tab);
+          setPage(1);
+        } else if (key === "overview") {
+          setTab("all");
+          setPage(1);
+        }
+      }}
     >
       {/* Tab bar */}
-      <div className="mb-6 flex items-center gap-2 border-b border-sand">
-        <button
-          type="button"
-          onClick={() => setTab("pending")}
-          className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition border-b-2 -mb-px ${
-            tab === "pending"
-              ? "border-lotus text-lotus"
-              : "border-transparent text-stone-500 hover:text-lotus"
-          }`}
-        >
-          Chờ xác nhận
-          {pendingRefundCount > 0 && tab !== "pending" && (
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lotus text-xs text-white">
-              {pendingRefundCount}
-            </span>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("all")}
-          className={`px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition border-b-2 -mb-px ${
-            tab === "all"
-              ? "border-lotus text-lotus"
-              : "border-transparent text-stone-500 hover:text-lotus"
-          }`}
-        >
-          Tất cả đơn
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("refunds")}
-          className={`px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition border-b-2 -mb-px ${
-            tab === "refunds"
-              ? "border-lotus text-lotus"
-              : "border-transparent text-stone-500 hover:text-lotus"
-          }`}
-        >
-          Yêu cầu hoàn cọc
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("map")}
-          className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition border-b-2 -mb-px ${
-            tab === "map"
-              ? "border-lotus text-lotus"
-              : "border-transparent text-stone-500 hover:text-lotus"
-          }`}
-        >
-          <Map className="h-4 w-4" />
-          Bản đồ giao hàng
-        </button>
-        <div className="relative ml-auto mb-2 hidden md:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
-          <input
-            className="w-72 rounded-lg border border-sand bg-white py-2 pl-10 pr-4 text-sm text-ink outline-none transition focus:border-lotus"
-            placeholder="Tìm mã đơn, khách hàng..."
-            type="text"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          />
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setTab("pending"); setPage(1); }}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              tab === "pending"
+                ? "bg-lotus text-white shadow-xs"
+                : "border border-sand bg-white text-stone-600 hover:border-antique hover:text-lotus"
+            }`}
+          >
+            <Clock className="h-4 w-4" />
+            Chờ xác nhận
+            {pendingRefundCount > 0 && (
+              <span className={`rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
+                tab === "pending" ? "bg-white/20 text-white" : "bg-lotus/10 text-lotus"
+              }`}>
+                {pendingRefundCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("all"); setPage(1); }}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              tab === "all"
+                ? "bg-lotus text-white shadow-xs"
+                : "border border-sand bg-white text-stone-600 hover:border-antique hover:text-lotus"
+            }`}
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            Tất cả đơn
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("refunds"); setPage(1); }}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              tab === "refunds"
+                ? "bg-lotus text-white shadow-xs"
+                : "border border-sand bg-white text-stone-600 hover:border-antique hover:text-lotus"
+            }`}
+          >
+            <RotateCcw className="h-4 w-4" />
+            Yêu cầu hoàn cọc
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTab("map"); setPage(1); }}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              tab === "map"
+                ? "bg-lotus text-white shadow-xs"
+                : "border border-sand bg-white text-stone-600 hover:border-antique hover:text-lotus"
+            }`}
+          >
+            <Map className="h-4 w-4" />
+            Bản đồ giao hàng
+          </button>
         </div>
+
+        {tab !== "map" && (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
+            <input
+              className="w-72 rounded-xl border border-sand bg-white py-2 pl-9 pr-4 text-sm text-ink outline-none transition focus:border-antique focus:ring-1 focus:ring-antique"
+              placeholder="Tìm mã đơn, khách hàng..."
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+          </div>
+        )}
       </div>
 
       {errorMsg && (
@@ -534,6 +608,8 @@ export default function StaffDashboardPage() {
               : null;
             const expectedRefundMethod = refundMethodForBooking(booking);
             const needsBankDetails = isPendingRefund && refund?.refundMethod === "bank_transfer" && !refund.bankDetailsComplete;
+            const recency = getOrderRecency(booking.createdAt);
+            const isNew = recency?.isNew;
 
             return (
               <div key={booking.id}>
@@ -543,10 +619,30 @@ export default function StaffDashboardPage() {
                     <span>{successMsg}</span>
                   </div>
                 )}
-                <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-parchment px-6 py-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-ink">#{booking.id.slice(0, 8).toUpperCase()}</span>
+                <div className={`overflow-hidden rounded-xl border bg-white shadow-xs transition ${
+                  isNew
+                    ? "border-l-4 border-l-emerald-500 border-emerald-300 ring-1 ring-emerald-200/50"
+                    : "border-sand shadow-sm"
+                }`}>
+                <div className={`flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 ${
+                  isNew ? "border-emerald-200/70 bg-emerald-50/40" : "border-sand bg-parchment"
+                }`}>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="font-sans font-bold tracking-tight text-ink">#{booking.id.slice(0, 8).toUpperCase()}</span>
+                    {isNew ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-2.5 py-0.5 text-xs font-bold text-emerald-800 shadow-2xs">
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                        </span>
+                        ĐƠN MỚI · {recency.label}
+                      </span>
+                    ) : recency ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-sand bg-white/80 px-2.5 py-0.5 text-[11px] font-medium text-stone-600">
+                        <Clock className="h-3 w-3 text-stone-400" />
+                        {recency.label}
+                      </span>
+                    ) : null}
                     <span className={statusBadgeClass(s.color)}>
                       {s.label}
                     </span>
@@ -561,8 +657,8 @@ export default function StaffDashboardPage() {
                       </span>
                     )}
                   </div>
-                  <span className="text-xs text-stone-400">
-                    Tạo lúc {new Date(booking.createdAt).toLocaleString("vi-VN")}
+                  <span className="text-xs text-stone-400" title={booking.createdAt}>
+                    Đặt lúc {formatDateTime(booking.createdAt)}
                   </span>
                 </div>
 

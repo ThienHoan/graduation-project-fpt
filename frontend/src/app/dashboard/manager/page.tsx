@@ -18,7 +18,9 @@ import {
   Images,
   TrendingUp,
   TrendingDown,
+  ChevronLeft,
   ChevronRight,
+  Clock,
   ArrowRight,
   Upload,
   MessageSquare,
@@ -120,19 +122,59 @@ function formatDate(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+function formatDateTime(iso: string | undefined) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${hours}:${minutes} · ${day}/${month}/${year}`;
+  } catch {
+    return iso;
+  }
+}
+
+function getOrderRecency(iso: string | undefined) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const time = d.getTime();
+  if (isNaN(time)) return null;
+  const now = Date.now();
+  const diffMs = now - time;
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Đơn mới nếu tạo trong vòng 24 giờ
+  const isNew = diffHours >= 0 && diffHours < 24;
+
+  let label = "";
+  if (diffMinutes < 1) label = "Vừa xong";
+  else if (diffMinutes < 60) label = `${diffMinutes} phút trước`;
+  else if (diffHours < 24) label = `${Math.floor(diffHours)} giờ trước`;
+  else {
+    const days = Math.floor(diffHours / 24);
+    label = `${days} ngày trước`;
+  }
+  return { isNew, label, diffHours, diffMinutes };
+}
+
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", {
-    style: "currency",
-    currency: "VND",
-  }).format(amount);
+  const rounded = Math.round(Number(amount) || 0);
+  return `${new Intl.NumberFormat("vi-VN").format(rounded)} ₫`;
 }
 
 function formatCompactVND(amount: number) {
-  if (amount >= 1_000_000) {
-    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(amount / 1_000_000)}tr`;
+  const val = Number(amount) || 0;
+  if (val >= 1_000_000) {
+    const formatted = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(val / 1_000_000);
+    return `${formatted} tr`;
   }
-  if (amount >= 1_000) return `${Math.round(amount / 1_000)}k`;
-  return String(amount);
+  if (val >= 1_000) return `${Math.round(val / 1_000)} k`;
+  return String(val);
 }
 
 const ASSET_STATUS_META: Record<string, { label: string; color: string }> = {
@@ -266,8 +308,8 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
     subtitle: "Quản lý hàng chờ giặt sấy và điều phối.",
   },
   damaged: {
-    title: "Hư Hỏng & Mất",
-    subtitle: "Báo cáo tài sản hư hỏng, mất và bảo trì.",
+    title: "Hư Hỏng & Bảo Trì",
+    subtitle: "Báo cáo tài sản hư hỏng, mất và điều phối sửa chữa.",
   },
   "rejected-handovers": {
     title: "Từ Chối Bàn Giao",
@@ -1648,6 +1690,51 @@ function AssetsAssignTab({
     itemKey: string,
   ) => void;
 }) {
+  // Sắp xếp đơn mới nhất lên đầu tiên theo createdAt
+  const sortedBookings = useMemo(() => {
+    return [...bookingsNeedingAssets].sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [bookingsNeedingAssets]);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [onlyNewFilter, setOnlyNewFilter] = useState(false);
+
+  const newOrdersCount = useMemo(() => {
+    return sortedBookings.filter((b) => getOrderRecency(b.createdAt)?.isNew).length;
+  }, [sortedBookings]);
+
+  const filteredBookings = useMemo(() => {
+    return sortedBookings.filter((b) => {
+      if (onlyNewFilter) {
+        const rec = getOrderRecency(b.createdAt);
+        if (!rec?.isNew) return false;
+      }
+      if (!searchTerm.trim()) return true;
+      const q = searchTerm.trim().toLowerCase();
+      const code = b.id.toLowerCase();
+      const name = (b.customerName ?? "").toLowerCase();
+      const phone = (b.customerPhone ?? "").toLowerCase();
+      return code.includes(q) || name.includes(q) || phone.includes(q);
+    });
+  }, [sortedBookings, onlyNewFilter, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBookings.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const pagedBookings = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredBookings.slice(start, start + pageSize);
+  }, [filteredBookings, safePage, pageSize]);
+
   return (
     <div className="space-y-6">
       {bookingsNeedingAssets.length === 0 ? (
@@ -1656,176 +1743,373 @@ function AssetsAssignTab({
           Tất cả đơn đều đã được gán tài sản. Không có gì cần xử lý.
         </div>
       ) : (
-        bookingsNeedingAssets.map((booking) => {
-          const s = STATUS_LABELS[booking.status] ?? {
-            label: booking.status,
-            color: "bg-stone-100 text-stone-600",
-          };
-          const unassignedItems = booking.items.filter(
-            (item) => !item.garmentAssetId,
-          );
-          const unassignedAccessories = (booking.accessories ?? []).filter(
-            (acc) => !acc.accessoryAssetId,
-          );
-          const totalUnassigned =
-            unassignedItems.length + unassignedAccessories.length;
-          return (
-            <div key={booking.id}>
-              {successAssignId === booking.id && (
-                <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
-                  <CheckCircle2 className="h-4 w-4 text-jade" />
-                  <span>{successAssignMsg}</span>
-                </div>
-              )}
-              <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-ink">
-                      #{booking.id.slice(0, 8).toUpperCase()}
-                    </span>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}
-                    >
-                      {s.label}
-                    </span>
-                  </div>
-                  <span className="text-xs text-stone-400">
-                    {booking.customerName ?? "—"} ·{" "}
-                    {formatDate(booking.rentalStartDate)} –{" "}
-                    {formatDate(booking.rentalEndDate)}
+        <>
+          {/* Thanh công cụ: Tìm kiếm, lọc đơn mới & Chọn kích thước trang */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white p-4 shadow-2xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-ink text-sm">
+                {filteredBookings.length} đơn cần gán tài sản
+              </span>
+              {newOrdersCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnlyNewFilter((prev) => !prev);
+                    setPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition ${
+                    onlyNewFilter
+                      ? "bg-emerald-600 text-white shadow-2xs"
+                      : "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                  }`}
+                  title={onlyNewFilter ? "Bấm để xem tất cả đơn" : "Bấm để chỉ lọc đơn mới trong 24h"}
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                   </span>
-                </div>
-                <div className="space-y-3 px-6 py-4">
-                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                    <AlertTriangle className="h-4 w-4 text-amber-600" />
-                    {totalUnassigned} món chưa gán tài sản
-                    {unassignedAccessories.length > 0 && (
-                      <span className="normal-case tracking-normal">
-                        ({unassignedItems.length} trang phục ·{" "}
-                        {unassignedAccessories.length} phụ kiện)
-                      </span>
-                    )}
-                  </p>
-                  {unassignedItems.map((item) => {
-                    const itemKey = `${booking.id}-${item.id}`;
-                    const state = assetAssignState[itemKey];
-                    return (
-                      <UnassignedAssetRow
-                        key={itemKey}
-                        title={
-                          <>
-                            {item.garmentName ?? "Trang phục"}
-                            {item.sizeLabel && (
-                              <span className="ml-1 text-stone-500">
-                                ({item.sizeLabel})
-                              </span>
-                            )}
-                          </>
-                        }
-                        subtitle={
-                          <>
-                            <span>
-                              {formatVND(item.dailyPrice)}/ngày
-                            </span>
-                            <span>
-                              Cọc: {formatVND(item.depositAmount)}
-                            </span>
-                          </>
-                        }
-                        itemKey={itemKey}
-                        state={state}
-                        actioning={assigningKey === itemKey}
-                        error={assignError[itemKey]}
-                        onOpen={() =>
-                          item.garmentSizeId &&
-                          onOpenPicker(
-                            itemKey,
-                            booking.id,
-                            item.garmentId,
-                            item.garmentSizeId,
-                          )
-                        }
-                        onAssign={() =>
-                          onAssign(booking.id, item.id, itemKey)
-                        }
-                        onClose={onClosePicker}
-                        onSelectChange={onSelectChange}
-                      />
-                    );
-                  })}
-                  {unassignedAccessories.length > 0 && (
-                    <div className="pt-1">
-                      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                        <Sparkles className="h-4 w-4 text-antique" />
-                        Phụ kiện chưa gán tài sản
-                      </p>
-                      <p className="mt-1 text-[11px] leading-5 text-stone-500">
-                        Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
-                        khác trong đơn sẽ không hiện trong danh sách chọn —
-                        nếu hết asset trống, dòng đó sẽ báo &quot;Hết tài sản khả
-                        dụng&quot;, cần nhập kho thêm.
-                      </p>
-                    </div>
-                  )}
-                  {unassignedAccessories.map((acc) => {
-                    const itemKey = `${booking.id}-acc-${acc.id}`;
-                    const state = assetAssignState[itemKey];
-                    const assignedInBooking = (booking.accessories ?? [])
-                      .map((a) => a.accessoryAssetId)
-                      .filter((id): id is string => Boolean(id));
-                    return (
-                      <UnassignedAssetRow
-                        key={itemKey}
-                        title={
-                          <>
-                            <Sparkles className="mr-1 inline h-4 w-4 align-middle text-amber-600" />
-                            {acc.accessoryName ?? "Phụ kiện"}
-                            {acc.quantity > 1 && (
-                              <span className="ml-1 text-stone-500">
-                                × {acc.quantity}
-                              </span>
-                            )}
-                          </>
-                        }
-                        subtitle={
-                          <>
-                            {acc.assetCode ? (
-                              <span>Mã: {acc.assetCode}</span>
-                            ) : (
-                              <span>Chưa gán asset</span>
-                            )}
-                            <span>
-                              {acc.isIncluded
-                                ? "Đi kèm miễn phí"
-                                : `Thuê kèm ${formatVND(acc.unitPrice)}/ngày`}
-                            </span>
-                          </>
-                        }
-                        itemKey={itemKey}
-                        state={state}
-                        actioning={assigningKey === itemKey}
-                        error={assignError[itemKey]}
-                        onOpen={() =>
-                          onOpenAccessoryPicker(
-                            itemKey,
-                            booking.id,
-                            acc.accessoryId,
-                            assignedInBooking,
-                          )
-                        }
-                        onAssign={() =>
-                          onAssignAccessory(booking.id, acc.id, itemKey)
-                        }
-                        onClose={onClosePicker}
-                        onSelectChange={onSelectChange}
-                      />
-                    );
-                  })}
-                </div>
+                  {newOrdersCount} đơn mới (24h)
+                  {onlyNewFilter && " ✕"}
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Tìm kiếm */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã đơn, tên KH..."
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-sand pl-8 pr-3 text-xs outline-none focus:border-antique focus:ring-1 focus:ring-antique"
+                />
+              </div>
+
+              {/* Chọn số đơn mỗi trang */}
+              <div className="flex items-center gap-1.5 text-xs text-stone-500">
+                <span>Hiển thị:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-sand bg-white px-2 text-xs font-medium outline-none focus:border-antique"
+                >
+                  <option value={5}>5 đơn / trang</option>
+                  <option value={10}>10 đơn / trang</option>
+                  <option value={20}>20 đơn / trang</option>
+                </select>
               </div>
             </div>
-          );
-        })
+          </div>
+
+          {filteredBookings.length === 0 ? (
+            <div className="rounded-xl border border-sand bg-white p-12 text-center text-stone-400">
+              Không tìm thấy đơn nào phù hợp với bộ lọc.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pagedBookings.map((booking) => {
+                const s = STATUS_LABELS[booking.status] ?? {
+                  label: booking.status,
+                  color: "bg-stone-100 text-stone-600",
+                };
+                const unassignedItems = booking.items.filter(
+                  (item) => !item.garmentAssetId,
+                );
+                const unassignedAccessories = (booking.accessories ?? []).filter(
+                  (acc) => !acc.accessoryAssetId,
+                );
+                const totalUnassigned =
+                  unassignedItems.length + unassignedAccessories.length;
+                const recency = getOrderRecency(booking.createdAt);
+                const isNew = recency?.isNew;
+
+                return (
+                  <div key={booking.id}>
+                    {successAssignId === booking.id && (
+                      <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
+                        <CheckCircle2 className="h-4 w-4 text-jade" />
+                        <span>{successAssignMsg}</span>
+                      </div>
+                    )}
+                    <div
+                      className={`overflow-hidden rounded-xl border bg-white shadow-xs transition ${
+                        isNew
+                          ? "border-l-4 border-l-emerald-500 border-emerald-300 ring-1 ring-emerald-200/50"
+                          : "border-sand"
+                      }`}
+                    >
+                      <div
+                        className={`flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 ${
+                          isNew
+                            ? "border-emerald-200/70 bg-emerald-50/40"
+                            : "border-sand bg-mist"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <span className="font-sans font-bold tracking-tight text-ink">
+                            #{booking.id.slice(0, 8).toUpperCase()}
+                          </span>
+                          {isNew ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-2.5 py-0.5 text-xs font-bold text-emerald-800 shadow-2xs">
+                              <span className="relative flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                              </span>
+                              ĐƠN MỚI · {recency.label}
+                            </span>
+                          ) : recency ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-sand bg-stone-100 px-2.5 py-0.5 text-[11px] font-medium text-stone-600">
+                              <Clock className="h-3 w-3 text-stone-400" />
+                              {recency.label}
+                            </span>
+                          ) : null}
+                          <span
+                            className={`rounded-full px-3 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}
+                          >
+                            {s.label}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
+                          <span className="font-medium text-ink">
+                            {booking.customerName ?? "—"}
+                            {booking.customerPhone && (
+                              <span className="ml-1 text-stone-400 font-normal">
+                                ({booking.customerPhone})
+                              </span>
+                            )}
+                          </span>
+                          <span>·</span>
+                          <span>
+                            {formatDate(booking.rentalStartDate)} –{" "}
+                            {formatDate(booking.rentalEndDate)}
+                          </span>
+                          {booking.createdAt && (
+                            <>
+                              <span>·</span>
+                              <span className="text-stone-400" title={booking.createdAt}>
+                                Đặt lúc: {formatDateTime(booking.createdAt)}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-3 px-6 py-4">
+                        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                          <AlertTriangle className="h-4 w-4 text-amber-600" />
+                          {totalUnassigned} món chưa gán tài sản
+                          {unassignedAccessories.length > 0 && (
+                            <span className="normal-case tracking-normal">
+                              ({unassignedItems.length} trang phục ·{" "}
+                              {unassignedAccessories.length} phụ kiện)
+                            </span>
+                          )}
+                        </p>
+                        {unassignedItems.map((item) => {
+                          const itemKey = `${booking.id}-${item.id}`;
+                          const state = assetAssignState[itemKey];
+                          return (
+                            <UnassignedAssetRow
+                              key={itemKey}
+                              title={
+                                <>
+                                  {item.garmentName ?? "Trang phục"}
+                                  {item.sizeLabel && (
+                                    <span className="ml-1 text-stone-500">
+                                      ({item.sizeLabel})
+                                    </span>
+                                  )}
+                                </>
+                              }
+                              subtitle={
+                                <>
+                                  <span>
+                                    {formatVND(item.dailyPrice)}/ngày
+                                  </span>
+                                  <span>
+                                    Cọc: {formatVND(item.depositAmount)}
+                                  </span>
+                                </>
+                              }
+                              itemKey={itemKey}
+                              state={state}
+                              actioning={assigningKey === itemKey}
+                              error={assignError[itemKey]}
+                              onOpen={() =>
+                                item.garmentSizeId &&
+                                onOpenPicker(
+                                  itemKey,
+                                  booking.id,
+                                  item.garmentId,
+                                  item.garmentSizeId,
+                                )
+                              }
+                              onAssign={() =>
+                                onAssign(booking.id, item.id, itemKey)
+                              }
+                              onClose={onClosePicker}
+                              onSelectChange={onSelectChange}
+                            />
+                          );
+                        })}
+                        {unassignedAccessories.length > 0 && (
+                          <div className="pt-1">
+                            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                              <Sparkles className="h-4 w-4 text-antique" />
+                              Phụ kiện chưa gán tài sản
+                            </p>
+                            <p className="mt-1 text-[11px] leading-5 text-stone-500">
+                              Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
+                              khác trong đơn sẽ không hiện trong danh sách chọn —
+                              nếu hết asset trống, dòng đó sẽ báo &quot;Hết tài sản khả
+                              dụng&quot;, cần nhập kho thêm.
+                            </p>
+                          </div>
+                        )}
+                        {unassignedAccessories.map((acc) => {
+                          const itemKey = `${booking.id}-acc-${acc.id}`;
+                          const state = assetAssignState[itemKey];
+                          const assignedInBooking = (booking.accessories ?? [])
+                            .map((a) => a.accessoryAssetId)
+                            .filter((id): id is string => Boolean(id));
+                          return (
+                            <UnassignedAssetRow
+                              key={itemKey}
+                              title={
+                                <>
+                                  <Sparkles className="mr-1 inline h-4 w-4 align-middle text-amber-600" />
+                                  {acc.accessoryName ?? "Phụ kiện"}
+                                  {acc.quantity > 1 && (
+                                    <span className="ml-1 text-stone-500">
+                                      × {acc.quantity}
+                                    </span>
+                                  )}
+                                </>
+                              }
+                              subtitle={
+                                <>
+                                  {acc.assetCode ? (
+                                    <span>Mã: {acc.assetCode}</span>
+                                  ) : (
+                                    <span>Chưa gán asset</span>
+                                  )}
+                                  <span>
+                                    {acc.isIncluded
+                                      ? "Đi kèm miễn phí"
+                                      : `Thuê kèm ${formatVND(acc.unitPrice)}/ngày`}
+                                  </span>
+                                </>
+                              }
+                              itemKey={itemKey}
+                              state={state}
+                              actioning={assigningKey === itemKey}
+                              error={assignError[itemKey]}
+                              onOpen={() =>
+                                onOpenAccessoryPicker(
+                                  itemKey,
+                                  booking.id,
+                                  acc.accessoryId,
+                                  assignedInBooking,
+                                )
+                              }
+                              onAssign={() =>
+                                onAssignAccessory(booking.id, acc.id, itemKey)
+                              }
+                              onClose={onClosePicker}
+                              onSelectChange={onSelectChange}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Phân trang dưới cùng */}
+          {totalPages > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white px-4 py-3 text-sm text-stone-600 shadow-2xs">
+              <span className="text-xs text-stone-500">
+                Hiển thị{" "}
+                <strong className="text-ink font-semibold">
+                  {(safePage - 1) * pageSize + 1}
+                </strong>{" "}
+                –{" "}
+                <strong className="text-ink font-semibold">
+                  {Math.min(safePage * pageSize, filteredBookings.length)}
+                </strong>{" "}
+                trong tổng số{" "}
+                <strong className="text-ink font-semibold">
+                  {filteredBookings.length}
+                </strong>{" "}
+                đơn
+              </span>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold hover:border-antique hover:text-lotus disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Trước
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                  if (
+                    totalPages > 7 &&
+                    p !== 1 &&
+                    p !== totalPages &&
+                    Math.abs(p - safePage) > 1
+                  ) {
+                    if (p === 2 || p === totalPages - 1) {
+                      return (
+                        <span key={p} className="px-1 text-stone-400 text-xs">
+                          ...
+                        </span>
+                      );
+                    }
+                    return null;
+                  }
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPage(p)}
+                      className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-semibold transition ${
+                        safePage === p
+                          ? "bg-lotus text-white shadow-2xs"
+                          : "border border-sand hover:border-antique hover:text-lotus"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold hover:border-antique hover:text-lotus disabled:opacity-40"
+                >
+                  Sau
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2058,7 +2342,7 @@ function OverviewTab({
                     {meta.label}
                   </span>
                   <span
-                    className={`block font-display text-2xl ${count > 0 ? "text-ink" : "text-stone-300"}`}
+                    className={`block font-sans font-bold text-2xl tracking-tight tabular-nums ${count > 0 ? "text-ink" : "text-stone-300"}`}
                   >
                     {count}
                   </span>
@@ -4251,7 +4535,7 @@ function InspectionLogTab({
                         <td className="px-6 py-4 text-stone-600">
                           {entry.findingsCount}
                         </td>
-                        <td className="px-6 py-4 text-red-700">
+                        <td className="px-6 py-4 text-red-700 font-medium tabular-nums">
                           {entry.totalPenalty > 0
                             ? formatVND(entry.totalPenalty)
                             : "—"}
@@ -4317,7 +4601,7 @@ function InspectionLogTab({
                           <td className="max-w-[220px] truncate px-6 py-4 text-stone-600" title={entry.conditionNote ?? ""}>
                             {entry.conditionNote ?? "—"}
                           </td>
-                          <td className="px-6 py-4 text-red-700">
+                          <td className="px-6 py-4 text-red-700 font-medium tabular-nums">
                             {entry.penaltyAmount > 0 ? formatVND(entry.penaltyAmount) : "—"}
                           </td>
                           <td className="px-6 py-4">
@@ -4696,8 +4980,8 @@ function DamagedTab({
                   <p className="mt-2 text-xs text-stone-500">{a.conditionNote}</p>
                 )}
                 {a.status === "lost" && (
-                  <p className="mt-2 text-xs font-semibold text-red-700">
-                    Đền {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(a.replacementValue)} — đã trừ vào cọc
+                  <p className="mt-2 text-xs font-semibold text-red-700 tabular-nums">
+                    Đền {formatVND(a.replacementValue)} — đã trừ vào cọc
                   </p>
                 )}
                 {a.bookingId && (
@@ -5136,7 +5420,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Tổng đơn
               </p>
-              <p className="mt-2 font-display text-2xl text-ink">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-ink tabular-nums">
                 {summary.totalBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5147,7 +5431,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Đã thanh toán
               </p>
-              <p className="mt-2 font-display text-2xl text-jade">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-jade tabular-nums">
                 {summary.paidBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5158,7 +5442,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Chưa thanh toán
               </p>
-              <p className="mt-2 font-display text-2xl text-amber-700">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-amber-700 tabular-nums">
                 {summary.unpaidBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5256,7 +5540,7 @@ function FinanceTab({
                             {typeMeta.label}
                           </span>
                         </td>
-                        <td className="px-6 py-3 text-ink font-semibold">
+                        <td className="px-6 py-3 text-ink font-semibold tabular-nums">
                           {formatVND(tx.amount)}
                         </td>
                         <td className="px-6 py-3 text-stone-500 text-xs uppercase">
@@ -5418,7 +5702,7 @@ function KPICard({
           {label}
         </p>
       </div>
-      <p className={`font-display text-xl ${textMap[tone] ?? "text-ink"}`}>
+      <p className={`font-sans font-bold text-lg sm:text-xl tracking-tight tabular-nums ${textMap[tone] ?? "text-ink"}`}>
         {value}
       </p>
       {hint && <p className="mt-1 text-[10px] text-stone-400">{hint}</p>}
@@ -5444,7 +5728,7 @@ function ReconCard({
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500">
         {label}
       </p>
-      <p className={`mt-1 font-display text-xl ${color}`}>{value}</p>
+      <p className={`mt-1 font-sans font-bold text-lg sm:text-xl tracking-tight tabular-nums ${color}`}>{value}</p>
     </div>
   );
 }
@@ -5798,7 +6082,7 @@ function QuickWorkItem({
           {label}
         </span>
         <span
-          className={`mt-0.5 block font-display text-2xl ${value > 0 ? "text-ink" : "text-stone-300"}`}
+          className={`mt-0.5 block font-sans font-bold text-2xl tracking-tight tabular-nums ${value > 0 ? "text-ink" : "text-stone-300"}`}
         >
           {value}
         </span>
@@ -5835,7 +6119,7 @@ function SnapshotCard({
         <span className="text-sm font-semibold text-stone-500">{label}</span>
         <span className={`rounded-lg p-2 ${t.text} ${t.bg}`}><Icon className="h-5 w-5" /></span>
       </div>
-      <div className="mb-2 font-display text-3xl text-ink">{value}</div>
+      <div className="mb-2 font-sans font-bold text-2xl sm:text-3xl tracking-tight text-ink tabular-nums">{value}</div>
       {typeof progress === "number" ? (
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-lotus/20">
           <div
@@ -5888,7 +6172,7 @@ function StatusCell({
     <div
       className={`flex flex-col items-center justify-center rounded-lg border p-4 ${t.bg} ${t.border}`}
     >
-      <span className={`font-display text-2xl ${t.num}`}>{value}</span>
+      <span className={`font-sans font-bold text-2xl tracking-tight tabular-nums ${t.num}`}>{value}</span>
       <span
         className={`mt-1 text-center text-xs font-semibold uppercase ${t.num}`}
       >
@@ -5972,13 +6256,6 @@ function RefundCard({
   const canApprove =
     !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
 
-  function formatVND(amount: number) {
-    return new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-    }).format(amount);
-  }
-
   return (
     <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
@@ -6018,10 +6295,10 @@ function RefundCard({
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
             Số tiền hoàn
           </p>
-          <p className="mt-1 font-display text-2xl text-jade">
+          <p className="mt-1 font-sans font-bold text-2xl tracking-tight text-jade tabular-nums">
             {formatVND(refund.amount)}
           </p>
-          <p className="text-sm text-stone-500">
+          <p className="text-sm text-stone-500 tabular-nums">
             Cọc: {formatVND(refund.booking.depositTotal)} — Phạt:{" "}
             {formatVND(refund.booking.penaltyTotal)}
           </p>
