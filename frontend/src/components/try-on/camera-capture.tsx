@@ -1,6 +1,5 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
+import { Camera, RotateCcw, X, AlertCircle, Sparkles } from "lucide-react";
 
 type CameraCaptureProps = {
   onCapture: (base64: string) => void;
@@ -251,8 +250,9 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
       </div>
 
       {errorMsg && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm leading-6 text-red-600">
-          {errorMsg}
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50/80 p-3 text-xs text-red-600">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{errorMsg}</span>
         </div>
       )}
 
@@ -261,9 +261,9 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
           <button
             type="button"
             onClick={startCamera}
-            className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood"
+            className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+            <Camera className="h-4 w-4" />
             Mở camera
           </button>
         )}
@@ -274,16 +274,17 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
               type="button"
               onClick={startCountdown}
               disabled={countdown !== null}
-              className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-[18px]">camera</span>
+              <Camera className="h-4 w-4" />
               {countdown === null ? "Chụp ảnh" : `Đang chụp sau ${countdown}s`}
             </button>
             <button
               type="button"
               onClick={stopCamera}
-              className="rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 shadow-sm transition hover:border-antique hover:bg-stone-50"
             >
+              <X className="h-4 w-4" />
               Huỷ
             </button>
           </>
@@ -293,8 +294,9 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
           <button
             type="button"
             onClick={retakePhoto}
-            className="rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 shadow-sm transition hover:border-antique hover:bg-stone-50"
           >
+            <RotateCcw className="h-4 w-4" />
             Chụp lại
           </button>
         )}

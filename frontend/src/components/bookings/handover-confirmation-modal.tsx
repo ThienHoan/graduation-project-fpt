@@ -9,6 +9,7 @@ import {
   type ConditionBeforeRental,
   type StaffBookingResponse,
 } from "@/lib/api";
+import { X, Sparkles } from "lucide-react";
 
 type Props = {
   booking: StaffBookingResponse | null;
@@ -178,7 +179,7 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
             className="rounded-full p-2 text-stone-400 transition hover:bg-mist hover:text-ink disabled:opacity-40"
             aria-label="Đóng"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
 
@@ -197,7 +198,7 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
             {(booking.accessories ?? []).length > 0 && (
               <div className="mt-3">
                 <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-stone-500">
-                  <span className="material-symbols-outlined text-[14px]">diamond</span>
+                  <Sparkles className="h-3.5 w-3.5 text-lotus" />
                   Phụ kiện bàn giao kèm ({(booking.accessories ?? []).length})
                 </h4>
                 <ul className="mt-2 grid gap-2 sm:grid-cols-2">

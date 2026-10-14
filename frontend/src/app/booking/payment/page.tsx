@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createPaymentLink, getPaymentStatus } from "@/lib/api";
+import { XCircle, CheckCircle2, RotateCcw, Clock, Sparkles } from "lucide-react";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -103,7 +104,7 @@ function PaymentInner() {
         <main className="w-full max-w-lg text-center">
           <div className="rounded-2xl border border-sand bg-white/80 p-8 shadow-lg backdrop-blur sm:p-12">
             <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-50 text-red-500">
-              <span className="material-symbols-outlined text-4xl">cancel</span>
+              <XCircle className="h-10 w-10" />
             </div>
             <h1 className="mt-6 font-display text-3xl text-ink">{failed ? "Thanh toán không thành công" : "Thanh toán đã bị huỷ"}</h1>
             <p className="mt-4 text-sm text-stone-600">Đơn hàng {displayCode} chưa được thanh toán. Bạn có thể thanh toán lại hoặc quay lại bộ sưu tập.</p>
@@ -113,9 +114,9 @@ function PaymentInner() {
                 type="button"
                 onClick={handleRetry}
                 disabled={retrying}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-3 text-sm font-semibold text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-3.5 text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <span className="material-symbols-outlined text-xl">refresh</span>
+                <RotateCcw className={`h-4 w-4 ${retrying ? "animate-spin" : ""}`} />
                 {retrying ? "Đang tạo link thanh toán..." : "Thanh toán lại"}
               </button>
               <Link href="/catalog" className="inline-flex items-center justify-center rounded-lg border border-bronze px-6 py-3 text-sm font-semibold text-bronze transition hover:bg-[#fff0ee]">
@@ -137,15 +138,15 @@ function PaymentInner() {
         <main className="w-full max-w-lg text-center">
           <div className="rounded-2xl border border-sand bg-white/80 p-8 shadow-lg backdrop-blur sm:p-12">
             <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-jade/10 text-jade">
-              <span className="material-symbols-outlined text-4xl">check_circle</span>
+              <CheckCircle2 className="h-10 w-10" />
             </div>
             <h1 className="mt-6 font-display text-3xl text-ink">Thanh toán thành công!</h1>
             <p className="mt-4 text-sm text-stone-600">Đơn hàng {displayCode} đã được thanh toán thành công.</p>
             {paymentData.amount > 0 && (
               <p className="mt-2 text-lg font-semibold text-ink">{formatVND(paymentData.amount)}</p>
             )}
-            <div className="mt-8 flex items-center justify-center gap-2 text-lg font-semibold text-lotus">
-              <span className="material-symbols-outlined">timer</span>
+            <div className="mt-8 flex items-center justify-center gap-2 text-sm font-semibold text-lotus">
+              <Clock className="h-4 w-4" />
               Chuyển hướng sau {countdown} giây...
             </div>
           </div>

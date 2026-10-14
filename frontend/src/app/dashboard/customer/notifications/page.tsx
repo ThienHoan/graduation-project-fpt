@@ -12,6 +12,16 @@ import {
   type NotificationPreferences,
 } from "@/lib/api";
 import { normalizeStatusInText } from "@/lib/status-labels";
+import {
+  Calendar,
+  Banknote,
+  Truck,
+  ClipboardCheck,
+  ShieldCheck,
+  Bell,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
 type ViewFilter = "all" | "unread" | "read";
 
@@ -67,21 +77,21 @@ function PreferenceSwitch({ label, checked, onChange }: { label: string; checked
 function getNotificationIcon(title: string) {
   const t = title.toLowerCase();
   if (t.includes("đơn thuê") || t.includes("booking") || t.includes("lịch")) {
-    return { icon: "calendar_today", bg: "bg-jade/10", text: "text-jade" };
+    return { icon: Calendar, bg: "bg-jade/10", text: "text-jade" };
   }
   if (t.includes("thanh toán") || t.includes("cọc") || t.includes("tiền")) {
-    return { icon: "payments", bg: "bg-amber-50", text: "text-amber-700" };
+    return { icon: Banknote, bg: "bg-amber-50", text: "text-amber-700" };
   }
   if (t.includes("vận chuyển") || t.includes("giao hàng")) {
-    return { icon: "local_shipping", bg: "bg-blue-50", text: "text-blue-600" };
+    return { icon: Truck, bg: "bg-blue-50", text: "text-blue-600" };
   }
   if (t.includes("kiểm tra") || t.includes("tình trạng")) {
-    return { icon: "fact_check", bg: "bg-stone-100", text: "text-stone-600" };
+    return { icon: ClipboardCheck, bg: "bg-stone-100", text: "text-stone-600" };
   }
   if (t.includes("tài khoản") || t.includes("bảo mật") || t.includes("hệ thống")) {
-    return { icon: "manage_accounts", bg: "bg-stone-100", text: "text-stone-600" };
+    return { icon: ShieldCheck, bg: "bg-stone-100", text: "text-stone-600" };
   }
-  return { icon: "notifications", bg: "bg-stone-100", text: "text-stone-600" };
+  return { icon: Bell, bg: "bg-stone-100", text: "text-stone-600" };
 }
 
 export default function CustomerNotificationsPage() {
@@ -292,13 +302,14 @@ export default function CustomerNotificationsPage() {
                 <div className="rounded-lg border border-dashed border-sand p-8 text-center text-stone-400">Chưa có thông báo phù hợp.</div>
               ) : (
                 pagedNotifications.map((item) => {
-                  const iconData = getNotificationIcon(item.title);
-                  return (
-                  <article key={item.id} className={`rounded-xl border p-4 transition ${item.isRead ? "border-sand bg-white" : "border-lotus/30 bg-mist"}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconData.bg} ${iconData.text}`}>
-                        <span className="material-symbols-outlined text-[20px]">{iconData.icon}</span>
-                      </div>
+                    const iconData = getNotificationIcon(item.title);
+                    const IconComponent = iconData.icon;
+                    return (
+                    <article key={item.id} className={`rounded-xl border p-4 transition ${item.isRead ? "border-sand bg-white" : "border-lotus/30 bg-mist"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconData.bg} ${iconData.text}`}>
+                          <IconComponent className="h-5 w-5" />
+                        </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-ink">{normalizeStatusInText(item.title)}</h3>
@@ -338,7 +349,7 @@ export default function CustomerNotificationsPage() {
                     className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label="Trang trước"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                    <ChevronLeft className="h-4 w-4" />
                   </button>
                   {buildPageList(currentPage, totalPages).map((p, idx) =>
                     p === "..." ? (
@@ -365,7 +376,7 @@ export default function CustomerNotificationsPage() {
                     className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label="Trang sau"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
               </div>

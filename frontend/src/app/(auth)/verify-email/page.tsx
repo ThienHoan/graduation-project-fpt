@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from "r
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "@/lib/api";
+import { MailCheck } from "lucide-react";
 
 const OTP_LENGTH = 6;
 
@@ -116,8 +117,8 @@ function VerifyEmailContent() {
       <div className="w-full max-w-md overflow-hidden rounded-lg border border-sand bg-white p-8 shadow-xl">
         {/* Icon phong bì */}
         <div className="mb-6 flex justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lotus/10 text-3xl">
-            <span className="material-symbols-outlined text-lotus text-[32px]">mark_email_read</span>
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lotus/10 text-lotus">
+            <MailCheck className="h-8 w-8 text-lotus" />
           </div>
         </div>
 

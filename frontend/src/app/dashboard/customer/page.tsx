@@ -12,8 +12,25 @@ import { STATUS_LABELS, statusBadgeClass, statusOf, ACTIVE_BOOKING_STATUSES, CAN
 import { ReviewModal } from "@/components/customer/review-modal";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { ConfirmModal } from "@/components/heritage/ui";
-import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverSummary } from "@/components/customer/handover-summary";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import {
+  CheckCircle2,
+  Receipt,
+  Clock,
+  Award,
+  EyeOff,
+  PackageOpen,
+  ArrowRight,
+  Truck,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  Ruler,
+  X,
+  AlertCircle,
+} from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 5;
 const TEST_ORDER_STATUSES = new Set(["pending_confirmation"]);
@@ -195,7 +212,7 @@ export default function CustomerDashboardPage() {
       return (
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-3 py-1 text-xs font-semibold text-jade">
-            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+            <CheckCircle2 className="h-3.5 w-3.5" />
             Đã hoàn {formatVND(refund.amount)}
           </span>
           {refund.proofImageUrl && (
@@ -205,7 +222,7 @@ export default function CustomerDashboardPage() {
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-full border border-jade/40 px-3 py-1 text-xs font-semibold text-jade transition hover:bg-jade/10"
             >
-              <span className="material-symbols-outlined text-[14px]">receipt_long</span>
+              <Receipt className="h-3.5 w-3.5" />
               Xem bill
             </a>
           )}
@@ -214,7 +231,7 @@ export default function CustomerDashboardPage() {
     }
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-700">
-        <span className="material-symbols-outlined text-[14px]">schedule</span>
+        <Clock className="h-3.5 w-3.5" />
         Đang xử lý {formatVND(refund.amount)}
       </span>
     );
@@ -258,11 +275,11 @@ export default function CustomerDashboardPage() {
 
   return (
     <div className="space-y-10">
-      <header className="mb-12">
-        <h1 className="font-display text-5xl text-lotus sm:text-6xl">Xin chào, {userName}</h1>
-        <p className="mt-3 flex items-center gap-2 text-base text-stone-600">
-          <span className="material-symbols-outlined text-antique">workspace_premium</span>
-          Thành viên di sản
+      <header className="mb-10">
+        <h1 className="font-display text-4xl text-lotus sm:text-5xl font-semibold">Xin chào, {userName}</h1>
+        <p className="mt-2.5 flex items-center gap-2 text-sm text-stone-600">
+          <Award className="h-4 w-4 text-antique" />
+          <span>Thành viên di sản Cổ Phục Rental</span>
         </p>
       </header>
 
@@ -272,8 +289,8 @@ export default function CustomerDashboardPage() {
           {hiddenPendingTestCount > 0 && (
             <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
-                <span className="material-symbols-outlined text-[20px]">visibility_off</span>
-                <p>
+                <EyeOff className="h-5 w-5 shrink-0 mt-0.5 text-amber-600" />
+                <p className="text-xs leading-relaxed">
                   Đang ẩn {hiddenPendingTestCount} đơn chờ xác nhận để dashboard gọn hơn.
                   Bạn vẫn có thể bật lại để xem hoặc vào staff dashboard để xác nhận/hủy các đơn test này.
                 </p>
@@ -385,16 +402,16 @@ export default function CustomerDashboardPage() {
               </div>
             </section>
           ) : (
-            <section className="rounded-lg border border-dashed border-sand bg-mist p-12 text-center">
-              <span className="material-symbols-outlined mb-4 text-5xl text-stone-300">inventory_2</span>
-              <h3 className="font-display text-2xl text-ink">Không có đơn đang hoạt động</h3>
-              <p className="mt-2 text-stone-500">Hãy bắt đầu hành trình thuê trang phục đầu tiên của bạn.</p>
+            <section className="rounded-2xl border border-dashed border-sand bg-mist/40 p-12 text-center">
+              <PackageOpen className="mx-auto mb-4 h-12 w-12 text-stone-300" />
+              <h3 className="font-display text-2xl font-semibold text-ink">Không có đơn đang hoạt động</h3>
+              <p className="mt-2 text-xs text-stone-500">Hãy bắt đầu hành trình thuê trang phục đầu tiên của bạn.</p>
               <Link
                 href="/catalog"
-                className="mt-6 inline-flex items-center gap-2 rounded-md bg-lotus px-6 py-3 text-sm font-semibold text-white transition hover:bg-oxblood"
+                className="mt-6 inline-flex items-center gap-2 rounded-xl bg-lotus px-6 py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition hover:bg-oxblood"
               >
-                Khám phá bộ sưu tập
-                <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                <span>Khám phá bộ sưu tập</span>
+                <ArrowRight className="h-4 w-4" />
               </Link>
             </section>
           )}
@@ -403,7 +420,7 @@ export default function CustomerDashboardPage() {
           {deliveryTrack && (
             <section className="space-y-4">
               <h2 className="font-display text-3xl text-ink flex items-center gap-2">
-                <span className="material-symbols-outlined text-antique">local_shipping</span>
+                <Truck className="h-6 w-6 text-antique" />
                 Theo dõi giao hàng
               </h2>
               <DeliveryTracker data={deliveryTrack} />
@@ -418,13 +435,13 @@ export default function CustomerDashboardPage() {
                 {overdueBookings.map((b) => (
                   <div
                     key={b.id}
-                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
                   >
-                    <p className="flex items-center gap-2 font-semibold">
-                      <span className="material-symbols-outlined text-[18px]">warning</span>
+                    <p className="flex items-center gap-2 font-semibold text-xs">
+                      <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
                       Đơn {b.id.slice(0, 8).toUpperCase()} đã quá hạn {b.overdueDays} ngày
                     </p>
-                    <p className="mt-1 text-red-700">
+                    <p className="mt-1 text-xs text-red-700">
                       Ngày trả dự kiến: {formatDate(b.rentalEndDate)} · Phí quá hạn hiện tại:{" "}
                       <span className="font-semibold">{formatVND(b.overdueAmount ?? 0)}</span> (
                       {(b.overdueFeePerDay ?? 0).toLocaleString("vi-VN")}đ/ngày). Phí tăng thêm mỗi ngày khách chưa
@@ -561,7 +578,7 @@ export default function CustomerDashboardPage() {
                         className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label="Trang trước"
                       >
-                        <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                        <ChevronLeft className="h-4 w-4" />
                       </button>
                       {Array.from({ length: totalHistoryPages }, (_, i) => i + 1).map((page) => (
                         <button
@@ -570,7 +587,7 @@ export default function CustomerDashboardPage() {
                           onClick={() => setHistoryPage(page)}
                           className={
                             page === currentHistoryPage
-                              ? "flex h-8 min-w-8 items-center justify-center rounded-lg bg-lotus px-2 text-xs font-semibold text-white"
+                              ? "flex h-8 min-w-8 items-center justify-center rounded-lg bg-lotus px-2 text-xs font-semibold text-white shadow-xs"
                               : "flex h-8 min-w-8 items-center justify-center rounded-lg border border-sand bg-white px-2 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
                           }
                         >
@@ -584,7 +601,7 @@ export default function CustomerDashboardPage() {
                         className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-stone-600 transition hover:border-lotus hover:text-lotus disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label="Trang sau"
                       >
-                        <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                        <ChevronRight className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -599,16 +616,20 @@ export default function CustomerDashboardPage() {
             <Link
               key={item.title}
               href={item.href || "/dashboard/customer"}
-              className="block rounded-xl border border-sand bg-white p-6 shadow-sm transition-all duration-200 hover:border-lotus/40 hover:shadow-md hover:-translate-y-0.5 group"
+              className="block rounded-2xl border border-sand bg-white p-6 shadow-xs transition-colors duration-200 hover:border-lotus hover:shadow-md group"
             >
               <div className="mb-4 flex items-start justify-between gap-4">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-full ${item.accent}`}>
-                  <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+                <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.accent}`}>
+                  {item.icon === "face_retouching_natural" ? (
+                    <Sparkles className="h-5 w-5" />
+                  ) : (
+                    <Ruler className="h-5 w-5" />
+                  )}
                 </div>
-                <span className="material-symbols-outlined text-stone-400 group-hover:text-lotus transition-colors duration-200">arrow_forward</span>
+                <ArrowRight className="h-4 w-4 text-stone-400 group-hover:text-lotus transition-colors duration-200" />
               </div>
-              <h3 className="font-display text-3xl text-ink group-hover:text-lotus transition-colors duration-200">{item.title}</h3>
-              <p className="mt-2 text-sm leading-7 text-stone-600">{item.description}</p>
+              <h3 className="font-display text-2xl font-semibold text-ink group-hover:text-lotus transition-colors duration-200">{item.title}</h3>
+              <p className="mt-2 text-xs leading-relaxed text-stone-600">{item.description}</p>
             </Link>
           ))}
         </aside>
@@ -638,9 +659,11 @@ export default function CustomerDashboardPage() {
                 : "border-red-200 bg-white text-red-700")
             }
           >
-            <span className="material-symbols-outlined text-xl">
-              {toast.type === "success" ? "check_circle" : "error"}
-            </span>
+            {toast.type === "success" ? (
+              <CheckCircle2 className="h-5 w-5 text-jade shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+            )}
             <p className="flex-1 text-sm font-medium">{toast.message}</p>
             <button
               type="button"
@@ -648,7 +671,7 @@ export default function CustomerDashboardPage() {
               className="text-stone-400 transition hover:text-stone-600"
               aria-label="Đóng thông báo"
             >
-              <span className="material-symbols-outlined text-[18px]">close</span>
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>

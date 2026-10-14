@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { LocateFixed } from "lucide-react";
 
 export type AddressSuggestion = {
   placeId: string;
@@ -186,7 +187,7 @@ export function AddressAutocomplete({ value, onChange, disabled = false }: Addre
           disabled={disabled || locating}
           onClick={handleUseCurrentLocation}
         >
-          <span className="material-symbols-outlined text-[16px]">my_location</span>
+          <LocateFixed className="h-4 w-4" />
           {locating ? "Đang lấy vị trí..." : "Dùng vị trí hiện tại"}
         </button>
         {value && pickedFromSuggest ? (

@@ -6,6 +6,17 @@ import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { cartCount } from "@/lib/cart";
 import { NotificationBell } from "@/components/notifications/notification-bell";
+import {
+  ShoppingBag,
+  Sparkles,
+  User,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  X,
+  Layers,
+  ChevronDown,
+} from "lucide-react";
 
 export function CustomerNavbar({
   active,
@@ -46,8 +57,11 @@ export function CustomerNavbar({
   }, [pathname]);
 
   const navItems = [
-    { href: "/catalog", label: "Bộ sưu tập", key: "collection" as const },
-    { href: "/try-on", label: "Thử đồ AI", key: "tryon" as const },
+    { href: "/", label: "Trang chủ", key: "home" },
+    { href: "/catalog", label: "Bộ sưu tập", key: "collection" },
+    { href: "/try-on", label: "Thử đồ AI", key: "tryon" },
+    { href: "/#quy-trinh", label: "Hành trình thuê", key: "journey" },
+    { href: "/dashboard", label: "Hệ thống ERP", key: "erp" },
   ];
 
   const displayName = session?.user.fullName ?? session?.user.email ?? "";
@@ -62,47 +76,65 @@ export function CustomerNavbar({
 
   return (
     <>
-      <header className="sticky top-0 z-50 border-b border-sand/70 bg-mist/95 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-sand bg-white/95 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           {/* Logo */}
-          <Link href="/" className="font-display text-2xl text-lotus sm:text-3xl">
-            Cổ Phục Rental
-          </Link>
+          <div className="flex items-center gap-8">
+            <Link
+              href="/"
+              className="font-display text-2xl font-bold tracking-wide text-lotus sm:text-3xl transition hover:opacity-95"
+            >
+              Cổ Phục Rental
+            </Link>
 
-          {/* Desktop nav */}
-          <nav className="hidden items-center gap-8 md:flex">
-            {navItems.map((item) => {
-              const isActive = active === item.key;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={
-                    isActive
-                      ? "border-b border-lotus pb-1 text-sm font-semibold text-lotus"
-                      : "border-b border-transparent pb-1 text-sm font-medium text-stone-600 transition hover:border-lotus/35 hover:text-lotus"
-                  }
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
+            {/* Desktop nav */}
+            <nav className="hidden items-center gap-6 md:flex">
+              {navItems.map((item) => {
+                const isExplicitActive = active === item.key;
+                const isPathActive = pathname === item.href && !active;
+                const isHighlighted = isExplicitActive || isPathActive;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`py-2 text-sm font-medium transition ${
+                      isHighlighted
+                        ? "border-b-2 border-lotus font-semibold text-lotus"
+                        : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
 
           {/* Right actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* Quick action button */}
+            <Link
+              href="/catalog"
+              className="hidden items-center gap-1.5 rounded-lg bg-lotus px-3.5 py-2 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98] sm:inline-flex"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Thuê Ngay</span>
+            </Link>
+
             {/* Notifications */}
-            {status === "authenticated" && <NotificationBell notificationsHref="/dashboard/customer/notifications" />}
+            {status === "authenticated" && (
+              <NotificationBell notificationsHref="/dashboard/customer/notifications" />
+            )}
 
             {/* Cart */}
             <Link
               href={cartHref}
-              className="relative rounded-full p-2 text-lotus transition hover:bg-lotus/10"
+              className="relative flex h-10 w-10 items-center justify-center rounded-full border border-sand text-ink transition hover:border-lotus"
               aria-label="Giỏ thuê đồ"
             >
-              <span className="material-symbols-outlined text-[22px]">shopping_bag</span>
+              <ShoppingBag className="h-4 w-4" />
               {cartCountVal > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-oxblood text-[11px] font-bold text-white">
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-lotus text-[11px] font-bold text-white">
                   {cartCountVal}
                 </span>
               )}
@@ -114,49 +146,56 @@ export function CustomerNavbar({
                 <button
                   type="button"
                   onClick={() => setAccountOpen(!accountOpen)}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-lotus text-sm font-bold text-white transition hover:bg-oxblood"
+                  className="flex h-10 items-center gap-2 rounded-full border border-sand bg-mist px-2.5 py-1 text-xs font-semibold text-ink transition hover:border-lotus"
                   aria-label="Tài khoản"
                 >
-                  {userInitial}
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-lotus text-xs font-bold text-white">
+                    {userInitial}
+                  </span>
+                  <span className="hidden max-w-[100px] truncate text-stone-700 sm:inline">
+                    {displayName.split(" ")[0]}
+                  </span>
+                  <ChevronDown className="h-3 w-3 text-stone-400" />
                 </button>
+
                 {accountOpen && (
-                  <div className="absolute right-0 top-11 w-56 rounded-lg border border-sand bg-white p-2 shadow-lg">
-                    <div className="border-b border-sand/50 px-3 py-2">
-                      <p className="truncate text-sm font-semibold text-ink">{displayName}</p>
-                      <p className="truncate text-xs text-stone-400">{session.user.email}</p>
+                  <div className="absolute right-0 top-12 z-50 w-60 rounded-xl border border-sand bg-white p-2 shadow-xl">
+                    <div className="border-b border-sand/60 px-3 py-2.5">
+                      <p className="truncate text-sm font-bold text-ink">{displayName}</p>
+                      <p className="truncate text-xs text-stone-500">{session.user.email}</p>
                     </div>
                     <div className="mt-1 space-y-0.5">
                       <Link
                         href="/dashboard/customer"
                         onClick={() => setAccountOpen(false)}
-                        className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-parchment hover:text-lotus"
                       >
-                        <span className="material-symbols-outlined text-[18px]">dashboard</span>
-                        Bảng điều khiển
+                        <LayoutDashboard className="h-4 w-4 text-stone-500" />
+                        <span>Bảng điều khiển</span>
                       </Link>
                       <Link
                         href="/dashboard/customer/profile"
                         onClick={() => setAccountOpen(false)}
-                        className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-parchment hover:text-lotus"
                       >
-                        <span className="material-symbols-outlined text-[18px]">person</span>
-                        Hồ sơ
+                        <User className="h-4 w-4 text-stone-500" />
+                        <span>Hồ sơ cá nhân</span>
                       </Link>
                       <Link
                         href={cartHref}
                         onClick={() => setAccountOpen(false)}
-                        className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
+                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-parchment hover:text-lotus"
                       >
-                        <span className="material-symbols-outlined text-[18px]">shopping_bag</span>
-                        Giỏ thuê
+                        <ShoppingBag className="h-4 w-4 text-stone-500" />
+                        <span>Giỏ thuê ({cartCountVal})</span>
                       </Link>
                       <button
                         type="button"
                         onClick={handleSignOut}
-                        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-red-600 transition hover:bg-red-50"
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50"
                       >
-                        <span className="material-symbols-outlined text-[18px]">logout</span>
-                        Đăng xuất
+                        <LogOut className="h-4 w-4 text-red-500" />
+                        <span>Đăng xuất</span>
                       </button>
                     </div>
                   </div>
@@ -165,110 +204,115 @@ export function CustomerNavbar({
             ) : (
               <Link
                 href="/login"
-                className="rounded-full p-2 text-lotus transition hover:bg-lotus/10"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-sand text-ink transition hover:border-lotus"
                 aria-label="Đăng nhập"
               >
-                <span className="material-symbols-outlined text-[22px]">person</span>
+                <User className="h-4 w-4" />
               </Link>
             )}
 
-            {/* Mobile hamburger */}
+            {/* Mobile menu button */}
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className="rounded-full p-2 text-lotus transition hover:bg-lotus/10 md:hidden"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-sand text-ink transition hover:border-lotus md:hidden"
               aria-label="Mở menu"
             >
-              <span className="material-symbols-outlined text-[24px]">menu</span>
+              <Menu className="h-5 w-5" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Mobile drawer overlay */}
+      {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-[60] md:hidden">
+        <div className="fixed inset-0 z-50 md:hidden">
           <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="absolute left-0 top-0 flex h-full w-72 flex-col bg-mist shadow-2xl">
-            <div className="flex h-16 items-center justify-between border-b border-sand px-4">
-              <span className="font-display text-2xl text-lotus">Cổ Phục Rental</span>
+          <aside className="absolute right-0 top-0 flex h-full w-80 max-w-[85vw] flex-col bg-white shadow-2xl">
+            <div className="flex h-16 items-center justify-between border-b border-sand px-5">
+              <span className="font-display text-2xl font-bold text-lotus">Cổ Phục Rental</span>
               <button
                 type="button"
                 onClick={() => setMobileOpen(false)}
-                className="rounded-full p-1.5 text-stone-500 transition hover:bg-stone-100"
+                className="rounded-full p-2 text-stone-500 transition hover:bg-stone-100"
                 aria-label="Đóng menu"
               >
-                <span className="material-symbols-outlined text-[22px]">close</span>
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <nav className="flex flex-col gap-1 p-4">
+            <nav className="flex flex-col gap-1.5 p-4">
               {navItems.map((item) => {
-                const isActive = active === item.key;
+                const isExplicitActive = active === item.key;
+                const isPathActive = pathname === item.href && !active;
+                const isHighlighted = isExplicitActive || isPathActive;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={
-                      isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-4 py-3 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
-                    }
+                    className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${
+                      isHighlighted
+                        ? "bg-lotus text-white font-semibold"
+                        : "text-stone-700 hover:bg-parchment"
+                    }`}
                   >
-                    <span className="material-symbols-outlined text-[20px]">
-                      {item.key === "collection" ? "apparel" : "face_retouching_natural"}
-                    </span>
-                    {item.label}
+                    <span>{item.label}</span>
                   </Link>
                 );
               })}
+
               <Link
                 href={cartHref}
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-stone-600 transition hover:bg-lotus/5 hover:text-lotus"
+                className="mt-2 flex items-center justify-between rounded-lg border border-sand bg-mist px-4 py-3 text-sm font-medium text-stone-800 transition hover:border-lotus"
               >
-                <span className="material-symbols-outlined text-[20px]">shopping_bag</span>
-                Giỏ thuê {cartCountVal > 0 && `(${cartCountVal})`}
+                <span className="flex items-center gap-3">
+                  <ShoppingBag className="h-4 w-4 text-lotus" />
+                  <span>Giỏ thuê đồ</span>
+                </span>
+                <span className="rounded-full bg-lotus px-2 py-0.5 text-xs font-bold text-white">
+                  {cartCountVal}
+                </span>
               </Link>
             </nav>
 
-            <div className="mt-auto border-t border-sand p-4">
+            <div className="mt-auto border-t border-sand p-5">
               {status === "authenticated" && session ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3 rounded-lg bg-lotus/10 px-4 py-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-lotus text-sm font-bold text-white">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 rounded-xl bg-parchment p-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-lotus text-sm font-bold text-white">
                       {userInitial}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-ink">{displayName}</p>
-                      <p className="truncate text-xs text-stone-400">{session.user.email}</p>
+                      <p className="truncate text-sm font-bold text-ink">{displayName}</p>
+                      <p className="truncate text-xs text-stone-500">{session.user.email}</p>
                     </div>
                   </div>
                   <Link
                     href="/dashboard/customer"
-                    className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold text-lotus transition hover:bg-lotus/10"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-lotus py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-xs"
                   >
-                    <span className="material-symbols-outlined text-[20px]">dashboard</span>
-                    Bảng điều khiển
+                    <LayoutDashboard className="h-4 w-4" />
+                    <span>Bảng điều khiển</span>
                   </Link>
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 py-2.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
                   >
-                    <span className="material-symbols-outlined text-[20px]">logout</span>
-                    Đăng xuất
+                    <LogOut className="h-4 w-4" />
+                    <span>Đăng xuất</span>
                   </button>
                 </div>
               ) : (
                 <Link
                   href="/login"
-                  className="flex items-center gap-3 rounded-lg bg-lotus px-4 py-3 text-sm font-semibold text-white transition hover:bg-oxblood"
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-lotus py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-xs hover:bg-oxblood"
                 >
-                  <span className="material-symbols-outlined text-[20px]">login</span>
-                  Đăng nhập
+                  <User className="h-4 w-4" />
+                  <span>Đăng nhập / Đăng ký</span>
                 </Link>
               )}
             </div>

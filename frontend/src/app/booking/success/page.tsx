@@ -11,6 +11,7 @@ import type { BookingResponse } from "@/lib/api";
 import { statusBadgeClass, statusOf } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverSummary } from "@/components/customer/handover-summary";
+import { CheckCircle2, Sparkles, ArrowRight } from "lucide-react";
 
 function formatVND(n: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(n);
@@ -66,7 +67,7 @@ function BookingSuccessInner() {
           <div className="rounded-lg border border-sand bg-white p-8 shadow-lg sm:p-12">
             <div className="text-center">
               <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-jade/10 text-jade">
-                <span className="material-symbols-outlined text-4xl">check_circle</span>
+                <CheckCircle2 className="h-10 w-10" />
               </div>
               <p className="mt-6 text-xs font-semibold uppercase tracking-[0.22em] text-antique">Đặt lịch thành công</p>
               <h1 className="mt-3 font-display text-5xl text-ink sm:text-6xl">Giữ lịch thành công</h1>
@@ -136,7 +137,7 @@ function BookingSuccessInner() {
                 {(booking.accessories ?? []).length > 0 && (
                   <div className="mt-6">
                     <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-                      <span className="material-symbols-outlined text-[15px]">diamond</span>
+                      <Sparkles className="h-3.5 w-3.5 text-antique" />
                       Phụ kiện thuê kèm ({(booking.accessories ?? []).length})
                     </h3>
                     <div className="mt-3 space-y-3">

@@ -30,6 +30,19 @@ import {
   pruneAccessorySelection,
   type AccessorySelection,
 } from "@/lib/accessory-selection";
+import {
+  ShoppingBag,
+  Shirt,
+  Sparkles,
+  Calendar,
+  Truck,
+  ShieldCheck,
+  Banknote,
+  QrCode,
+  ArrowLeft,
+  ArrowRight,
+  Clock,
+} from "lucide-react";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -278,16 +291,18 @@ function BookingReviewInner() {
     return (
       <BookingFlowShell currentStep="review" title="Giỏ hàng trống" description="">
         <div className="py-20 text-center">
-          <span className="material-symbols-outlined text-6xl text-stone-200 mb-6 block">shopping_bag</span>
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-lotus/10 text-lotus">
+            <ShoppingBag className="h-10 w-10 text-antique" />
+          </div>
           <h2 className="font-display text-3xl text-ink mb-3">Giỏ hàng trống</h2>
-          <p className="text-stone-500 mb-8 max-w-md mx-auto">
+          <p className="text-stone-500 mb-8 max-w-md mx-auto text-sm leading-relaxed">
             Bạn chưa có món nào trong giỏ thuê. Hãy quay lại bộ sưu tập để chọn trang phục.
           </p>
           <Link
             href="/catalog"
-            className="inline-flex items-center gap-2 rounded-lg bg-lotus px-8 py-4 text-sm font-semibold text-white transition hover:bg-oxblood"
+            className="inline-flex items-center gap-2 rounded-xl bg-lotus px-8 py-3.5 text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[18px]">apparel</span>
+            <Shirt className="h-4 w-4" />
             Khám phá bộ sưu tập
           </Link>
         </div>
@@ -320,7 +335,7 @@ function BookingReviewInner() {
                       />
                     ) : (
                       <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-lg bg-lotus/10">
-                        <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
+                        <Shirt className="h-6 w-6 text-antique" />
                       </div>
                     )}
                     <div className="flex-1">
@@ -374,7 +389,7 @@ function BookingReviewInner() {
                                 />
                               ) : (
                                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-mist">
-                                  <span className="material-symbols-outlined text-sm text-stone-300">diamond</span>
+                                  <Sparkles className="h-3.5 w-3.5 text-stone-400" />
                                 </div>
                               )}
                               <span className="min-w-0 flex-1 truncate text-stone-600">
@@ -403,7 +418,7 @@ function BookingReviewInner() {
           <div className="grid gap-8 md:grid-cols-2">
             <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
               <div className="mb-6 flex items-center gap-2 border-b border-sand pb-3">
-                <span className="material-symbols-outlined text-stone-500">calendar_today</span>
+                <Calendar className="h-4 w-4 text-stone-500" />
                 <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">Lịch thuê</h2>
               </div>
               <div className="space-y-4 text-sm">
@@ -415,7 +430,7 @@ function BookingReviewInner() {
 
             <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
               <div className="mb-6 flex items-center gap-2 border-b border-sand pb-3">
-                <span className="material-symbols-outlined text-stone-500">local_shipping</span>
+                <Truck className="h-4 w-4 text-stone-500" />
                 <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">Vận chuyển</h2>
               </div>
               <div className="space-y-4 text-sm">
@@ -540,9 +555,9 @@ function BookingReviewInner() {
               )}
             </div>
 
-            <div className="mt-8 rounded-lg border border-antique/40 bg-antique/10 p-4">
+            <div className="mt-8 rounded-xl border border-antique/40 bg-antique/10 p-4">
               <div className="flex items-center justify-between gap-4">
-                <span className="flex items-center gap-1 text-sm font-semibold text-bronze"><span className="material-symbols-outlined text-[16px]">security</span>Tiền cọc bảo đảm</span>
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-bronze"><ShieldCheck className="h-4 w-4" />Tiền cọc bảo đảm</span>
                 <span className="font-medium text-bronze">{formatVND(depositTotal)}</span>
               </div>
               <p className="mt-2 text-xs leading-6 text-bronze">Hoàn lại sau khi nhân viên kiểm tra đạt yêu cầu.</p>
@@ -562,18 +577,18 @@ function BookingReviewInner() {
               )}
               <div className="space-y-3">
                 {!isDelivery && (
-                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
                     <input type="radio" name="paymentMethod" value="cash" checked={paymentMethod === "cash"} onChange={() => setPaymentMethod("cash")} className="h-4 w-4 text-lotus focus:ring-lotus" />
-                    <span className="material-symbols-outlined text-xl text-stone-500">payments</span>
+                    <Banknote className="h-5 w-5 text-stone-500" />
                     <div>
                       <span className="text-sm font-medium text-ink">Tiền mặt</span>
                       <p className="text-xs text-stone-500">Thanh toán tại cửa hàng khi nhận đồ</p>
                     </div>
                   </label>
                 )}
-                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-sand p-4 transition hover:border-lotus has-[:checked]:border-lotus has-[:checked]:bg-[#fff0ee]">
                   <input type="radio" name="paymentMethod" value="qr_code" checked={paymentMethod === "qr_code"} onChange={() => setPaymentMethod("qr_code")} className="h-4 w-4 text-lotus focus:ring-lotus" />
-                  <span className="material-symbols-outlined text-xl text-stone-500">qr_code_2</span>
+                  <QrCode className="h-5 w-5 text-stone-500" />
                   <div>
                     <span className="text-sm font-medium text-ink">Chuyển khoản (QR)</span>
                     <p className="text-xs text-stone-500">Quét mã QR để thanh toán qua ngân hàng</p>
@@ -592,19 +607,19 @@ function BookingReviewInner() {
             <div className="mt-6 flex flex-col gap-3">
               <Link
                 href={`/booking/logistics?${backParams.toString()}`}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-bronze px-6 py-3 text-sm font-semibold uppercase tracking-[0.18em] text-bronze transition hover:bg-parchment"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-bronze px-6 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-bronze transition hover:bg-parchment"
               >
-                <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                <ArrowLeft className="h-4 w-4" />
                 Quay lại vận chuyển
               </Link>
               <button
                 type="button"
                 disabled={!agreed || submitting || cartItems.length === 0 || (pickupMethod === "delivery" && !deliveryAddressId)}
                 onClick={handleConfirm}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-white shadow-sm transition hover:bg-oxblood disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {submitting ? "Đang xử lý..." : `Xác nhận đặt lịch (${cartItems.length} món)`}
-                {!submitting && <span className="material-symbols-outlined text-[18px]">arrow_forward</span>}
+                <span>{submitting ? "Đang xử lý..." : `Xác nhận đặt lịch (${cartItems.length} món)`}</span>
+                {!submitting && <ArrowRight className="h-4 w-4" />}
               </button>
             </div>
           </section>

@@ -17,6 +17,16 @@ import {
   toggleAccessory,
   type AccessorySelection,
 } from "@/lib/accessory-selection";
+import {
+  ShoppingBag,
+  Shirt,
+  Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  ArrowRight,
+  Trash2,
+  Calendar,
+} from "lucide-react";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -283,16 +293,18 @@ function BookingDateSelectionInner() {
         description="Bạn chưa có món nào trong giỏ thuê."
       >
         <div className="py-20 text-center">
-          <span className="material-symbols-outlined text-6xl text-stone-200 mb-6 block">shopping_bag</span>
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-lotus/10 text-lotus">
+            <ShoppingBag className="h-10 w-10 text-antique" />
+          </div>
           <h2 className="font-display text-3xl text-ink mb-3">Giỏ hàng trống</h2>
-          <p className="text-stone-500 mb-8 max-w-md mx-auto">
+          <p className="text-stone-500 mb-8 max-w-md mx-auto text-sm leading-relaxed">
             Bạn chưa thêm trang phục nào vào giỏ. Hãy quay lại bộ sưu tập để chọn trang phục bạn muốn thuê.
           </p>
           <Link
             href="/catalog"
-            className="inline-flex items-center gap-2 rounded-lg bg-lotus px-8 py-4 text-sm font-semibold text-white transition hover:bg-oxblood"
+            className="inline-flex items-center gap-2 rounded-xl bg-lotus px-8 py-3.5 text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[18px]">apparel</span>
+            <Shirt className="h-4 w-4" />
             Khám phá bộ sưu tập
           </Link>
         </div>
@@ -331,7 +343,7 @@ function BookingDateSelectionInner() {
                         />
                       ) : (
                         <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-lg bg-lotus/10">
-                          <span className="material-symbols-outlined text-2xl text-antique/50">checkroom</span>
+                          <Shirt className="h-6 w-6 text-antique" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
@@ -362,7 +374,7 @@ function BookingDateSelectionInner() {
                     ) : links.length > 0 ? (
                       <div className="mt-3 ml-16 rounded-lg border border-sand bg-mist/60 p-3">
                         <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
-                          <span className="material-symbols-outlined text-[15px]">diamond</span>
+                          <Sparkles className="h-3.5 w-3.5 text-antique" />
                           Phụ kiện đi kèm ({selectedIds.size}/{links.length} đã chọn)
                         </p>
                         <div className="mt-2 space-y-2">
@@ -391,7 +403,7 @@ function BookingDateSelectionInner() {
                                   />
                                 ) : (
                                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-mist">
-                                    <span className="material-symbols-outlined text-lg text-stone-300">diamond</span>
+                                    <Sparkles className="h-4 w-4 text-stone-400" />
                                   </div>
                                 )}
                                 <div className="min-w-0 flex-1">
@@ -460,12 +472,12 @@ function BookingDateSelectionInner() {
             </div>
 
             {allAvailable && (
-              <div className="mt-4 rounded-lg border border-jade/30 bg-jade/5 p-4">
+              <div className="mt-4 rounded-xl border border-jade/30 bg-jade/5 p-4">
                 <div className="flex items-start gap-3">
-                  <span className="material-symbols-outlined text-jade text-[22px] mt-0.5">check_circle</span>
+                  <CheckCircle2 className="h-5 w-5 text-jade shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-semibold text-jade">Tất cả {cartItems.length} món đều khả dụng cho khoảng ngày này</p>
-                    <p className="mt-1 text-sm text-stone-500">
+                    <p className="font-semibold text-jade text-sm">Tất cả {cartItems.length} món đều khả dụng cho khoảng ngày này</p>
+                    <p className="mt-1 text-xs text-stone-500 leading-relaxed">
                       📌 Tất cả món trong giỏ sẽ được thuê cùng 1 khoảng ngày cho cùng 1 dịp.
                       Nếu bạn cần thuê cho nhiều dịp khác nhau, vui lòng tạo các đơn riêng sau khi hoàn tất đơn này.
                     </p>
@@ -474,8 +486,8 @@ function BookingDateSelectionInner() {
               </div>
             )}
             {anyNotAvailable && (
-              <div className="mt-4 flex items-center gap-2 text-sm">
-                <span className="material-symbols-outlined text-red-500 text-[18px]">cancel</span>
+              <div className="mt-4 flex items-center gap-2 text-xs">
+                <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
                 <span className="font-medium text-red-500">Một số món không khả dụng trong khoảng này</span>
               </div>
             )}
@@ -533,10 +545,10 @@ function BookingDateSelectionInner() {
               <button
                 type="button" disabled={!allAvailable}
                 onClick={handleContinue}
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-white shadow-sm transition hover:bg-oxblood disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Sang bước vận chuyển
-                <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                <span>Sang bước vận chuyển</span>
+                <ArrowRight className="h-4 w-4" />
               </button>
             </div>
           </div>

@@ -2,6 +2,18 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import {
+  Zap,
+  Sparkles,
+  Maximize2,
+  RotateCcw,
+  Camera,
+  Download,
+  Calendar,
+  X,
+  Split,
+  Image as ImageIcon,
+} from "lucide-react";
 
 type TryonResultViewerProps = {
   resultImageUrl: string;
@@ -36,16 +48,16 @@ export function TryonResultViewer({
   return (
     <div className="flex h-full flex-col justify-between p-4">
       {/* Top Header & View Mode Switcher */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-sand pb-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-sand/70 pb-3">
         <div className="flex items-center gap-2">
           {isCached ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-              <span className="material-symbols-outlined text-[14px]">bolt</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+              <Zap className="h-3.5 w-3.5 text-emerald-600" />
               Kết quả từ Cache (Tức thì)
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-1 text-xs font-semibold text-purple-800">
-              <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-lotus/20 bg-lotus/10 px-2.5 py-1 text-xs font-semibold text-lotus">
+              <Sparkles className="h-3.5 w-3.5" />
               AI tạo mới
             </span>
           )}
@@ -59,28 +71,31 @@ export function TryonResultViewer({
           <button
             type="button"
             onClick={() => setViewMode("result")}
-            className={`rounded-md px-2.5 py-1 font-medium transition ${
-              viewMode === "result" ? "bg-white text-lotus shadow-sm" : "text-stone-600 hover:text-ink"
+            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition ${
+              viewMode === "result" ? "bg-white text-lotus shadow-xs font-semibold" : "text-stone-600 hover:text-ink"
             }`}
           >
+            <Sparkles className="h-3 w-3" />
             Ảnh AI
           </button>
           <button
             type="button"
             onClick={() => setViewMode("side_by_side")}
-            className={`rounded-md px-2.5 py-1 font-medium transition ${
-              viewMode === "side_by_side" ? "bg-white text-lotus shadow-sm" : "text-stone-600 hover:text-ink"
+            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition ${
+              viewMode === "side_by_side" ? "bg-white text-lotus shadow-xs font-semibold" : "text-stone-600 hover:text-ink"
             }`}
           >
-            So sánh song song
+            <Split className="h-3 w-3" />
+            So sánh
           </button>
           <button
             type="button"
             onClick={() => setViewMode("original")}
-            className={`rounded-md px-2.5 py-1 font-medium transition ${
-              viewMode === "original" ? "bg-white text-lotus shadow-sm" : "text-stone-600 hover:text-ink"
+            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-medium transition ${
+              viewMode === "original" ? "bg-white text-lotus shadow-xs font-semibold" : "text-stone-600 hover:text-ink"
             }`}
           >
+            <ImageIcon className="h-3 w-3" />
             Ảnh gốc
           </button>
         </div>
@@ -93,7 +108,7 @@ export function TryonResultViewer({
             <img
               src={resultImageUrl}
               alt="Kết quả thử đồ AI"
-              className="max-h-[500px] w-auto rounded-lg object-contain shadow-md cursor-pointer transition hover:opacity-95"
+              className="max-h-[500px] w-auto rounded-xl object-contain shadow-md cursor-pointer transition hover:opacity-95"
               onClick={() => setIsLightboxOpen(true)}
             />
             <button
@@ -102,7 +117,7 @@ export function TryonResultViewer({
               className="absolute right-3 top-3 rounded-full bg-black/60 p-2 text-white backdrop-blur-sm transition hover:bg-black/80"
               title="Phóng to"
             >
-              <span className="material-symbols-outlined text-[18px]">zoom_in</span>
+              <Maximize2 className="h-4 w-4" />
             </button>
           </div>
         )}
@@ -113,7 +128,7 @@ export function TryonResultViewer({
               <img
                 src={originalSrc}
                 alt="Ảnh gốc của bạn"
-                className="max-h-[500px] w-auto rounded-lg object-contain shadow-md"
+                className="max-h-[500px] w-auto rounded-xl object-contain shadow-md"
               />
             ) : (
               <p className="text-sm text-stone-400">Không có ảnh gốc</p>
@@ -128,15 +143,15 @@ export function TryonResultViewer({
               <img
                 src={originalSrc}
                 alt="Ảnh gốc"
-                className="max-h-[440px] w-full rounded-lg object-contain shadow-sm"
+                className="max-h-[440px] w-full rounded-xl object-contain shadow-xs border border-sand"
               />
             </div>
             <div className="flex flex-col items-center">
-              <span className="mb-1 text-xs font-medium text-lotus font-semibold">Kết quả AI mặc thử</span>
+              <span className="mb-1 text-xs font-semibold text-lotus">Kết quả AI mặc thử</span>
               <img
                 src={resultImageUrl}
                 alt="Kết quả AI"
-                className="max-h-[440px] w-full rounded-lg object-contain shadow-sm cursor-pointer"
+                className="max-h-[440px] w-full rounded-xl object-contain shadow-xs border border-lotus/30 cursor-pointer"
                 onClick={() => setIsLightboxOpen(true)}
               />
             </div>
@@ -145,22 +160,22 @@ export function TryonResultViewer({
       </div>
 
       {/* Action Toolbar */}
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-3 border-t border-sand pt-4">
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5 border-t border-sand/70 pt-4">
         <button
           type="button"
           onClick={onRetry}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-lotus shadow-sm transition hover:bg-lotus/10"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-lotus shadow-xs transition hover:bg-lotus/10"
         >
-          <span className="material-symbols-outlined text-[16px]">autorenew</span>
+          <RotateCcw className="h-3.5 w-3.5" />
           Thử lại
         </button>
 
         <button
           type="button"
           onClick={onReset}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-sm transition hover:bg-stone-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-xs transition hover:bg-stone-50"
         >
-          <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+          <Camera className="h-3.5 w-3.5" />
           Đổi ảnh khác
         </button>
 
@@ -169,9 +184,9 @@ export function TryonResultViewer({
           target="_blank"
           rel="noopener noreferrer"
           download={`${garmentName.replace(/\s+/g, "_")}_tryon.png`}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-sm transition hover:bg-stone-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-xs transition hover:bg-stone-50"
         >
-          <span className="material-symbols-outlined text-[16px]">download</span>
+          <Download className="h-3.5 w-3.5" />
           Tải ảnh HD
         </a>
 
@@ -181,9 +196,9 @@ export function TryonResultViewer({
               ? `/booking/date-selection?garmentSizeId=${selectedSizeId}`
               : "/booking/date-selection"
           }
-          className="inline-flex items-center gap-1.5 rounded-lg bg-lotus px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white shadow transition hover:bg-oxblood"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-lotus px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[16px]">calendar_month</span>
+          <Calendar className="h-3.5 w-3.5" />
           Đặt lịch thuê mẫu này
         </Link>
       </div>
@@ -200,7 +215,7 @@ export function TryonResultViewer({
             <img
               src={resultImageUrl}
               alt="Kết quả thử đồ AI toàn màn hình"
-              className="max-h-[90vh] w-auto rounded-lg object-contain"
+              className="max-h-[90vh] w-auto rounded-lg object-contain shadow-2xl"
             />
             <button
               type="button"
@@ -208,7 +223,7 @@ export function TryonResultViewer({
               className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white transition hover:bg-white/40"
               title="Đóng"
             >
-              <span className="material-symbols-outlined text-2xl">close</span>
+              <X className="h-5 w-5" />
             </button>
           </div>
         </div>

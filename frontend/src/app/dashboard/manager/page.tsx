@@ -1742,8 +1742,8 @@ function AssetsAssignTab({
                       <p className="mt-1 text-[11px] leading-5 text-stone-500">
                         Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
                         khác trong đơn sẽ không hiện trong danh sách chọn —
-                        nếu hết asset trống, dòng đó sẽ báo "Hết tài sản khả
-                        dụng", cần nhập kho thêm.
+                        nếu hết asset trống, dòng đó sẽ báo &quot;Hết tài sản khả
+                        dụng&quot;, cần nhập kho thêm.
                       </p>
                     </div>
                   )}
