@@ -19,6 +19,7 @@ import { RentalDateCalendar } from "@/components/customer/rental-date-calendar";
 import { addToCart, cartCount } from "@/lib/cart";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
+import { OptimizedImage } from "@/components/common/optimized-image";
 import {
   ChevronRight,
   ChevronLeft,
@@ -265,10 +266,13 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                 <div className="relative h-full w-full overflow-hidden rounded-xl bg-stone-100">
                   {group.images && group.images.length > 0 ? (
                     <>
-                      <img
+                      <OptimizedImage
                         src={group.images[activeImageIdx]?.imageUrl ?? group.imageUrl ?? ""}
                         alt={group.name}
-                        className="h-full w-full object-cover transition-opacity duration-300"
+                        fill
+                        priority
+                        sizes="(max-width: 1024px) 100vw, 55vw"
+                        className="object-cover transition-opacity duration-300"
                       />
                       {group.images.length > 1 && (
                         <>
@@ -279,7 +283,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                                 (i) => (i - 1 + group.images.length) % group.images.length,
                               )
                             }
-                            className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
+                            className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
                             aria-label="Ảnh trước"
                           >
                             <ChevronLeft className="h-4 w-4" />
@@ -289,12 +293,12 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                             onClick={() =>
                               setActiveImageIdx((i) => (i + 1) % group.images.length)
                             }
-                            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
+                            className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
                             aria-label="Ảnh tiếp"
                           >
                             <ChevronRight className="h-4 w-4" />
                           </button>
-                          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
+                          <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
                             {group.images.map((_, idx) => (
                               <button
                                 key={idx}
@@ -311,10 +315,13 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                       )}
                     </>
                   ) : group.imageUrl ? (
-                    <img
+                    <OptimizedImage
                       src={group.imageUrl}
                       alt={group.name}
-                      className="h-full w-full object-cover"
+                      fill
+                      priority
+                      sizes="(max-width: 1024px) 100vw, 55vw"
+                      className="object-cover"
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-stone-300">
@@ -322,7 +329,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                     </div>
                   )}
 
-                  <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-3 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+                  <span className="shadow-xs absolute left-3 top-3 z-10 rounded bg-white/95 px-3 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
                     {group.categoryName ?? "Triều Nguyễn"}
                   </span>
                 </div>
@@ -343,10 +350,12 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                       }`}
                       aria-label={`Xem ảnh ${idx + 1}`}
                     >
-                      <img
+                      <OptimizedImage
                         src={img.imageUrl}
                         alt={img.altText ?? group.name}
-                        className="h-full w-full object-cover"
+                        fill
+                        sizes="64px"
+                        className="object-cover"
                       />
                     </button>
                   ))}

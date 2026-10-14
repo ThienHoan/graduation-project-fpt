@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { addToCart, cartCount, removeFromCart, getCart } from "@/lib/cart";
 import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@/lib/chat";
+import { OptimizedImage } from "@/components/common/optimized-image";
 import {
   Search,
   Sparkles,
@@ -85,22 +86,13 @@ function CatalogGarmentCard({
         href={`/catalog/${selectedGarmentId}`}
         className="relative aspect-[3/4] overflow-hidden bg-stone-100"
       >
-        {group.imageUrl ? (
-          <img
-            src={group.imageUrl}
-            alt={group.name}
-            loading="lazy"
-            decoding="async"
-            onLoad={() => setImgLoaded(true)}
-            className={`h-full w-full object-cover transition-all duration-500 group-hover:scale-105 ${
-              imgLoaded ? "opacity-100" : "opacity-0"
-            }`}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
-            Cổ phục di sản
-          </div>
-        )}
+        <OptimizedImage
+          src={group.imageUrl ?? ""}
+          alt={group.name}
+          fill
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+          className="object-cover transition-all duration-500 group-hover:scale-105"
+        />
         <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
           {group.categoryName ?? "Triều Nguyễn"}
         </span>
@@ -540,20 +532,14 @@ export default function CatalogPage() {
                           key={p.garmentId}
                           className="flex flex-col overflow-hidden rounded-xl border border-sand bg-mist p-3 text-xs"
                         >
-                          <div className="aspect-[3/4] overflow-hidden rounded-lg bg-stone-100">
-                            {p.imageUrl ? (
-                              <img
-                                src={p.imageUrl}
-                                alt={p.name}
-                                loading="lazy"
-                                decoding="async"
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-stone-300">
-                                Không có ảnh
-                              </div>
-                            )}
+                          <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-stone-100">
+                            <OptimizedImage
+                              src={p.imageUrl ?? ""}
+                              alt={p.name}
+                              fill
+                              sizes="(max-width: 640px) 50vw, 25vw"
+                              className="object-cover"
+                            />
                           </div>
                           <p className="mt-2 truncate font-bold text-ink">{p.name}</p>
                           <p className="font-bold text-lotus">{formatVND(p.dailyPrice)}/ngày</p>
@@ -625,19 +611,14 @@ export default function CatalogPage() {
             <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-12">
               <div className="lg:col-span-5">
                 <div className="relative aspect-[3/4] overflow-hidden rounded-xl bg-stone-100">
-                  {featured.imageUrl ? (
-                    <img
-                      src={featured.imageUrl}
-                      alt={featured.name}
-                      loading="lazy"
-                      decoding="async"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-stone-400">
-                      Cổ phục hoàng gia
-                    </div>
-                  )}
+                  <OptimizedImage
+                    src={featured.imageUrl ?? ""}
+                    alt={featured.name}
+                    fill
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 40vw"
+                    className="object-cover"
+                  />
                   <span className="absolute left-3 top-3 rounded-md bg-black/75 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-md">
                     Tiêu điểm phục dựng
                   </span>
