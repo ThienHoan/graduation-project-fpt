@@ -6,9 +6,24 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { BookingFlowShell } from "@/components/heritage/ui";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { apiRequest, getShippingFee, getStoreInfo, type ShippingFeeEstimate, type StoreInfo } from "@/lib/api";
+import { apiRequest, getShippingFee, getStoreInfo, normalizePickupMethod, type PickupMethod, type ShippingFeeEstimate, type StoreInfo } from "@/lib/api";
 import { logisticsMethods } from "@/lib/heritage-mock-data";
 import { ShippingMap } from "@/components/location/shipping-map";
+import {
+  CheckCircle2,
+  Store,
+  Truck,
+  MapPin,
+  MapPinOff,
+  Clock,
+  Phone,
+  ArrowLeft,
+  ArrowRight,
+  Plus,
+  Sparkles,
+  ShieldCheck,
+  ShieldAlert,
+} from "lucide-react";
 
 export type CustomerAddress = {
   id: string;
@@ -40,9 +55,10 @@ function BookingLogisticsInner() {
   const startDate = searchParams.get("startDate") ?? "";
   const endDate = searchParams.get("endDate") ?? "";
 
-  const isInvalid = !startDate || !endDate || endDate < startDate;
-
-  const [pickupMethod, setPickupMethod] = useState<string>(searchParams.get("pickupMethod") ?? logisticsMethods[0].key);
+  const requestedPickupMethod = normalizePickupMethod(searchParams.get("pickupMethod"));
+  const hasInvalidPickupMethod = searchParams.has("pickupMethod") && requestedPickupMethod === null;
+  const isInvalid = !startDate || !endDate || endDate < startDate || hasInvalidPickupMethod;
+  const [pickupMethod, setPickupMethod] = useState<PickupMethod>(requestedPickupMethod ?? "store_pickup");
 
   const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
@@ -138,7 +154,7 @@ function BookingLogisticsInner() {
             <div className="mb-4 flex items-start justify-between gap-4 border-b border-sand pb-4">
               <div>
                 <h2 className="flex items-center gap-2 font-display text-3xl text-ink">
-                  <span className="material-symbols-outlined text-jade">check_circle</span>Đã xác nhận lịch
+                  <CheckCircle2 className="h-6 w-6 text-jade" />Đã xác nhận lịch
                 </h2>
                 <p className="mt-1 text-sm text-stone-600">Trang phục còn trống cho khoảng thời gian bạn đã chọn.</p>
               </div>
@@ -159,14 +175,14 @@ function BookingLogisticsInner() {
                     checked={pickupMethod === item.key}
                     name="delivery_method"
                     type="radio"
-                    onChange={() => setPickupMethod(item.key)}
+                    onChange={() => setPickupMethod(normalizePickupMethod(item.key) ?? "store_pickup")}
                   />
-                  <div className="h-full rounded-xl border border-sand bg-white p-5 transition peer-checked:border-antique peer-checked:bg-parchment hover:border-antique/60">
+                  <div className="h-full rounded-xl border border-sand bg-white p-5 transition peer-checked:border-lotus peer-checked:bg-parchment hover:border-antique/60">
                     <div className="mb-3 flex items-start justify-between">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-mist text-bronze">
-                        <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+                        {item.key === "store_pickup" ? <Store className="h-5 w-5 text-antique" /> : <Truck className="h-5 w-5 text-antique" />}
                       </div>
-                      <span className={`material-symbols-outlined ${pickupMethod === item.key ? "text-antique" : "text-stone-300"}`}>check_circle</span>
+                      <CheckCircle2 className={`h-5 w-5 ${pickupMethod === item.key ? "text-lotus" : "text-stone-300"}`} />
                     </div>
                     <h3 className="font-semibold text-ink">{item.title}</h3>
                     <p className="mt-2 text-sm leading-7 text-stone-600">{item.description}</p>
@@ -182,14 +198,14 @@ function BookingLogisticsInner() {
               {addressLoading ? (
                 <p className="text-sm text-stone-500">Đang tải địa chỉ...</p>
               ) : addresses.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-sand p-8 text-center">
-                  <span className="material-symbols-outlined text-4xl text-stone-300">location_off</span>
+                <div className="rounded-xl border border-dashed border-sand p-8 text-center bg-mist/30">
+                  <MapPinOff className="mx-auto h-10 w-10 text-stone-300" />
                   <p className="mt-3 text-sm text-stone-500">Bạn chưa có địa chỉ nhận đồ nào.</p>
                   <Link
                     href="/dashboard/customer/addresses"
-                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-lotus px-5 py-3 text-sm font-semibold text-white transition hover:bg-oxblood"
+                    className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-lotus px-5 py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition hover:bg-oxblood"
                   >
-                    <span className="material-symbols-outlined text-[16px]">add_location</span>
+                    <Plus className="h-4 w-4" />
                     Thêm địa chỉ nhận đồ
                   </Link>
                 </div>
@@ -224,18 +240,16 @@ function BookingLogisticsInner() {
                             <p className="mt-1 text-sm text-stone-600">{address.phone}</p>
                             <p className="mt-1 text-sm leading-relaxed text-stone-600">{formatAddress(address)}</p>
                           </div>
-                          <span className={`material-symbols-outlined mt-1 ${selectedAddressId === address.id ? "text-antique" : "text-stone-300"}`}>
-                            {selectedAddressId === address.id ? "radio_button_checked" : "radio_button_unchecked"}
-                          </span>
+                          <CheckCircle2 className={`h-5 w-5 mt-1 shrink-0 ${selectedAddressId === address.id ? "text-lotus" : "text-stone-300"}`} />
                         </div>
                       </label>
                     ))}
                   </div>
                   <Link
                     href="/dashboard/customer/addresses"
-                    className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-lotus transition hover:underline"
+                    className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-lotus transition hover:underline"
                   >
-                    <span className="material-symbols-outlined text-[16px]">add</span>
+                    <Plus className="h-3.5 w-3.5" />
                     Thêm địa chỉ khác
                   </Link>
 
@@ -274,14 +288,14 @@ function BookingLogisticsInner() {
           <section className="rounded-xl border border-sand bg-parchment p-6">
             <h2 className="font-display text-3xl text-ink">Địa điểm nhận tại atelier</h2>
             <p className="mt-1 text-sm text-stone-600">Vui lòng đến trong khung giờ làm việc để thử và nhận bộ đồ.</p>
-            <div className="mt-5 flex items-start gap-4 rounded-lg border border-sand bg-white p-4">
-              <span className="material-symbols-outlined mt-1 text-antique">location_on</span>
+            <div className="mt-5 flex items-start gap-4 rounded-xl border border-sand bg-white p-4">
+              <MapPin className="h-5 w-5 mt-1 text-antique shrink-0" />
               <div>
-                <h3 className="font-semibold text-ink">{storeInfo?.name ?? "Heritage Atelier"}</h3>
-                <p className="mt-1 text-sm leading-7 text-stone-600">{storeInfo?.address ?? "123 Silk Road, Quận 1, TP. Hồ Chí Minh"}</p>
+                <h3 className="font-semibold text-ink">{storeInfo?.name ?? "Heritage Atelier - FPT Đà Nẵng"}</h3>
+                <p className="mt-1 text-sm leading-7 text-stone-600">{storeInfo?.address ?? "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng"}</p>
                 <div className="mt-3 flex flex-wrap gap-4 text-xs font-semibold uppercase tracking-[0.16em] text-bronze">
-                  <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px]">schedule</span>{storeInfo?.businessHours ?? "09:00 - 20:00"}</span>
-                  <span className="flex items-center gap-1"><span className="material-symbols-outlined text-[16px]">call</span>{storeInfo?.phone ?? "+84 28 3822 0000"}</span>
+                  <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{storeInfo?.businessHours ?? "09:00 - 20:00"}</span>
+                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{storeInfo?.phone ?? "0236 730 0999"}</span>
                 </div>
               </div>
             </div>
@@ -290,35 +304,35 @@ function BookingLogisticsInner() {
           <div className="flex flex-col gap-4 border-t border-sand pt-8 sm:flex-row sm:justify-between">
             <Link
               href={`/booking/date-selection?${backParams.toString()}`}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-bronze px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-bronze transition hover:bg-parchment"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-bronze px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-bronze transition hover:bg-parchment"
             >
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+              <ArrowLeft className="h-4 w-4" />
               Quay lại lịch thuê
             </Link>
             <button
               type="button"
               onClick={handleContinue}
               disabled={pickupMethod === "delivery" && !selectedAddressId}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-white shadow-sm transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Sang bước kiểm tra đơn
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              <span>Sang bước kiểm tra đơn</span>
+              <ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </div>
 
         <aside className="space-y-6 lg:sticky lg:top-28 lg:self-start">
-          <section className="rounded-xl border border-sand bg-white/90 p-6 shadow-md backdrop-blur">
+          <section className="rounded-2xl border border-sand bg-white/90 p-6 shadow-md backdrop-blur">
             <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-lotus/10 text-lotus">
-                <span className="material-symbols-outlined text-[18px]">diamond</span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                <Sparkles className="h-4 w-4 text-antique" />
               </div>
-              <h2 className="font-display text-2xl text-ink">Chăm sóc & tiền cọc</h2>
+              <h2 className="font-display text-2xl font-semibold text-ink">Chăm sóc & tiền cọc</h2>
             </div>
-            <ul className="space-y-3 text-sm leading-7 text-stone-600">
-              <li className="flex gap-2"><span className="material-symbols-outlined text-antique">shield</span><span>Tiền cọc sẽ được áp vào bước xác nhận cuối cùng.</span></li>
-              <li className="flex gap-2"><span className="material-symbols-outlined text-antique">dry_cleaning</span><span>Không tự giặt hoặc hấp sấy. Atelier phụ trách làm sạch.</span></li>
-              <li className="flex gap-2"><span className="material-symbols-outlined text-antique">policy</span><span>Hoàn cọc sau khi nhân viên kiểm tra tình trạng bộ đồ khi trả.</span></li>
+            <ul className="space-y-3 text-xs leading-relaxed text-stone-600">
+              <li className="flex gap-2.5"><ShieldCheck className="h-4 w-4 text-antique shrink-0 mt-0.5" /><span>Tiền cọc sẽ được áp vào bước xác nhận cuối cùng.</span></li>
+              <li className="flex gap-2.5"><Sparkles className="h-4 w-4 text-antique shrink-0 mt-0.5" /><span>Không tự giặt hoặc hấp sấy. Atelier phụ trách làm sạch chuyên dụng.</span></li>
+              <li className="flex gap-2.5"><ShieldCheck className="h-4 w-4 text-antique shrink-0 mt-0.5" /><span>Hoàn cọc sau khi nhân viên kiểm tra tình trạng bộ đồ khi trả.</span></li>
             </ul>
           </section>
         </aside>

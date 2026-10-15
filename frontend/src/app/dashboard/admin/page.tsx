@@ -7,6 +7,30 @@ import { NotificationConfigPanel } from "@/components/admin/notification-config-
 import { AdminPortalShell } from "@/components/heritage/ui";
 import { MapPreview } from "@/components/location/map-preview";
 import {
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  CheckSquare,
+  Activity,
+  Pencil,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Banknote,
+  Settings,
+  Ban,
+  X,
+  Cpu,
+  Wallet,
+  SlidersHorizontal,
+  Server,
+  Save,
+  Search,
+  UserCog,
+  type LucideIcon,
+} from "lucide-react";
+
+import {
   getAdminOverview,
   getAdminUsers,
   updateAdminUser,
@@ -67,10 +91,10 @@ const DEFAULT_AI_SETTINGS = {
   max_rental_days: 30,
   deposit_refund_window_h: 48,
   late_penalty_per_day: 200000,
-  store_address: "123 Lê Thánh Tôn, Bến Nghé, Quận 1, TP.HCM",
-  store_phone: "0901999888",
-  store_lat: "10.7769",
-  store_lng: "106.7009",
+  store_address: "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng",
+  store_phone: "0236 730 0999",
+  store_lat: "15.967945",
+  store_lng: "108.260727",
   shipping_rate_per_km: 5000,
 };
 
@@ -394,14 +418,14 @@ export default function AdminOverviewPage() {
       {/* Toast Alerts */}
       {successMsg && (
         <div className="fixed right-6 top-20 z-50 flex items-center gap-2 rounded-lg bg-jade/5 px-4 py-3 text-sm font-semibold text-jade shadow-lg border border-jade/30 animate-slide-in">
-          <span className="material-symbols-outlined text-[20px]">check_circle</span>
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
           <span>{successMsg}</span>
         </div>
       )}
 
       {errorMsg && (
         <div className="fixed right-6 top-20 z-50 flex items-center gap-2 rounded-lg bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800 shadow-lg border border-rose-200 animate-slide-in">
-          <span className="material-symbols-outlined text-[20px]">error</span>
+          <AlertCircle className="h-5 w-5 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
@@ -442,7 +466,7 @@ export default function AdminOverviewPage() {
             {/* Queues list */}
             <div className="lg:col-span-1 space-y-6">
               <h3 className="font-display text-2xl font-bold text-ink flex items-center gap-2">
-                <span className="material-symbols-outlined text-lotus text-[24px]">assignment_turned_in</span>
+                <CheckSquare className="h-6 w-6 text-lotus" />
                 Hàng Chờ Đang Xử Lý
               </h3>
               <div className="rounded-xl border border-sand bg-white p-4 space-y-4">
@@ -466,7 +490,7 @@ export default function AdminOverviewPage() {
             {/* System Breakdown Charts / Tables */}
             <div className="lg:col-span-2 space-y-6">
               <h3 className="font-display text-2xl font-bold text-ink flex items-center gap-2">
-                <span className="material-symbols-outlined text-antique text-[24px]">monitoring</span>
+                <Activity className="h-6 w-6 text-antique" />
                 Trạng Thái Tài Sản & Đơn Hàng
               </h3>
               <div className="grid gap-6 md:grid-cols-2">
@@ -628,7 +652,7 @@ export default function AdminOverviewPage() {
                             }}
                             className="text-xs font-bold text-antique hover:text-lotus flex items-center gap-1 ml-auto"
                           >
-                            <span className="material-symbols-outlined text-[16px]">edit</span>
+                            <Pencil className="h-3.5 w-3.5" />
                             Sửa
                           </button>
                         </td>
@@ -658,7 +682,7 @@ export default function AdminOverviewPage() {
                     onClick={() => setUserPage(userPage - 1)}
                     className="p-1 rounded text-stone-600 hover:bg-sand/30 disabled:opacity-50 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                    <ChevronLeft className="h-4 w-4" />
                   </button>
                   <span className="px-3 py-1 bg-lotus text-white font-semibold rounded flex items-center justify-center">
                     {userPage}
@@ -668,7 +692,7 @@ export default function AdminOverviewPage() {
                     onClick={() => setUserPage(userPage + 1)}
                     className="p-1 rounded text-stone-600 hover:bg-sand/30 disabled:opacity-50 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -712,15 +736,15 @@ export default function AdminOverviewPage() {
               <div className="space-y-4">
                 {[
                   { key: "inventory", label: "Kho Hàng (Inventory)", icon: "inventory_2" },
-                  { key: "bookings", label: "Đơn Thuê & Hợp Đồng (Bookings)", icon: "assignment" },
-                  { key: "finance", label: "Đối Soát Tài Chính (Finance)", icon: "payments" },
-                  { key: "config", label: "Cấu Hình Hệ Thống (Settings)", icon: "settings" },
+                  { key: "bookings", label: "Đơn Thuê & Hợp Đồng (Bookings)", icon: FileText },
+                  { key: "finance", label: "Đối Soát Tài Chính (Finance)", icon: Banknote },
+                  { key: "config", label: "Cấu Hình Hệ Thống (Settings)", icon: Settings },
                 ].map((res) => {
                   const allowed = rolePermissionsPreset[selectedPreviewRole]?.[res.key] || [];
                   return (
                     <div key={res.key} className="p-4 rounded-xl border border-sand bg-warm-ivory/20">
                       <div className="flex items-center gap-2 mb-3">
-                        <span className="material-symbols-outlined text-antique text-[20px]">{res.icon}</span>
+                        {(() => { const ResIcon = res.icon; return <ResIcon className="h-5 w-5 text-antique" />; })()}
                         <span className="text-sm font-semibold text-ink">{res.label}</span>
                       </div>
                       
@@ -736,9 +760,7 @@ export default function AdminOverviewPage() {
                                   : "bg-stone-50 border-stone-200 text-stone-400 opacity-60"
                               }`}
                             >
-                              <span className="material-symbols-outlined text-[14px]">
-                                {hasPerm ? "check_circle" : "cancel"}
-                              </span>
+                              {hasPerm ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
                               {perm}
                             </div>
                           );
@@ -761,7 +783,7 @@ export default function AdminOverviewPage() {
                     onClick={() => setEditingUser(null)}
                     className="text-stone-400 hover:text-stone-600 rounded-full p-1"
                   >
-                    <span className="material-symbols-outlined text-[20px]">close</span>
+                    <X className="h-5 w-5" />
                   </button>
                 </header>
 
@@ -769,7 +791,7 @@ export default function AdminOverviewPage() {
                   {/* Lockout Guard Banner */}
                   {user?.id === editingUser.id && (
                     <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-semibold flex items-start gap-2">
-                      <span className="material-symbols-outlined text-amber-600 text-[18px]">warning</span>
+                      <AlertTriangle className="h-4.5 w-4.5 text-amber-600 shrink-0" />
                       <span>
                         Đây là tài khoản của bạn. Bạn không thể thay đổi vai trò hoặc tự khóa tài khoản của chính mình.
                       </span>
@@ -862,7 +884,7 @@ export default function AdminOverviewPage() {
               <header className="flex justify-between items-start mb-6 border-b border-sand pb-4">
                 <div>
                   <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                    <span className="material-symbols-outlined text-antique text-[24px]">model_training</span>
+                    <Cpu className="h-6 w-6 text-antique" />
                     AI Engine Parameters
                   </h3>
                   <p className="text-xs text-stone-500 mt-1">
@@ -927,7 +949,7 @@ export default function AdminOverviewPage() {
             <div className="bg-white rounded-xl border border-sand p-6 shadow-sm">
               <header className="mb-6 border-b border-sand pb-4">
                 <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <span className="material-symbols-outlined text-antique text-[24px]">account_balance_wallet</span>
+                  <Wallet className="h-6 w-6 text-antique" />
                   Payment Gateway Integration
                 </h3>
                 <p className="text-xs text-stone-500 mt-1">Cấu hình kết nối cổng VNPAY để xử lý giao dịch đặt cọc tự động.</p>
@@ -970,7 +992,7 @@ export default function AdminOverviewPage() {
             <div className="bg-white rounded-xl border border-sand p-6 shadow-sm">
               <header className="mb-6 border-b border-sand pb-4">
                 <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <span className="material-symbols-outlined text-antique text-[24px]">tune</span>
+                  <SlidersHorizontal className="h-6 w-6 text-antique" />
                   General Business Settings
                 </h3>
                 <p className="text-xs text-stone-500 mt-1">Thiết lập chính sách đơn thuê, địa chỉ cửa hàng và tiền phạt quá hạn.</p>
@@ -1083,7 +1105,7 @@ export default function AdminOverviewPage() {
             <div className="bg-white rounded-xl border border-sand p-6 shadow-sm space-y-6">
               <header className="border-b border-sand pb-4">
                 <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <span className="material-symbols-outlined text-antique text-[24px]">memory</span>
+                  <Server className="h-6 w-6 text-antique" />
                   Compute Allocation
                 </h3>
                 <p className="text-xs text-stone-500 mt-1">Quản lý tải và cụm GPU inference cho hệ thống.</p>
@@ -1149,7 +1171,7 @@ export default function AdminOverviewPage() {
                   disabled={actioningConfig}
                   className="w-full py-3 bg-lotus hover:bg-oxblood text-white rounded-lg text-sm font-semibold shadow-md flex justify-center items-center gap-2 disabled:opacity-50"
                 >
-                  <span className="material-symbols-outlined text-[20px]">save</span>
+                  <Save className="h-5 w-5" />
                   {actioningConfig ? "Đang lưu cấu hình..." : "Lưu Toàn Bộ Cấu Hình"}
                 </button>
                 <button
@@ -1180,7 +1202,7 @@ export default function AdminOverviewPage() {
             <div className="flex-1 min-w-[240px]">
               <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Từ khóa tìm kiếm</label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
                 <input
                   type="text"
                   placeholder="Tìm theo hành động, email, tên..."
@@ -1249,9 +1271,7 @@ export default function AdminOverviewPage() {
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-xs font-semibold bg-stone-100 text-stone-700 border border-stone-200">
-                            <span className="material-symbols-outlined text-[14px]">
-                              {log.action === "ADMIN_UPDATE_USER" ? "manage_accounts" : "settings"}
-                            </span>
+                            {log.action === "ADMIN_UPDATE_USER" ? <UserCog className="h-3.5 w-3.5" /> : <Settings className="h-3.5 w-3.5" />}
                             {log.action}
                           </span>
                         </td>
@@ -1260,7 +1280,7 @@ export default function AdminOverviewPage() {
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-jade/5 border border-jade/30 text-jade text-xs font-semibold">
-                            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
                             Thành công
                           </span>
                         </td>
@@ -1290,7 +1310,7 @@ export default function AdminOverviewPage() {
                     onClick={() => setLogPage(logPage - 1)}
                     className="p-1 rounded text-stone-600 hover:bg-sand/30 disabled:opacity-50 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                    <ChevronLeft className="h-4 w-4" />
                   </button>
                   <span className="px-3 py-1 bg-lotus text-white font-semibold rounded flex items-center justify-center">
                     {logPage}
@@ -1300,7 +1320,7 @@ export default function AdminOverviewPage() {
                     onClick={() => setLogPage(logPage + 1)}
                     className="p-1 rounded text-stone-600 hover:bg-sand/30 disabled:opacity-50 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
               </div>

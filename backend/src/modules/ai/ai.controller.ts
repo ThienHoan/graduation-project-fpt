@@ -20,6 +20,21 @@ export class AiController {
     return this.aiService.createTryon(body, user.id);
   }
 
+  @Get("tryon/quota")
+  @UseGuards(JwtAuthGuard)
+  getTryonQuota(@CurrentUser() user: AuthenticatedUser) {
+    return this.aiService.getTryonQuota(user.id);
+  }
+
+  @Get("tryon/status/:id")
+  @UseGuards(JwtAuthGuard)
+  getTryonStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+  ) {
+    return this.aiService.getTryonStatus(id, user.id);
+  }
+
   @Get("tryon/history")
   @UseGuards(JwtAuthGuard)
   getMyHistory(@CurrentUser() user: AuthenticatedUser) {
@@ -33,6 +48,11 @@ export class AiController {
     @Param("id") id: string,
   ) {
     return this.aiService.hideResult(id, user.id);
+  }
+
+  @Get("occasions")
+  getOccasions() {
+    return this.aiService.getOccasions();
   }
 
   @Post("product-advisor")

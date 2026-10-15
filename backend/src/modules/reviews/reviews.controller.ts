@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Req, Query } from '@nestjs/common';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
@@ -21,8 +21,21 @@ export class ReviewsController {
   }
 
   @Get('garment/:garmentId')
-  findAllByGarment(@Param('garmentId') garmentId: string) {
-    return this.reviewsService.findAllByGarment(garmentId);
+  findAllByGarment(
+    @Param('garmentId') garmentId: string,
+    @Query('rating') rating?: string,
+    @Query('hasMedia') hasMedia?: string,
+    @Query('fit') fit?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.reviewsService.findAllByGarment(garmentId, {
+      rating: rating ? parseInt(rating, 10) : undefined,
+      hasMedia: hasMedia !== undefined ? hasMedia === 'true' : undefined,
+      fit: fit || undefined,
+      page: page ? Math.max(1, parseInt(page, 10)) : 1,
+      limit: limit ? Math.min(50, Math.max(1, parseInt(limit, 10))) : 10,
+    });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

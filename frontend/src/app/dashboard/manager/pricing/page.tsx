@@ -10,7 +10,7 @@ export default function PricingManagerPage() {
     <ManagerPortalShell
       active="pricing"
       title="Điều chỉnh giá"
-      subtitle="Quản lý lịch sự kiện, đề xuất giá AI và khoảng giá hiệu lực"
+      subtitle="Luật giá tự động theo ngày đặc biệt, lịch sự kiện, đề xuất giá AI và khoảng giá hiệu lực"
     >
       <div className="space-y-6">
         <PricingManagerClient />

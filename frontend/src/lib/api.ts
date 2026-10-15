@@ -13,6 +13,21 @@ export type ApiRequestOptions = RequestInit & {
   authToken?: string | null;
 };
 
+export type PickupMethod = "store_pickup" | "delivery";
+
+export type HandoverRecoveryPayload = {
+  action: "replace" | "cancel";
+  expectedDecidedAt: string;
+  reason: string;
+  replacements?: Array<{ itemId: string; garmentAssetId: string }>;
+};
+
+export function normalizePickupMethod(value: string | null | undefined): PickupMethod | null {
+  if (value === "pickup" || value === "store_pickup") return "store_pickup";
+  if (value === "delivery") return "delivery";
+  return null;
+}
+
 function buildHeaders(init?: ApiRequestOptions) {
   const headers = new Headers(init?.headers);
 
@@ -78,11 +93,34 @@ export type GarmentSummary = {
   id: string;
   name: string;
   categoryName: string | null;
+  sizeId?: string | null;
   sizeLabel: string | null;
   color: string | null;
   dailyPrice: number;
   depositAmount: number;
+  isActive?: boolean;
+  deletedAt?: string | null;
   images?: GarmentImage[];
+};
+
+export type GarmentMeasurements = {
+  shoulderCm: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  lengthCm: number | null;
+  sleeveLengthCm: number | null;
+};
+
+export type GroupedGarmentAccessory = {
+  accessoryId: string;
+  code: string;
+  name: string;
+  imageUrl: string | null;
+  quantity: number;
+  isIncluded: boolean;
+  extraPrice: number;
+  replacementValue: number;
 };
 
 export type GarmentGrouped = {
@@ -91,6 +129,11 @@ export type GarmentGrouped = {
   garmentId: string;
   categoryName: string | null;
   description: string | null;
+  color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
   imageUrl: string | null;
   images: GarmentImage[];
   sizes: Array<{
@@ -99,7 +142,10 @@ export type GarmentGrouped = {
     sizeLabel: string | null;
     dailyPrice: number;
     depositAmount: number;
+    measurements: GarmentMeasurements | null;
+    accessories: GroupedGarmentAccessory[];
   }>;
+  accessories: GroupedGarmentAccessory[];
 };
 
 export async function getGarmentsGrouped(search?: string, category?: string) {
@@ -110,8 +156,9 @@ export async function getGarmentsGrouped(search?: string, category?: string) {
   return apiRequest<GarmentGrouped[]>(`/garments/grouped${query}`);
 }
 
-export async function getGarments() {
-  return apiRequest<GarmentSummary[]>("/garments");
+export async function getGarments(includeDeleted = false) {
+  const query = includeDeleted ? "?includeDeleted=true" : "";
+  return apiRequest<GarmentSummary[]>(`/garments${query}`);
 }
 
 export async function getGarmentById(id: string) {
@@ -136,6 +183,21 @@ export type CustomerAddress = {
 
 export async function getMyAddresses() {
   return apiRequest<CustomerAddress[]>("/users/me/addresses");
+}
+
+export type CustomerMeasurement = {
+  id: string;
+  heightCm: number | null;
+  weightKg: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  usualSize: string | null;
+  createdAt: string;
+};
+
+export async function getMyMeasurements() {
+  return apiRequest<CustomerMeasurement | null>("/users/me/measurements");
 }
 
 // ---------- Shipping / Locations ----------
@@ -195,17 +257,16 @@ export async function getDeliveryMap() {
 
 export type DeliveryTrackData = {
   bookingId: string;
-  status: "preparing" | "in_transit" | "arrived";
-  progress: number;
+  status: "preparing" | "in_transit" | "delivered";
+  shipperLocationAvailable: boolean;
   storeLat: number;
   storeLng: number;
   customerLat: number;
   customerLng: number;
-  shipperLat: number;
-  shipperLng: number;
+  deliveredAt: string | null;
+  handoverConfirmed: boolean;
   customerName: string;
   customerAddress: string;
-  estimatedDelivery: string;
 };
 
 export async function getDeliveryTrack(bookingId: string) {
@@ -222,11 +283,87 @@ export type BookingItem = {
   imageUrl?: string | null;
   sizeLabel: string | null;
   dailyPrice: number;
+  basePrice?: number;
+  discountPrice?: number;
+  appliedPriceRule?: (AppliedPriceRule & { rules?: Array<AppliedPriceRule & { days: number }> }) | null;
   depositAmount: number;
   garmentAssetId?: string | null;
   assetCode?: string | null;
   assetStatus?: string | null;
   conditionNote?: string | null;
+};
+
+export type HandoverStatus = "PENDING" | "CONFIRMED" | "REJECTED";
+export type ConditionBeforeRental = "GOOD" | "MINOR_DAMAGE" | "MAJOR_DAMAGE";
+
+export type BookingHandover = {
+  status: HandoverStatus | null;
+  conditionBeforeRental: ConditionBeforeRental | null;
+  images: string[];
+  note: string | null;
+  receiverName: string | null;
+  deliveryPersonName: string | null;
+  receiverPhone: string | null;
+  correctProduct: boolean | null;
+  noVisibleDefect: boolean | null;
+  customerAgreed: boolean | null;
+  decidedAt: string | null;
+  receivedAt: string | null;
+  confirmedBy: string | null;
+  history: unknown[];
+};
+
+export type ConfirmHandoverPayload = {
+  handoverStatus: HandoverStatus;
+  conditionBeforeRental: ConditionBeforeRental;
+  conditionImages?: string[];
+  note?: string;
+  correctProductConfirmed?: boolean;
+  noDefectConfirmed?: boolean;
+  customerAgreed?: boolean;
+  deliveredBy?: string;
+  receivedBy?: string;
+  receiverPhone?: string;
+};
+
+export type DeliveryAddressSnapshot = {
+  version: 1;
+  receiverName: string;
+  phone: string;
+  line1: string;
+  ward: string | null;
+  district: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+export type BookingAccessoryItem = {
+  id: string;
+  bookingItemId: string | null;
+  garmentSizeId: string | null;
+  garmentId: string | null;
+  accessoryId: string;
+  accessoryCode: string | null;
+  accessoryName: string | null;
+  imageUrl?: string | null;
+  quantity: number;
+  unitPrice: number;
+  isIncluded: boolean;
+  rentalTotal: number;
+  accessoryAssetId?: string | null;
+  assetCode?: string | null;
+  replacementValue?: number;
+  conditionStatus?: string | null;
+  conditionNote?: string | null;
+  inspectedAt?: string | null;
+  penaltyAmount?: number;
+  conditionImages?: string[];
+};
+
+export type BookingAccessorySelection = {
+  garmentSizeId: string;
+  accessoryId: string;
 };
 
 export type BookingResponse = {
@@ -236,21 +373,32 @@ export type BookingResponse = {
   rentalEndDate: string;
   days: number;
   pickupMethod: string;
+  subtotal?: number;
+  discountTotal?: number;
+  voucherCode?: string | null;
   rentalTotal: number;
   depositTotal: number;
   shippingFee?: number;
   penaltyTotal?: number;
+  /** Số ngày quá hạn so với rentalEndDate (0 nếu không quá hạn / đã trả đồ). */
+  overdueDays?: number;
+  overdueFeePerDay?: number;
+  /** Phí quá hạn = overdueDays × overdueFeePerDay. */
+  overdueAmount?: number;
   paymentMethod: string;
   paidPaymentMethod?: string | null;
   note: string | null;
   deliveryAddressId?: string | null;
   deliveryAddress?: Omit<CustomerAddress, "isDefault" | "createdAt"> | null;
+  deliverySnapshot?: DeliveryAddressSnapshot | null;
   createdAt: string;
   items: BookingItem[];
+  accessories?: BookingAccessoryItem[];
+  handover?: BookingHandover | null;
 };
 
 export type AvailabilityResponse = {
-  garmentId: string;
+  garmentSizeId: string;
   available: boolean;
   availableCount: number;
   totalAssets: number;
@@ -265,15 +413,53 @@ export async function checkAvailability(garmentSizeId: string, startDate: string
   });
 }
 
+export type AccessoryAvailabilityResponse = {
+  accessoryId: string;
+  available: boolean;
+  availableCount: number;
+  totalAssets: number;
+};
+
+export async function checkAccessoryAvailability(
+  accessoryId: string,
+  startDate: string,
+  endDate: string,
+  quantity = 1,
+) {
+  return apiRequest<AccessoryAvailabilityResponse>("/bookings/check-accessory-availability", {
+    method: "POST",
+    body: JSON.stringify({ accessoryId, startDate, endDate, quantity }),
+  });
+}
+
+export type AvailabilityCalendarDay = {
+  date: string;
+  available: boolean;
+  availableCount: number;
+  capacity: number;
+};
+
+export async function getSizeAvailabilityCalendar(garmentSizeId: string, fromDate: string, toDate: string) {
+  return apiRequest<{ garmentSizeId: string; capacity: number; days: AvailabilityCalendarDay[] }>(
+    "/bookings/availability-calendar",
+    {
+      method: "POST",
+      body: JSON.stringify({ garmentSizeId, fromDate, toDate }),
+    },
+  );
+}
+
 export async function createBooking(payload: {
   garmentSizeIds: string[];
   startDate: string;
   endDate: string;
-  pickupMethod?: string;
+  pickupMethod?: PickupMethod;
   deliveryAddressId?: string;
   shippingFee?: number;
   note?: string;
-  paymentMethod?: string;
+  paymentMethod?: "cash" | "qr_code";
+  voucherCode?: string;
+  accessories?: BookingAccessorySelection[];
 }) {
   return apiRequest<BookingResponse>("/bookings", {
     method: "POST",
@@ -320,11 +506,54 @@ export async function cancelBooking(id: string) {
   return apiRequest<BookingResponse>(`/bookings/${id}/cancel`, { method: "PATCH" });
 }
 
+export async function confirmBookingHandover(id: string, payload: ConfirmHandoverPayload) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/confirm-handover`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function recoverBookingHandover(id: string, payload: HandoverRecoveryPayload) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/recover-handover`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markBookingDelivered(id: string, note?: string) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/mark-delivered`, {
+    method: "PATCH",
+    body: JSON.stringify(note ? { note } : {}),
+  });
+}
+
+export async function markBookingReturned(id: string, note?: string) {
+  return apiRequest<BookingResponse>(`/bookings/${id}/mark-returned`, {
+    method: "PATCH",
+    body: JSON.stringify(note ? { note } : {}),
+  });
+}
+
 // ---------- Staff Booking types ----------
+
+export type StaffRefundSummary = {
+  id: string;
+  amount: number;
+  status: string;
+  refundMethod: "cash" | "bank_transfer" | string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+  bankDetailsComplete?: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type StaffBookingResponse = BookingResponse & {
   customerName: string | null;
   customerPhone: string | null;
+  allAssignedAssetsInspected?: boolean;
+  refunds?: StaffRefundSummary[];
 };
 
 // ---------- Staff Booking API functions ----------
@@ -333,8 +562,24 @@ export async function getStaffPendingBookings() {
   return apiRequest<StaffBookingResponse[]>("/bookings/staff/pending");
 }
 
-export async function getStaffAllBookings() {
-  return apiRequest<StaffBookingResponse[]>("/bookings/staff/all");
+export async function getBookingsNeedingAssets() {
+  return apiRequest<StaffBookingResponse[]>("/bookings/staff/assets-needed");
+}
+
+export async function getStaffAllBookings(params?: { search?: string; status?: string; cursor?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.cursor) qs.set("cursor", params.cursor);
+  const query = qs.toString();
+  const res = await apiRequest<{ data: StaffBookingResponse[]; nextCursor: string | null }>(
+    `/bookings/staff/all${query ? `?${query}` : ""}`,
+  );
+  // Unwrap paginated response for backward compatibility with existing callers
+  if (res.success && res.data) {
+    return { ...res, data: res.data.data, nextCursor: res.data.nextCursor };
+  }
+  return { ...res, data: undefined as StaffBookingResponse[] | undefined, nextCursor: null };
 }
 
 export async function advanceBookingStatus(id: string, status: string, note?: string) {
@@ -400,8 +645,30 @@ export type InspectionFindingResponse = {
 export type InspectionPhotoResponse = {
   id: string;
   imageUrl: string;
+  photoType?: string;
   note: string | null;
+  aiAnalysis?: any;
   createdAt: string;
+};
+
+export type AiInspectionFindingSuggestion = {
+  findingType: string;
+  severity: "low" | "medium" | "high" | "severe";
+  description: string;
+  suggestedPenalty: number;
+};
+
+export type AiInspectionComparisonResult = {
+  overallCondition: "excellent" | "good" | "minor_damage" | "major_damage" | "severely_damaged";
+  conditionScore: number;
+  summary: string;
+  recommendedAction: "laundry" | "maintenance" | "damaged";
+  actionReason: string;
+  detectedIssues: AiInspectionFindingSuggestion[];
+  totalSuggestedPenalty: number;
+  confidence: number;
+  beforePhotosAnalyzed: number;
+  afterPhotosAnalyzed: number;
 };
 
 export type InspectionSessionResponse = {
@@ -410,6 +677,10 @@ export type InspectionSessionResponse = {
   garmentAssetId: string;
   status: string;
   note: string | null;
+  aiComparisonResult?: AiInspectionComparisonResult | null;
+  aiComparedAt?: string | null;
+  handoverImages?: string[];
+  conditionBeforeRental?: string | null;
   createdAt: string;
   completedAt: string | null;
   inspector: {
@@ -426,6 +697,10 @@ export type InspectionSessionResponse = {
 
 export async function getBookingInspections(bookingId: string) {
   return apiRequest<InspectionSessionResponse[]>(`/inspections/booking/${bookingId}`);
+}
+
+export async function getCustomerBookingInspections(bookingId: string) {
+  return apiRequest<InspectionSessionResponse[]>(`/inspections/customer/booking/${bookingId}`);
 }
 
 export async function createInspectionSession(payload: {
@@ -454,16 +729,63 @@ export async function addInspectionFinding(
   });
 }
 
+export async function deleteInspectionFinding(
+  sessionId: string,
+  findingId: string,
+) {
+  return apiRequest<{ message: string; findingId: string }>(
+    `/inspections/${sessionId}/findings/${findingId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export async function addInspectionPhoto(
   sessionId: string,
   payload: {
     imageUrl: string;
+    photoType?: string;
     note?: string;
   },
 ) {
   return apiRequest<InspectionPhotoResponse>(`/inspections/${sessionId}/photos`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteInspectionPhoto(
+  sessionId: string,
+  photoId: string,
+) {
+  return apiRequest<{ message: string; photoId: string }>(
+    `/inspections/${sessionId}/photos/${photoId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export async function compareInspectionSessionWithAi(
+  sessionId: string,
+  payload?: { afterImageUrls?: string[] },
+) {
+  return apiRequest<{
+    aiComparisonResult: AiInspectionComparisonResult;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-compare`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function applyAiInspectionFindings(sessionId: string) {
+  return apiRequest<{
+    appliedCount: number;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-apply-findings`, {
+    method: "POST",
   });
 }
 
@@ -491,8 +813,12 @@ export type AvailableAsset = {
 
 // ---------- Asset API functions ----------
 
-export async function getAvailableAssets(garmentId: string) {
-  return apiRequest<AvailableAsset[]>(`/garments/${garmentId}/assets/available`);
+export async function getAvailableAssets(garmentId: string, garmentSizeId?: string, bookingId?: string) {
+  const params = new URLSearchParams();
+  if (garmentSizeId) params.set("garmentSizeId", garmentSizeId);
+  if (bookingId) params.set("bookingId", bookingId);
+  const query = params.size ? `?${params.toString()}` : "";
+  return apiRequest<AvailableAsset[]>(`/garments/${garmentId}/assets/available${query}`);
 }
 
 export async function assignAssetToBookingItem(
@@ -504,6 +830,50 @@ export async function assignAssetToBookingItem(
     method: "PATCH",
     body: JSON.stringify({ garmentAssetId }),
   });
+}
+
+export async function assignAccessoryAssetToBookingItem(
+  bookingId: string,
+  accessoryItemId: string,
+  accessoryAssetId: string,
+) {
+  return apiRequest<BookingResponse>(`/bookings/${bookingId}/accessories/${accessoryItemId}/assign-asset`, {
+    method: "PATCH",
+    body: JSON.stringify({ accessoryAssetId }),
+  });
+}
+
+export async function inspectBookingAccessory(
+  bookingId: string,
+  accessoryItemId: string,
+  payload: {
+    conditionStatus: "good" | "laundry" | "maintenance" | "damaged" | "lost";
+    note?: string;
+    penaltyAmount?: number;
+    imageUrls?: string[];
+  },
+) {
+  return apiRequest<BookingResponse>(`/bookings/${bookingId}/accessories/${accessoryItemId}/inspect`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export type AccessoryProcessingItem = {
+  id: string;
+  accessoryId: string;
+  accessoryName: string;
+  assetCode: string;
+  status: string;
+  conditionNote: string | null;
+  replacementValue: number;
+  bookingId: string | null;
+  bookingStatus: string | null;
+  updatedAt: string;
+};
+
+export async function getAccessoriesProcessing() {
+  return apiRequest<AccessoryProcessingItem[]>("/accessories/processing/assets");
 }
 
 export async function getStaffBooking(id: string) {
@@ -526,6 +896,7 @@ export type RefundResponse = {
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountHolder: string | null;
+  bankDetailsComplete: boolean;
   proofImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -564,6 +935,7 @@ export type CustomerRefundResponse = {
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountHolder: string | null;
+  bankDetailsComplete: boolean;
   proofImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -587,6 +959,20 @@ export async function createRefund(payload: {
 }) {
   return apiRequest<RefundResponse>("/refunds", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRefundDetails(
+  refundId: string,
+  payload: {
+    bankName: string;
+    bankAccountNumber: string;
+    bankAccountHolder: string;
+  },
+) {
+  return apiRequest<RefundResponse>(`/refunds/${refundId}/details`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -640,6 +1026,201 @@ export async function getCustomerRefund(bookingId: string) {
   return apiRequest<CustomerRefundResponse[]>(`/refunds/customer/booking/${bookingId}`);
 }
 
+// ---------- Financial Dashboard types ----------
+
+export type FinancialSummaryResponse = {
+  rentalRevenue: number;
+  depositReceived: number;
+  depositHeld: number;
+  depositHeldCount: number;
+  refundedDeposit: number;
+  damageDeduction: number;
+  forfeitedDeposit: number;
+  totalTransactions: number;
+  totalBookings: number;
+  paidBookings: number;
+  unpaidBookings: number;
+};
+
+export type RevenueByDayResponse = {
+  date: string;
+  rentalRevenue: number;
+  depositReceived: number;
+}[];
+
+export type RevenueByPaymentMethodResponse = {
+  paymentMethod: string;
+  rentalRevenue: number;
+  depositReceived: number;
+  refundedAmount: number;
+  transactionCount: number;
+}[];
+
+export type DepositListItem = {
+  bookingId: string;
+  customerId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  originalDeposit: number;
+  refundedAmount: number;
+  damageDeduction: number;
+  forfeitedAmount: number;
+  remainingAmount: number;
+  status: string;
+  bookingStatus: string;
+  createdAt: string;
+  updatedAt: string;
+  refunds: Array<{
+    id: string;
+    amount: number;
+    status: string;
+    reason: string | null;
+    refundMethod: string;
+    processedBy: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  penalties: Array<{
+    id: string;
+    amount: number;
+    reason: string;
+    createdBy: string | null;
+    createdAt: string;
+  }>;
+};
+
+export type DepositDetailResponse = {
+  bookingId: string;
+  customer: {
+    id: string;
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+  };
+  originalDeposit: number;
+  refundedAmount: number;
+  damageDeduction: number;
+  forfeitedAmount: number;
+  remainingAmount: number;
+  status: string;
+  bookingStatus: string;
+  items: Array<{
+    id: string;
+    garmentName: string | null;
+    sizeLabel: string | null;
+    imageUrl: string | null;
+  }>;
+  history: Array<{
+    action: string;
+    amount: number;
+    reason: string | null;
+    processedBy: string | null;
+    processedAt: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FinancialTransactionItem = {
+  id: string;
+  bookingId: string | null;
+  customerName: string | null;
+  type: string;
+  rawType: string;
+  amount: number;
+  method: string | null;
+  status: string;
+  note: string | null;
+  createdAt: string;
+  processedBy: string | null;
+};
+
+export type FinancialTransactionsResponse = {
+  items: FinancialTransactionItem[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type ReconciliationResponse = {
+  period: { start: string; end: string };
+  rentalRevenue: number;
+  depositReceived: number;
+  refundedDeposit: number;
+  damageDeduction: number;
+  transactionCount: number;
+  netCashFlow: number;
+};
+
+export type FinancialQueryParams = {
+  preset?: "today" | "this_month" | "this_year" | "custom" | string;
+  startDate?: string;
+  endDate?: string;
+  paymentMethod?: string;
+  transactionStatus?: string;
+  method?: string;
+};
+
+// ---------- Financial Dashboard API functions ----------
+
+function buildFinancialQueryString(params?: FinancialQueryParams): string {
+  if (!params) return "";
+  const searchParams = new URLSearchParams();
+  if (params.preset) searchParams.set("preset", params.preset);
+  if (params.startDate) searchParams.set("startDate", params.startDate);
+  if (params.endDate) searchParams.set("endDate", params.endDate);
+  if (params.paymentMethod) searchParams.set("paymentMethod", params.paymentMethod);
+  if (params.transactionStatus) searchParams.set("transactionStatus", params.transactionStatus);
+  if (params.method) searchParams.set("method", params.method);
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function getFinancialSummary(params?: FinancialQueryParams) {
+  return apiRequest<FinancialSummaryResponse>(`/financial/summary${buildFinancialQueryString(params)}`);
+}
+
+export async function getRevenueByDay(params?: FinancialQueryParams) {
+  return apiRequest<RevenueByDayResponse>(`/financial/revenue-by-day${buildFinancialQueryString(params)}`);
+}
+
+export async function getRevenueByPaymentMethod(params?: FinancialQueryParams) {
+  return apiRequest<RevenueByPaymentMethodResponse>(`/financial/revenue-by-payment-method${buildFinancialQueryString(params)}`);
+}
+
+export async function getFinancialDeposits(params?: FinancialQueryParams & { bookingId?: string; customerId?: string; status?: string }) {
+  const searchParams = new URLSearchParams();
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+  if (params?.bookingId) searchParams.set("bookingId", params.bookingId);
+  if (params?.customerId) searchParams.set("customerId", params.customerId);
+  if (params?.status) searchParams.set("status", params.status);
+  const qs = searchParams.toString();
+  return apiRequest<DepositListItem[]>(`/financial/deposits${qs ? `?${qs}` : ""}`);
+}
+
+export async function getDepositDetail(bookingId: string) {
+  return apiRequest<DepositDetailResponse>(`/financial/deposits/${bookingId}`);
+}
+
+export async function getFinancialTransactions(params?: FinancialQueryParams & { page?: number; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+  if (params?.transactionStatus) searchParams.set("transactionStatus", params.transactionStatus);
+  if (params?.method) searchParams.set("method", params.method);
+  if (params?.page) searchParams.set("page", String(params.page));
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const qs = searchParams.toString();
+  return apiRequest<FinancialTransactionsResponse>(`/financial/transactions${qs ? `?${qs}` : ""}`);
+}
+
+export async function getReconciliation(params?: FinancialQueryParams) {
+  return apiRequest<ReconciliationResponse>(`/financial/reconciliation${buildFinancialQueryString(params)}`);
+}
+
 // ---------- Asset maintenance API functions ----------
 
 export type AssetNeedingProcessing = {
@@ -666,11 +1247,24 @@ export async function getAssetsNeedingProcessing() {
   return apiRequest<AssetNeedingProcessing[]>("/inspections/assets/needing-processing");
 }
 
+/**
+ * Hoàn tất kiểm tra đơn thủ công — dùng khi tất cả trang phục + phụ kiện
+ * đã kiểm tra xong nhưng đơn vẫn kẹt ở inspection_pending.
+ */
+export async function finalizeBookingInspection(bookingId: string) {
+  return apiRequest<{ finalized: boolean; status: string }>(
+    `/inspections/booking/${bookingId}/finalize`,
+    { method: "POST" },
+  );
+}
+
+
 // ---------- Asset management types (extended) ----------
 
 export type AssetDetail = {
   id: string;
   garmentId: string;
+  garmentSizeId?: string | null;
   garmentName: string;
   sizeLabel: string | null;
   dailyPrice: number;
@@ -756,12 +1350,15 @@ export async function completeLaundryTicket(
 
 // ---------- Maintenance types ----------
 
+export type MaintenanceJobStatus = "open" | "in_progress" | "completed" | "cannot_repair";
+export type CompleteMaintenanceStatus = "completed" | "cannot_repair";
+
 export type MaintenanceJobResponse = {
   id: string;
   garmentAssetId: string;
   assetCode: string;
   garmentName: string;
-  status: string;
+  status: MaintenanceJobStatus;
   note: string | null;
   createdAt: string;
   completedAt: string | null;
@@ -773,7 +1370,7 @@ export async function getMaintenanceJobs() {
 
 export async function completeMaintenanceJob(
   jobId: string,
-  status: string,
+  status: CompleteMaintenanceStatus,
   note?: string,
 ) {
   return apiRequest<MaintenanceJobResponse>(`/inspections/maintenance/${jobId}/complete`, {
@@ -801,6 +1398,24 @@ export async function getInspectionLog() {
   return apiRequest<InspectionLogEntry[]>("/inspections/log");
 }
 
+export type AccessoryInspectionLogEntry = {
+  id: string;
+  bookingId: string;
+  assetCode: string | null;
+  accessoryName: string;
+  quantity: number;
+  conditionStatus: string | null;
+  conditionNote: string | null;
+  penaltyAmount: number;
+  inspectorName: string | null;
+  inspectedAt: string | null;
+  imageUrls: string[];
+};
+
+export async function getAccessoryInspectionLog() {
+  return apiRequest<AccessoryInspectionLogEntry[]>("/inspections/accessory-log");
+}
+
 // ---------- Garment management (Manager) ----------
 
 export type GarmentImage = {
@@ -814,6 +1429,11 @@ export type GarmentDetail = GarmentSummary & {
   description: string | null;
   categoryId: string | null;
   color: string | null;
+  material: string[];
+  occasion: string[];
+  careInstructions: string[];
+  usageConditions: string[];
+  measurements: GarmentMeasurements | null;
   isActive: boolean;
   images: GarmentImage[];
 };
@@ -840,12 +1460,30 @@ export async function createGarmentSize(sizeLabel: string) {
   });
 }
 
+export async function getCanonicalOccasions() {
+  return apiRequest<string[]>("/ai/occasions");
+}
+
+export type GarmentMeasurementsInput = {
+  shoulderCm?: number;
+  bustCm?: number;
+  waistCm?: number;
+  hipCm?: number;
+  lengthCm?: number;
+  sleeveLengthCm?: number;
+};
+
 export async function createGarment(payload: {
   name: string;
   categoryId?: string;
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice: number;
   depositAmount: number;
   isActive?: boolean;
@@ -862,6 +1500,11 @@ export async function updateGarment(id: string, payload: {
   description?: string;
   sizeLabel?: string;
   color?: string;
+  material?: string[];
+  occasion?: string[];
+  careInstructions?: string[];
+  usageConditions?: string[];
+  measurements?: GarmentMeasurementsInput;
   dailyPrice?: number;
   depositAmount?: number;
   isActive?: boolean;
@@ -875,6 +1518,12 @@ export async function updateGarment(id: string, payload: {
 export async function deleteGarment(id: string) {
   return apiRequest<{ id: string; deleted: boolean }>(`/garments/${id}`, {
     method: "DELETE",
+  });
+}
+
+export async function restoreGarment(id: string) {
+  return apiRequest<{ id: string; restored: boolean }>(`/garments/${id}/restore`, {
+    method: "PATCH",
   });
 }
 
@@ -912,6 +1561,7 @@ export async function getAllAssets(status?: string) {
 export async function createAsset(payload: {
   garmentId: string;
   assetCode: string;
+  garmentSizeId?: string;
   conditionNote?: string;
   purchaseCost?: number;
 }) {
@@ -919,6 +1569,196 @@ export async function createAsset(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export type GarmentSizeOption = {
+  id: string;
+  sizeLabel: string | null;
+};
+
+export async function getGarmentSizesByGarment(garmentId: string) {
+  return apiRequest<GarmentSizeOption[]>(`/garments/${garmentId}/sizes`);
+}
+
+// ---------- Accessory API ----------
+
+export type AccessoryItem = {
+  id: string;
+  code: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  material: string | null;
+  color: string | null;
+  imageUrl: string | null;
+  replacementValue: number;
+  isActive: boolean;
+  assetCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccessoryDetail = Omit<AccessoryItem, "assetCount"> & {
+  assets: AccessoryAsset[];
+};
+
+export type AccessoryAsset = {
+  id: string;
+  accessoryId: string;
+  accessoryName: string | null;
+  assetCode: string;
+  status: string;
+  conditionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AccessoryAssetHistory = {
+  id: string;
+  action: string;
+  oldStatus: string | null;
+  newStatus: string | null;
+  note: string | null;
+  createdBy: { email: string; name: string | null } | null;
+  createdAt: string;
+};
+
+export type AccessoryPayload = {
+  code: string;
+  name: string;
+  category?: string;
+  description?: string;
+  material?: string;
+  color?: string;
+  imageUrl?: string | null;
+  replacementValue?: number;
+  isActive?: boolean;
+};
+
+export async function getAccessories(includeInactive = false) {
+  const query = includeInactive ? "?includeInactive=true" : "";
+  return apiRequest<AccessoryItem[]>(`/accessories${query}`);
+}
+
+export async function getAccessoryById(id: string) {
+  return apiRequest<AccessoryDetail>(`/accessories/${id}`);
+}
+
+export async function createAccessory(payload: AccessoryPayload) {
+  return apiRequest<AccessoryDetail>("/accessories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAccessory(id: string, payload: Partial<AccessoryPayload>) {
+  return apiRequest<AccessoryDetail>(`/accessories/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAccessoryAssets(accessoryId: string) {
+  return apiRequest<AccessoryAsset[]>(`/accessories/${accessoryId}/assets`);
+}
+
+export async function createAccessoryAsset(payload: {
+  accessoryId: string;
+  assetCode: string;
+  conditionNote?: string;
+}) {
+  return apiRequest<AccessoryAsset>("/accessories/assets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAccessoryAssetStatus(
+  assetId: string,
+  payload: { status: string; note?: string },
+) {
+  return apiRequest<AccessoryAsset>(`/accessories/assets/${assetId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAccessoryAssetHistory(assetId: string) {
+  return apiRequest<AccessoryAssetHistory[]>(`/accessories/assets/${assetId}/history`);
+}
+
+export type LinkedGarment = {
+  garmentId: string;
+  name: string;
+  isActive: boolean;
+  quantity: number;
+  isIncluded: boolean;
+  sizes: string[];
+};
+
+export async function getAccessoryGarments(accessoryId: string) {
+  return apiRequest<LinkedGarment[]>(`/accessories/${accessoryId}/garments`);
+}
+
+// ---------- Garment <-> Accessory links ----------
+
+export type GarmentAccessoryLink = {
+  id: string;
+  quantity: number;
+  isIncluded: boolean;
+  extraPrice: number;
+  note: string | null;
+  accessory: {
+    id: string;
+    code: string;
+    name: string;
+    category: string | null;
+    color: string | null;
+    imageUrl: string | null;
+  };
+};
+
+export async function getGarmentAccessories(garmentId: string) {
+  return apiRequest<GarmentAccessoryLink[]>(`/garments/${garmentId}/accessories`);
+}
+
+export async function addGarmentAccessory(
+  garmentId: string,
+  payload: {
+    accessoryId: string;
+    quantity?: number;
+    isIncluded?: boolean;
+    extraPrice?: number;
+    note?: string;
+  },
+) {
+  return apiRequest<GarmentAccessoryLink>(`/garments/${garmentId}/accessories`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateGarmentAccessory(
+  garmentId: string,
+  accessoryId: string,
+  payload: {
+    quantity?: number;
+    isIncluded?: boolean;
+    extraPrice?: number;
+    note?: string;
+  },
+) {
+  return apiRequest<GarmentAccessoryLink>(`/garments/${garmentId}/accessories/${accessoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeGarmentAccessory(garmentId: string, accessoryId: string) {
+  return apiRequest<{ garmentId: string; accessoryId: string; removed: boolean }>(
+    `/garments/${garmentId}/accessories/${accessoryId}`,
+    { method: "DELETE" },
+  );
 }
 
 // ---------- Admin API ----------
@@ -1418,6 +2258,7 @@ export type ReviewResponse = {
   reportedBy: string | null;
   editCount: number;
   isLocked: boolean;
+  fitFeedback?: "tight" | "true_to_size" | "loose" | null;
   createdAt: string;
   updatedAt: string;
   garment?: {
@@ -1432,15 +2273,51 @@ export type ReviewResponse = {
   } | null;
 };
 
-export async function createReview(payload: { garmentId: string; bookingId?: string; rating: number; comment?: string; images?: string[]; video?: string; }) {
+export type GarmentReviewsQuery = {
+  rating?: number;
+  hasMedia?: boolean;
+  fit?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type GarmentReviewsData = {
+  reviews: ReviewResponse[];
+  averageRating: number;
+  total: number;
+  filteredTotal: number;
+  ratingCounts: Record<number, number>;
+  mediaCount: number;
+  fitCounts: Record<string, number>;
+  page: number;
+  totalPages: number;
+  limit: number;
+};
+
+export async function createReview(payload: {
+  garmentId: string;
+  bookingId?: string;
+  rating: number;
+  comment?: string;
+  fitFeedback?: "tight" | "true_to_size" | "loose";
+  images?: string[];
+  video?: string;
+}) {
   return apiRequest<ReviewResponse>("/reviews", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function getGarmentReviews(garmentId: string) {
-  return apiRequest<{ reviews: ReviewResponse[]; averageRating: number; total: number }>(`/reviews/garment/${garmentId}`);
+export async function getGarmentReviews(garmentId: string, query?: GarmentReviewsQuery) {
+  const params = new URLSearchParams();
+  if (query?.rating) params.set("rating", String(query.rating));
+  if (query?.hasMedia !== undefined) params.set("hasMedia", String(query.hasMedia));
+  if (query?.fit) params.set("fit", query.fit);
+  if (query?.page) params.set("page", String(query.page));
+  if (query?.limit) params.set("limit", String(query.limit));
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<GarmentReviewsData>(`/reviews/garment/${garmentId}${q}`);
 }
 
 export async function getMyReviews() {
@@ -1479,9 +2356,376 @@ export async function hideReview(reviewId: string, reason?: string) {
   });
 }
 
-export async function updateReview(id: string, payload: { rating?: number; comment?: string; images?: string[]; video?: string; }) {
+export async function updateReview(
+  id: string,
+  payload: {
+    rating?: number;
+    comment?: string;
+    fitFeedback?: "tight" | "true_to_size" | "loose";
+    images?: string[];
+    video?: string;
+  },
+) {
   return apiRequest<ReviewResponse>(`/reviews/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
+
+// ---------- Luật giá tự động (price_rules) ----------
+
+export type PriceRuleType = "tet" | "holiday" | "double_sale" | "weekend" | "peak_season" | "store_program";
+
+export type PriceRule = {
+  id: string;
+  name: string;
+  ruleType: PriceRuleType;
+  ruleTypeLabel: string;
+  startDate: string | null;
+  endDate: string | null;
+  recurringYearly: boolean;
+  daysOfWeek: number[];
+  percentage: number | null;
+  fixedAmount: number | null;
+  priority: number;
+  categoryIds: string[];
+  garmentIds: string[];
+  isActive: boolean;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PriceRulePayload = {
+  name: string;
+  ruleType: PriceRuleType;
+  startDate?: string | null;
+  endDate?: string | null;
+  recurringYearly?: boolean;
+  daysOfWeek?: number[];
+  percentage?: number | null;
+  fixedAmount?: number | null;
+  priority?: number;
+  categoryIds?: string[];
+  garmentIds?: string[];
+  isActive?: boolean;
+  note?: string | null;
+};
+
+export type AppliedPriceRule = {
+  id: string;
+  name: string;
+  ruleType: PriceRuleType;
+  percentage: number | null;
+  fixedAmount: number | null;
+  priority: number;
+};
+
+export type RentalQuote = {
+  sizeId: string;
+  basePrice: number;
+  discountPrice: number;
+  rentalTotal: number;
+  days: number;
+  appliedPriceRule: AppliedPriceRule | null;
+  appliedRules: Array<AppliedPriceRule & { days: number }>;
+  breakdown: Array<{ date: string; price: number; rule: AppliedPriceRule | null }>;
+};
+
+export async function getPriceRules(query?: { activeOnly?: boolean; ruleType?: string }) {
+  const params = new URLSearchParams();
+  if (query?.activeOnly) params.set("activeOnly", "true");
+  if (query?.ruleType) params.set("ruleType", query.ruleType);
+  const qs = params.toString();
+  return apiRequest<PriceRule[]>(`/pricing/rules${qs ? `?${qs}` : ""}`);
+}
+
+export async function createPriceRule(payload: PriceRulePayload) {
+  return apiRequest<PriceRule>("/pricing/rules", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updatePriceRule(id: string, payload: Partial<PriceRulePayload>) {
+  return apiRequest<PriceRule>(`/pricing/rules/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function togglePriceRule(id: string, isActive: boolean) {
+  return apiRequest<PriceRule>(`/pricing/rules/${id}/toggle`, { method: "PATCH", body: JSON.stringify({ isActive }) });
+}
+
+export async function deletePriceRule(id: string) {
+  return apiRequest<{ id: string }>(`/pricing/rules/${id}`, { method: "DELETE" });
+}
+
+export async function getRentalQuote(garmentSizeIds: string[], startDate: string, endDate: string) {
+  return apiRequest<RentalQuote[]>("/pricing/quote", {
+    method: "POST",
+    body: JSON.stringify({ garmentSizeIds, startDate, endDate }),
+  });
+}
+
+// ---------- Voucher & khuyến mãi ----------
+
+export type VoucherDiscountType = "percentage" | "fixed";
+
+export type VoucherPublic = {
+  code: string;
+  name: string;
+  description: string | null;
+  discountType: VoucherDiscountType;
+  discountValue: number;
+  maxDiscountAmount: number | null;
+  minOrderValue: number;
+  startAt: string;
+  endAt: string;
+  categoryIds: string[];
+  garmentIds: string[];
+};
+
+export type Voucher = VoucherPublic & {
+  id: string;
+  usageLimit: number | null;
+  usedCount: number;
+  perUserLimit: number | null;
+  isActive: boolean;
+  status: "active" | "upcoming" | "expired" | "inactive" | "exhausted";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VoucherPayload = {
+  code: string;
+  name: string;
+  description?: string | null;
+  discountType: VoucherDiscountType;
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minOrderValue?: number;
+  usageLimit?: number | null;
+  perUserLimit?: number | null;
+  startAt: string;
+  endAt: string;
+  categoryIds?: string[];
+  garmentIds?: string[];
+  isActive?: boolean;
+};
+
+export type VoucherValidation = {
+  voucher: VoucherPublic;
+  orderSubtotal: number;
+  eligibleSubtotal: number;
+  discountAmount: number;
+  totalAfterDiscount: number;
+};
+
+export async function getVouchers(query?: { search?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (query?.search) params.set("search", query.search);
+  if (query?.status) params.set("status", query.status);
+  const qs = params.toString();
+  return apiRequest<Voucher[]>(`/vouchers${qs ? `?${qs}` : ""}`);
+}
+
+export async function createVoucher(payload: VoucherPayload) {
+  return apiRequest<Voucher>("/vouchers", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateVoucher(id: string, payload: Partial<Omit<VoucherPayload, "code">>) {
+  return apiRequest<Voucher>(`/vouchers/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteVoucher(id: string) {
+  return apiRequest<{ id: string; deleted?: boolean; deactivated?: boolean }>(`/vouchers/${id}`, { method: "DELETE" });
+}
+
+export async function getAvailableVouchers() {
+  return apiRequest<VoucherPublic[]>("/vouchers/available");
+}
+
+export async function validateVoucher(payload: { code: string; garmentSizeIds: string[]; startDate: string; endDate: string }) {
+  return apiRequest<VoucherValidation>("/vouchers/validate", { method: "POST", body: JSON.stringify(payload) });
+}
+
+// ---------- Thống kê sản phẩm HOT / ít được thuê ----------
+
+export type ProductRecommendation = {
+  action: "discount" | "promote" | "discontinue_review" | "reduce_stock" | "quality_check";
+  message: string;
+};
+
+export type ProductStat = {
+  garmentId: string;
+  name: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  imageUrl: string | null;
+  isActive: boolean;
+  minDailyPrice: number;
+  assetCount: number;
+  rentCount: number;
+  revenue: number;
+  occupancyRate: number;
+  conversionRate: number | null;
+  cancelCount: number;
+  cancelRate: number;
+  bookedDays: number;
+  availableDays: number;
+  views: number;
+  tryons: number;
+  avgRating: number | null;
+  reviewCount: number;
+  lastRentedAt: string | null;
+  classification: "HOT" | "LOW_DEMAND" | "NORMAL" | "NEW";
+  hotRank: number | null;
+  recommendations: ProductRecommendation[];
+};
+
+export type ProductStatsResponse = {
+  period: { from: string; to: string };
+  summary: {
+    garmentCount: number;
+    totalRentals: number;
+    totalRevenue: number;
+    avgOccupancyRate: number;
+    cancelRate: number;
+    totalViews: number;
+    totalTryons: number;
+    hotCount: number;
+    lowDemandCount: number;
+  };
+  note: string;
+  hot: ProductStat[];
+  lowDemand: ProductStat[];
+  items: ProductStat[];
+};
+
+export async function getProductStats(query: {
+  from?: string;
+  to?: string;
+  sortBy?: "revenue" | "bookings";
+  hotLimit?: number;
+  lowDemandMaxRentals?: number;
+  minAgeDays?: number;
+  categoryId?: string;
+}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const qs = params.toString();
+  return apiRequest<ProductStatsResponse>(`/analytics/products${qs ? `?${qs}` : ""}`);
+}
+
+/** Ghi nhận lượt xem sản phẩm (ẩn danh, chống trùng 30 phút ở server). Không chặn UI nếu lỗi. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function trackGarmentView(garmentId: string) {
+  if (typeof window === "undefined" || !garmentId || !UUID_REGEX.test(garmentId)) return;
+  let visitorKey = "";
+  try {
+    visitorKey = localStorage.getItem("heritage-visitor-key") ?? "";
+    if (!visitorKey) {
+      visitorKey = crypto.randomUUID();
+      localStorage.setItem("heritage-visitor-key", visitorKey);
+    }
+  } catch {
+    visitorKey = `anon-${Math.random().toString(36).slice(2)}`;
+  }
+  void apiRequest("/analytics/views", {
+    method: "POST",
+    body: JSON.stringify({ garmentId, visitorKey }),
+    authToken: null,
+  }).catch(() => {});
+}
+
+// ---------- AI Virtual Try-On & Recommendations ----------
+
+export type SimilarGarment = {
+  garmentId: string;
+  name: string;
+  categoryName: string | null;
+  color: string | null;
+  imageUrl: string | null;
+  dailyPrice: number;
+  depositAmount: number;
+  sizeId: string | null;
+  sizeLabel: string | null;
+  similarityScore: number;
+  reasons: string[];
+};
+
+export async function getSimilarGarments(garmentId: string, limit = 6) {
+  return apiRequest<SimilarGarment[]>(`/garments/${garmentId}/similar?limit=${limit}`);
+}
+
+export type TryonMode = "face_swap" | "full_body";
+export type TryonSource = "upload" | "camera";
+
+export type SubmitTryonPayload = {
+  garmentSizeId: string;
+  mode: TryonMode;
+  imageBase64: string;
+  source?: TryonSource;
+};
+
+export type TryonJobResponse = {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  resultImageUrl: string | null;
+  mode: TryonMode;
+  garmentName: string;
+  sizeLabel: string | null;
+  isCached: boolean;
+  queuePosition?: number;
+};
+
+export type TryonStatusResponse = {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  mode: TryonMode;
+  garmentName: string;
+  resultImageUrl: string | null;
+  isCached: boolean;
+  errorMessage: string | null;
+  queuePosition: number;
+  completedAt: string | null;
+};
+
+export type TryonHistoryItem = {
+  id: string;
+  requestId: string;
+  status: string;
+  garmentName: string;
+  resultImageUrl: string | null;
+  createdAt: string;
+};
+
+export async function submitTryon(payload: SubmitTryonPayload) {
+  return apiRequest<TryonJobResponse>("/ai/tryon", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTryonStatus(requestId: string) {
+  return apiRequest<TryonStatusResponse>(`/ai/tryon/status/${requestId}`);
+}
+
+export async function getTryonHistory() {
+  return apiRequest<TryonHistoryItem[]>("/ai/tryon/history");
+}
+
+export async function hideTryonHistoryItem(id: string) {
+  return apiRequest<{ id: string; hidden: boolean }>(`/ai/tryon/results/${id}/hide`, {
+    method: "PATCH",
+  });
+}
+
+export type TryonQuota = {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetsAt: string;
+};
+
+export async function getTryonQuota() {
+  return apiRequest<TryonQuota>("/ai/tryon/quota");
+}
+

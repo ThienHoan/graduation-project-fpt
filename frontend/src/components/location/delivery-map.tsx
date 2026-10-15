@@ -1,6 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { getDeliveryTrack, type DeliveryTrackData } from "@/lib/api";
+import { DeliveryTracker } from "@/components/location/delivery-tracker";
+import { Truck, ExternalLink, X } from "lucide-react";
+import { getMapTileConfig } from "@/lib/map-config";
 
 let cssInjected = false;
 
@@ -54,10 +59,25 @@ function statusLabel(status: string) {
   return map[status] ?? status;
 }
 
-export function DeliveryMap({ points, storeLat = 10.7769, storeLng = 106.7009, storeName = "Atelier", className = "" }: DeliveryMapProps) {
+export function DeliveryMap({ points, storeLat = 15.967945, storeLng = 108.260727, storeName = "Atelier Cổ Phục FPT Đà Nẵng", className = "" }: DeliveryMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [selectedPoint, setSelectedPoint] = useState<DeliveryPoint | null>(null);
+  const [liveTrack, setLiveTrack] = useState<DeliveryTrackData | null>(null);
+
+  useEffect(() => {
+    if (!selectedPoint) {
+      setLiveTrack(null);
+      return;
+    }
+    getDeliveryTrack(selectedPoint.bookingId).then((res) => {
+      if (res.success && res.data) {
+        setLiveTrack(res.data);
+      } else {
+        setLiveTrack(null);
+      }
+    });
+  }, [selectedPoint]);
 
   useEffect(() => {
     injectCss();
@@ -83,9 +103,11 @@ export function DeliveryMap({ points, storeLat = 10.7769, storeLng = 106.7009, s
       const map = L.map(containerRef.current);
       mapRef.current = map;
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OSM",
-        maxZoom: 19,
+      const tileConfig = getMapTileConfig();
+      L.tileLayer(tileConfig.url, {
+        attribution: tileConfig.attribution,
+        maxZoom: tileConfig.maxZoom,
+        subdomains: tileConfig.subdomains || "0123",
       }).addTo(map);
 
       // Store marker
@@ -175,6 +197,50 @@ export function DeliveryMap({ points, storeLat = 10.7769, storeLng = 106.7009, s
               <p className="mt-0.5 text-xs text-stone-400">👗 {point.garmentNames}</p>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Hiển thị tiến trình chi tiết của đơn được chọn */}
+      {selectedPoint && (
+        <div className="space-y-4 rounded-2xl border border-sand bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                <Truck className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-ink">
+                  Theo dõi lộ trình: {selectedPoint.customerName}
+                </h4>
+                <p className="text-xs text-stone-500">Mã đơn: #{selectedPoint.bookingId.slice(0, 8).toUpperCase()}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/dashboard/staff/booking/${selectedPoint.bookingId}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lotus px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
+              >
+                <span>Xem đơn</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+              <button
+                type="button"
+                onClick={() => setSelectedPoint(null)}
+                className="rounded-lg border border-sand p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-50 transition"
+                title="Đóng bản đồ chi tiết"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {liveTrack ? (
+            <DeliveryTracker data={liveTrack} />
+          ) : (
+            <div className="py-8 text-center text-xs text-stone-400">
+              Đang tải lộ trình GPS đường phố của đơn hàng...
+            </div>
+          )}
         </div>
       )}
     </div>

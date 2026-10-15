@@ -4,6 +4,7 @@ import { AppRole, Notification as NotificationRow, Prisma } from "@prisma/client
 import * as nodemailer from "nodemailer";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import type { UpdateNotificationPreferencesDto } from "./dto/update-notification-preferences.dto";
 import type { UpdateNotificationSettingsDto } from "./dto/update-notification-settings.dto";
 
@@ -96,6 +97,13 @@ const DEFAULT_TEMPLATES: NotificationTemplateMap = {
     channels: ["inApp", "email"],
     enabled: true,
   },
+  "booking.overdue": {
+    subject: "Đơn thuê đã quá hạn",
+    title: "Đơn thuê quá hạn {{overdueDays}} ngày",
+    body: "Đơn #{{bookingCode}} ({{garmentName}}) đã quá hạn {{overdueDays}} ngày so với ngày trả dự kiến {{endDate}}. Phí quá hạn hiện tại: {{amount}}. Vui lòng trả đồ sớm để tránh phí phát sinh thêm.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
   "booking.staff.created": {
     subject: "Đơn thuê mới cần xử lý",
     title: "Đơn thuê mới",
@@ -169,6 +177,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async getMyNotifications(userId: string, limit = 50) {
@@ -350,6 +359,11 @@ export class NotificationsService {
           body: this.render(template.body, data),
         },
       });
+      // Emit sau khi row đã ghi xong: frontend chỉ dùng event làm tín hiệu refetch.
+      this.realtime.notificationCreated(input.userId, {
+        id: notificationRow.id,
+        bookingId: typeof input.data?.bookingId === "string" ? input.data.bookingId : undefined,
+      });
     }
 
     let emailStatus: NotificationSendStatus | null = null;
@@ -388,6 +402,7 @@ export class NotificationsService {
     statusLabel?: string;
     note?: string | null;
     amount?: string | number;
+    overdueDays?: number;
   }) {
     const bookingCode = input.bookingId.slice(0, 8).toUpperCase();
     return this.notifyUser({
@@ -402,6 +417,7 @@ export class NotificationsService {
         statusLabel: input.statusLabel ?? null,
         note: input.note ?? null,
         amount: input.amount ?? null,
+        overdueDays: input.overdueDays ?? null,
       },
     });
   }

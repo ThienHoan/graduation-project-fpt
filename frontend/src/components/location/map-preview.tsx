@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { getMapTileConfig } from "@/lib/map-config";
 
 type MapPreviewProps = {
   lat: number;
@@ -45,9 +46,11 @@ export function MapPreview({ lat, lng, className = "" }: MapPreviewProps) {
       const map = L.map(containerRef.current).setView([lat, lng], 16);
       mapRef.current = map;
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OSM",
-        maxZoom: 19,
+      const tileConfig = getMapTileConfig();
+      L.tileLayer(tileConfig.url, {
+        attribution: tileConfig.attribution,
+        maxZoom: tileConfig.maxZoom,
+        subdomains: tileConfig.subdomains || "0123",
       }).addTo(map);
 
       L.marker([lat, lng])

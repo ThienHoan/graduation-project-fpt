@@ -59,6 +59,16 @@ export const ACTIVE_BOOKING_STATUSES = new Set([
   "paid", "preparing", "ready_for_pickup", "delivering", "renting",
 ]);
 
+/**
+ * Bookings whose deposit has actually been collected and not yet settled.
+ * Unpaid bookings (pending_confirmation, confirmed, awaiting_payment) are
+ * excluded: a cancelled or abandoned PayOS checkout must not count as held.
+ */
+export const DEPOSIT_HELD_STATUSES = new Set([
+  "paid", "preparing", "ready_for_pickup", "delivering", "renting",
+  "overdue", "returned", "inspection_pending", "refund_pending",
+]);
+
 export const CANCELLABLE_STATUSES = new Set([
   "draft", "pending_confirmation", "confirmed", "awaiting_payment",
 ]);

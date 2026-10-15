@@ -9,6 +9,8 @@ import {
   type NotificationItem,
 } from "@/lib/api";
 import { normalizeStatusInText } from "@/lib/status-labels";
+import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { Bell } from "lucide-react";
 
 const POLL_INTERVAL_MS = 30_000;
 const FETCH_LIMIT = 20;
@@ -45,6 +47,9 @@ export function NotificationBell({ notificationsHref }: { notificationsHref?: st
     return () => clearInterval(timer);
   }, []);
 
+  // Realtime: có thông báo mới thì lấy lại ngay, không chờ tới lần poll kế tiếp.
+  useRealtimeInvalidation({ notifications: load });
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -77,9 +82,9 @@ export function NotificationBell({ notificationsHref }: { notificationsHref?: st
         className="relative rounded-full p-2 text-lotus transition hover:bg-lotus/10"
         aria-label="Thông báo"
       >
-        <span className="material-symbols-outlined text-[22px]">notifications</span>
+        <Bell className="h-5 w-5" />
         {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-oxblood px-1 text-[10px] font-bold leading-none text-white">
+          <span className="absolute -right-0.5 -top-0.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-oxblood px-1 text-[10px] font-bold leading-none text-white shadow-sm">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}

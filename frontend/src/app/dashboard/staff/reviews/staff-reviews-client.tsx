@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { getStaffReviews, replyToReview, reportReview, hideReview, StaffReviewResponse } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
+import { Star, AlertTriangle, MessageSquare } from "lucide-react";
+import { Pagination } from "@/components/common/pagination";
 
 export function StaffReviewsClient() {
   const { user } = useAuth();
@@ -15,6 +17,8 @@ export function StaffReviewsClient() {
   const [hideReason, setHideReason] = useState("Vi phạm tiêu chuẩn cộng đồng");
   const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
   const [actionType, setActionType] = useState<"reply" | "report" | "hide" | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
 
   useEffect(() => {
     fetchReviews();
@@ -90,6 +94,8 @@ export function StaffReviewsClient() {
   if (loading) return <div>Đang tải...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
 
+  const paginatedReviews = reviews.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       <div className="overflow-x-auto">
@@ -104,7 +110,7 @@ export function StaffReviewsClient() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {reviews.map((review) => (
+            {paginatedReviews.map((review) => (
               <tr key={review.id} className="hover:bg-slate-50/50">
                 <td className="px-4 py-3 align-top">
                   <div className="font-medium">{review.customer?.profile?.fullName || review.customerId}</div>
@@ -114,23 +120,31 @@ export function StaffReviewsClient() {
                   {review.garment?.name || review.garmentId}
                 </td>
                 <td className="px-4 py-3 align-top max-w-xs">
-                  <div className="flex items-center text-amber-500 mb-1">
+                  <div className="flex items-center gap-0.5 text-amber-500 mb-1">
                     {Array.from({ length: 5 }).map((_, i) => (
-                      <span key={i}>{i < review.rating ? "★" : "☆"}</span>
+                      <Star
+                        key={i}
+                        className={`h-3.5 w-3.5 ${
+                          i < review.rating ? "text-amber-400 fill-amber-400" : "text-stone-300 fill-transparent"
+                        }`}
+                      />
                     ))}
                   </div>
-                  <p className="text-slate-700 whitespace-pre-wrap">{review.comment || "Không có nội dung"}</p>
+                  <p className="text-stone-700 whitespace-pre-wrap text-sm leading-relaxed">{review.comment || "Không có nội dung"}</p>
                   
                   {review.staffReply && (
-                    <div className="mt-2 p-2 bg-slate-100 rounded text-xs border-l-2 border-slate-300">
-                      <span className="font-semibold text-slate-700">Phản hồi từ shop:</span>
-                      <p className="mt-1">{review.staffReply}</p>
+                    <div className="mt-2 p-2.5 bg-mist rounded-xl text-xs border border-sand">
+                      <span className="font-semibold text-lotus flex items-center gap-1 mb-1">
+                        <MessageSquare className="h-3 w-3" />
+                        Phản hồi từ xưởng:
+                      </span>
+                      <p className="text-stone-700">{review.staffReply}</p>
                     </div>
                   )}
 
                   {review.isReported && review.status === "public" && (
-                    <div className="mt-2 text-xs text-red-700 bg-red-100 border border-red-200 p-2 rounded-lg flex gap-2 items-start">
-                      <span className="material-symbols-outlined text-[16px] text-red-600">report</span>
+                    <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 p-2.5 rounded-xl flex gap-2 items-start">
+                      <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-bold block mb-1">Nhân viên đã báo cáo:</span>
                         <p className="italic text-red-600">{review.reportedReason}</p>
@@ -235,6 +249,14 @@ export function StaffReviewsClient() {
             )}
           </tbody>
         </table>
+
+        <Pagination
+          currentPage={page}
+          totalItems={reviews.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          itemLabel="đánh giá"
+        />
       </div>
     </div>
   );

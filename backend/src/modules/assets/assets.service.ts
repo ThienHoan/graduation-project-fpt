@@ -1,12 +1,38 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { AssetStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { CreateAssetDto } from "./dto/create-asset.dto";
 import type { UpdateAssetStatusDto } from "./dto/update-asset-status.dto";
 
+// ── Asset Status State Machine ───────────────────────────────────────────────
+const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
+  [AssetStatus.available]:        [AssetStatus.reserved, AssetStatus.retired],
+  [AssetStatus.reserved]:         [AssetStatus.rented, AssetStatus.available],
+  [AssetStatus.rented]:           [AssetStatus.inspection_pending],
+  [AssetStatus.inspection_pending]: [AssetStatus.damaged, AssetStatus.laundry, AssetStatus.cleaned, AssetStatus.maintenance],
+  [AssetStatus.laundry]:          [AssetStatus.cleaned, AssetStatus.damaged],
+  [AssetStatus.maintenance]:      [AssetStatus.damaged, AssetStatus.cleaned],
+  [AssetStatus.cleaned]:          [AssetStatus.available, AssetStatus.retired],
+  [AssetStatus.damaged]:          [AssetStatus.maintenance, AssetStatus.retired],
+  [AssetStatus.retired]:          [],
+  [AssetStatus.lost]:              [],
+};
+
 @Injectable()
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Validate asset status transition theo state machine. */
+  private validateAssetTransition(current: AssetStatus, next: AssetStatus): void {
+    const allowed = ASSET_STATUS_TRANSITIONS[current];
+    if (!allowed.includes(next)) {
+      throw new BadRequestException(
+        `Không thể chuyển asset từ '${current}' sang '${next}'. ` +
+        `Các trạng thái hợp lệ: ${allowed.length ? allowed.join(", ") : "không có (trạng thái cuối cùng)."}`,
+      );
+    }
+  }
 
   // ── List all assets (with optional status filter) ──────────────────────────
 
@@ -41,25 +67,71 @@ export class AssetsService {
     });
     if (!garment) throw new NotFoundException("Garment not found.");
 
+    // Asset phải gắn vào một size cụ thể để availability đếm đúng.
+    // Nếu DTO không truyền size thì chỉ tự chọn được khi garment có đúng một size active.
+    let garmentSizeId: string | null = null;
+    if (dto.garmentSizeId) {
+      const size = await this.prisma.garment_sizes.findFirst({
+        where: { id: dto.garmentSizeId, garment_id: dto.garmentId, is_active: true },
+      });
+      if (!size) {
+        throw new BadRequestException(
+          "Size không thuộc mẫu trang phục này hoặc đã ngừng sử dụng.",
+        );
+      }
+      garmentSizeId = size.id;
+    } else {
+      const activeSizes = await this.prisma.garment_sizes.findMany({
+        where: { garment_id: dto.garmentId, is_active: true },
+        select: { id: true },
+      });
+      if (activeSizes.length === 0) {
+        throw new BadRequestException(
+          "Mẫu trang phục chưa có size nào đang sử dụng. Hãy thêm size trước khi tạo tài sản.",
+        );
+      }
+      if (activeSizes.length > 1) {
+        throw new BadRequestException(
+          "Mẫu trang phục có nhiều size. Vui lòng chọn size cho tài sản.",
+        );
+      }
+      garmentSizeId = activeSizes[0].id;
+    }
+
     const existing = await this.prisma.garmentAsset.findUnique({
       where: { assetCode: dto.assetCode },
     });
     if (existing) {
       throw new BadRequestException(
-        `Asset code '${dto.assetCode}' already exists.`,
+        `Mã tài sản '${dto.assetCode}' đã tồn tại. Vui lòng chọn mã khác.`,
       );
     }
 
-    const asset = await this.prisma.garmentAsset.create({
-      data: {
-        garmentId: dto.garmentId,
-        assetCode: dto.assetCode,
-        conditionNote: dto.conditionNote ?? null,
-        purchaseCost: dto.purchaseCost ?? null,
-        status: "available",
-      },
-      include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
-    });
+    let asset;
+    try {
+      asset = await this.prisma.garmentAsset.create({
+        data: {
+          garmentId: dto.garmentId,
+          assetCode: dto.assetCode,
+          garment_size_id: garmentSizeId,
+          conditionNote: dto.conditionNote ?? null,
+          purchaseCost: dto.purchaseCost ?? null,
+          status: "available",
+        },
+        include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      });
+    } catch (error) {
+      // Unique constraint violation (P2002) — chặn race condition và trả thông báo mã trùng.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new BadRequestException(
+          `Mã tài sản '${dto.assetCode}' đã tồn tại. Vui lòng chọn mã khác.`,
+        );
+      }
+      throw error;
+    }
 
     return ok({
       id: asset.id,
@@ -164,17 +236,57 @@ export class AssetsService {
   }
 
   async updateStatus(id: string, dto: UpdateAssetStatusDto) {
-    const asset = await this.prisma.garmentAsset.findUnique({ where: { id } });
-    if (!asset) throw new NotFoundException("Garment asset not found.");
+    // Physical holds are owned by booking workflows. A direct status endpoint must
+    // not race a prepare/cancel/return operation or make a reserved asset appear free.
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const asset = await tx.garmentAsset.findUnique({ where: { id } });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
 
-    const updated = await this.prisma.garmentAsset.update({
-      where: { id },
-      data: {
-        status: dto.status as any,
-        ...(dto.note ? { conditionNote: dto.note } : {}),
-      },
-      include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      const nextStatus = dto.status as AssetStatus;
+      this.validateAssetTransition(asset.status, nextStatus);
+      if ([AssetStatus.reserved, AssetStatus.rented].includes(nextStatus as never) ||
+        [AssetStatus.reserved, AssetStatus.rented].includes(asset.status as never)) {
+        throw new BadRequestException(
+          "Không được thay đổi trực tiếp asset reserved/rented. Hãy dùng luồng booking để giữ, giao hoặc trả asset.",
+        );
+      }
+
+      const activeAssignment = await tx.bookingItem.findFirst({
+        where: {
+          garmentAssetId: id,
+          booking: {
+            status: {
+              notIn: [
+                "cancelled", "rejected", "completed", "refund_pending",
+                "returned", "inspection_pending",
+              ],
+            },
+          },
+        },
+        select: { bookingId: true },
+      });
+      if (activeAssignment) {
+        throw new ConflictException(
+          "Asset đang được gán cho booking hoạt động. Hãy thay đổi asset qua luồng booking tương ứng.",
+        );
+      }
+
+      const claimed = await tx.garmentAsset.updateMany({
+        where: { id, status: asset.status },
+        data: {
+          status: nextStatus,
+          ...(dto.note ? { conditionNote: dto.note } : {}),
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("Asset đã được thay đổi bởi thao tác khác. Vui lòng tải lại.");
+      }
+      return tx.garmentAsset.findUnique({
+        where: { id },
+        include: { garment: { select: { name: true } }, garment_sizes: { select: { size_label: true } } },
+      });
     });
+    if (!updated) throw new NotFoundException("Garment asset not found.");
 
     return ok({
       id: updated.id,

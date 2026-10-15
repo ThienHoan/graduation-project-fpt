@@ -1,14 +1,18 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/auth/auth-provider";
-import { apiRequest, forgotPassword, resetPassword } from "@/lib/api";
+import { apiRequest, forgotPassword, resetPassword, getMyAddresses, type CustomerAddress } from "@/lib/api";
 import { normalizeNullableText, type AuthenticatedUser } from "@/lib/auth";
+import { ShieldCheck, FileEdit, CheckCircle2, ArrowRight, Lock, MapPin, Ruler } from "lucide-react";
 
 export default function CustomerProfilePage() {
   const { replaceUser, user } = useAuth();
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
+  const [defaultAddress, setDefaultAddress] = useState<CustomerAddress | null>(null);
+  const [loadingAddress, setLoadingAddress] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -27,12 +31,36 @@ export default function CustomerProfilePage() {
     setPhone(user?.phone ?? "");
   }, [user?.fullName, user?.phone]);
 
+  useEffect(() => {
+    async function loadAddress() {
+      try {
+        const res = await getMyAddresses();
+        if (res.success && res.data) {
+          const def = res.data.find((a) => a.isDefault) || res.data[0] || null;
+          setDefaultAddress(def);
+        }
+      } catch (err) {
+        console.error("Failed to load addresses", err);
+      } finally {
+        setLoadingAddress(false);
+      }
+    }
+    loadAddress();
+  }, []);
+
   if (!user) return null;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setMessage(null);
+
+    const trimmedPhone = phone.trim();
+    if (trimmedPhone && !/^(0|\+84|84)(3|5|7|8|9)[0-9]{8}$/.test(trimmedPhone)) {
+      setError("Số điện thoại không đúng định dạng Việt Nam hợp lệ (ví dụ: 0901234567 hoặc +84901234567).");
+      return;
+    }
+
     setSaving(true);
     try {
       const result = await apiRequest<AuthenticatedUser>("/users/me/profile", {
@@ -149,19 +177,83 @@ export default function CustomerProfilePage() {
             </div>
           </div>
 
-          <div className="flex items-start gap-3 rounded-lg border border-sand bg-parchment p-4">
-            <span className="material-symbols-outlined mt-0.5 text-[20px] text-antique">verified_user</span>
-            <p className="text-sm leading-relaxed text-stone-600">
+          <div className="flex items-start gap-3 rounded-xl border border-sand bg-parchment p-4">
+            <ShieldCheck className="h-5 w-5 mt-0.5 text-antique shrink-0" />
+            <p className="text-xs leading-relaxed text-stone-600">
               Tài khoản đang được bảo mật. Để thay đổi email chính, vui lòng liên hệ đội hỗ trợ atelier.
             </p>
+          </div>
+
+          {/* Quick link: Measurements */}
+          <Link
+            href="/dashboard/customer/measurements"
+            className="group flex items-center justify-between rounded-xl border border-sand bg-white p-4 shadow-2xs transition hover:border-lotus/40 hover:bg-parchment/40"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-lotus/10 text-lotus">
+                <Ruler className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-ink">Hồ sơ số đo may đo</p>
+                <p className="text-[11px] text-stone-500">Dùng để tự động gợi ý kích cỡ vừa vặn</p>
+              </div>
+            </div>
+            <ArrowRight className="h-4 w-4 text-stone-400 transition group-hover:translate-x-0.5 group-hover:text-lotus" />
+          </Link>
+
+          {/* Address summary card */}
+          <div className="rounded-xl border border-sand bg-white p-5 shadow-2xs">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-stone-700">
+                <MapPin className="h-3.5 w-3.5 text-lotus" />
+                Địa chỉ nhận trang phục
+              </span>
+              <Link
+                href="/dashboard/customer/addresses"
+                className="text-[11px] font-semibold text-lotus hover:underline"
+              >
+                Quản lý
+              </Link>
+            </div>
+            {loadingAddress ? (
+              <p className="text-xs text-stone-400">Đang tải địa chỉ...</p>
+            ) : defaultAddress ? (
+              <div className="space-y-1 text-xs">
+                <p className="font-semibold text-ink">
+                  {defaultAddress.receiverName}{" "}
+                  <span className="font-normal text-stone-500">({defaultAddress.phone})</span>
+                </p>
+                <p className="text-stone-600">
+                  {defaultAddress.line1}
+                  {defaultAddress.ward ? `, ${defaultAddress.ward}` : ""}
+                  {defaultAddress.district ? `, ${defaultAddress.district}` : ""}
+                  {defaultAddress.city ? `, ${defaultAddress.city}` : ""}
+                </p>
+                {defaultAddress.isDefault && (
+                  <span className="inline-block mt-1 rounded bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
+                    Địa chỉ mặc định
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-stone-500">
+                <p>Bạn chưa thiết lập địa chỉ giao nhận.</p>
+                <Link
+                  href="/dashboard/customer/addresses"
+                  className="mt-2 inline-block font-semibold text-lotus hover:underline"
+                >
+                  + Thêm địa chỉ mới
+                </Link>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Column 2: Edit form */}
         <div className="lg:col-span-7">
-          <form onSubmit={handleSubmit} className="rounded-lg border border-sand bg-parchment p-8 shadow-sm md:p-10">
-            <h3 className="mb-8 flex items-center gap-2 font-display text-2xl text-lotus">
-              <span className="material-symbols-outlined text-[22px]">edit_document</span>
+          <form onSubmit={handleSubmit} className="rounded-2xl border border-sand bg-parchment/60 p-8 shadow-xs md:p-10">
+            <h3 className="mb-8 flex items-center gap-2 font-display text-2xl text-lotus font-semibold">
+              <FileEdit className="h-5 w-5" />
               Cập nhật thông tin
             </h3>
 
@@ -198,46 +290,42 @@ export default function CustomerProfilePage() {
               <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
             )}
             {message && (
-              <div className="mt-6 flex items-center gap-2 rounded-md border border-jade/30 bg-jade/5 px-4 py-3 text-sm text-jade">
-                <span className="material-symbols-outlined text-[18px]">check_circle</span>
+              <div className="mt-6 flex items-center gap-2 rounded-xl border border-jade/30 bg-jade/5 px-4 py-3 text-xs font-medium text-jade">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
                 {message}
               </div>
             )}
 
-            <div className="mt-10 flex justify-end">
+            <div className="mt-8 flex justify-end">
               <button
                 type="submit"
                 disabled={saving}
-                className="group inline-flex items-center gap-2 rounded-md bg-lotus px-8 py-3 text-sm font-semibold text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
+                className="group inline-flex items-center gap-2 rounded-xl bg-lotus px-8 py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Đang lưu..." : "Lưu thay đổi"}
-                {!saving && (
-                  <span className="material-symbols-outlined text-[18px] transition-transform group-hover:translate-x-0.5">
-                    arrow_forward
-                  </span>
-                )}
+                <span>{saving ? "Đang lưu..." : "Lưu thay đổi"}</span>
+                {!saving && <ArrowRight className="h-4 w-4" />}
               </button>
             </div>
           </form>
 
           {/* Change Password Form */}
-          <div className="mt-8 rounded-lg border border-sand bg-white p-8 shadow-sm md:p-10">
-            <h3 className="mb-6 flex items-center gap-2 font-display text-2xl text-lotus">
-              <span className="material-symbols-outlined text-[22px]">lock</span>
+          <div className="mt-8 rounded-2xl border border-sand bg-white p-8 shadow-xs md:p-10">
+            <h3 className="mb-6 flex items-center gap-2 font-display text-2xl text-lotus font-semibold">
+              <Lock className="h-5 w-5" />
               Bảo mật & Mật khẩu
             </h3>
             
             {pwdStep === "idle" ? (
               <div>
-                <p className="mb-6 text-sm text-stone-600 leading-relaxed">
+                <p className="mb-6 text-xs text-stone-600 leading-relaxed">
                   Để thay đổi mật khẩu, chúng tôi sẽ gửi một mã OTP gồm 6 chữ số về email <span className="font-semibold text-ink">{user.email}</span> để xác thực.
                 </p>
                 {pwdError && (
-                  <div className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{pwdError}</div>
+                  <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{pwdError}</div>
                 )}
                 {pwdMessage && (
-                  <div className="mb-6 flex items-center gap-2 rounded-md border border-jade/30 bg-jade/5 px-4 py-3 text-sm text-jade">
-                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                  <div className="mb-6 flex items-center gap-2 rounded-xl border border-jade/30 bg-jade/5 px-4 py-3 text-xs font-medium text-jade">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
                     {pwdMessage}
                   </div>
                 )}
@@ -304,8 +392,8 @@ export default function CustomerProfilePage() {
                   <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{pwdError}</div>
                 )}
                 {pwdMessage && (
-                  <div className="mt-6 flex items-center gap-2 rounded-md border border-jade/30 bg-jade/5 px-4 py-3 text-sm text-jade">
-                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                  <div className="mt-6 flex items-center gap-2 rounded-xl border border-jade/30 bg-jade/5 px-4 py-3 text-xs font-medium text-jade">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
                     {pwdMessage}
                   </div>
                 )}

@@ -7,14 +7,24 @@ import { ProtectedPage } from "@/components/auth/protected-page";
 import { useAuth } from "@/components/auth/auth-provider";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
+import {
+  Calendar,
+  Bell,
+  Sparkles,
+  Ruler,
+  User,
+  MapPin,
+  Plus,
+  LogOut,
+} from "lucide-react";
 
 const navItems = [
-  { href: "/dashboard/customer", label: "Đơn thuê", icon: "calendar_today" },
-  { href: "/dashboard/customer/notifications", label: "Thông báo", icon: "notifications" },
-  { href: "/try-on", label: "Thử đồ AI", icon: "face_retouching_natural" },
-  { href: "/dashboard/customer/measurements", label: "Số đo", icon: "straighten" },
-  { href: "/dashboard/customer/profile", label: "Hồ sơ", icon: "person" },
-  { href: "/dashboard/customer/addresses", label: "Địa chỉ", icon: "location_on" },
+  { href: "/dashboard/customer", label: "Đơn thuê", icon: Calendar },
+  { href: "/dashboard/customer/notifications", label: "Thông báo", icon: Bell },
+  { href: "/try-on", label: "Thử đồ AI", icon: Sparkles },
+  { href: "/dashboard/customer/measurements", label: "Số đo", icon: Ruler },
+  { href: "/dashboard/customer/profile", label: "Hồ sơ", icon: User },
+  { href: "/dashboard/customer/addresses", label: "Địa chỉ", icon: MapPin },
 ];
 
 export default function CustomerDashboardLayout({ children }: { children: ReactNode }) {
@@ -37,16 +47,15 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
 
         <div className="flex flex-1">
           {/* Sidebar */}
-          {/* sticky (không phải fixed) để sidebar chiếm chỗ trong layout — footer bên dưới không bị che */}
-          <aside className="sticky top-16 hidden h-[calc(100vh-64px)] w-64 shrink-0 flex-col self-start border-r border-sand bg-parchment p-4 md:flex">
+          <aside className="sticky top-16 hidden h-[calc(100vh-64px)] w-64 shrink-0 flex-col self-start border-r border-sand bg-parchment/80 p-5 md:flex">
             {/* User greeting */}
-            <div className="mb-8 flex items-center gap-3 rounded-lg border border-sand/70 bg-white p-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-lotus text-sm font-bold text-white">
+            <div className="mb-6 flex items-center gap-3 rounded-xl border border-sand bg-white p-3.5 shadow-xs">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-lotus text-sm font-bold text-white shadow-xs">
                 {userInitial}
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">Xin chào</p>
-                <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-antique">
+                <p className="truncate text-xs font-semibold uppercase tracking-wider text-stone-400">Tài khoản</p>
+                <p className="truncate text-sm font-bold text-ink">
                   {displayName}
                 </p>
               </div>
@@ -55,15 +64,16 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
             {/* CTA */}
             <Link
               href="/catalog"
-              className="mb-6 inline-flex items-center justify-center gap-2 rounded-lg bg-lotus px-4 py-3 text-sm font-semibold text-white transition hover:bg-oxblood"
+              className="mb-5 inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-white shadow-sm transition hover:bg-oxblood"
             >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              Thuê bộ mới
+              <Plus className="h-4 w-4" />
+              <span>Thuê bộ mới</span>
             </Link>
 
             {/* Nav items */}
-            <nav className="flex flex-1 flex-col gap-1">
+            <nav className="flex flex-1 flex-col gap-1.5">
               {navItems.map((item) => {
+                const Icon = item.icon;
                 const isActive = pathname === item.href || (item.href !== "/dashboard/customer" && pathname.startsWith(item.href));
                 return (
                   <Link
@@ -71,12 +81,12 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
                     href={item.href}
                     className={
                       isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-4 py-3 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"
+                        ? "flex items-center gap-3 rounded-xl bg-lotus/10 border border-lotus/20 px-3.5 py-2.5 text-xs font-semibold text-lotus shadow-xs"
+                        : "flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-medium text-stone-600 transition hover:bg-white hover:text-ink"
                     }
                   >
-                    <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-                    {item.label}
+                    <Icon className={`h-4 w-4 ${isActive ? "text-lotus" : "text-stone-400"}`} />
+                    <span>{item.label}</span>
                   </Link>
                 );
               })}
@@ -86,10 +96,10 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
             <button
               type="button"
               onClick={handleSignOut}
-              className="mt-4 flex w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold text-stone-600 transition hover:bg-white hover:text-lotus"
+              className="mt-4 flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-stone-600 transition hover:bg-white hover:text-red-600"
             >
-              <span className="material-symbols-outlined text-[20px]">logout</span>
-              Đăng xuất
+              <LogOut className="h-4 w-4 text-stone-400" />
+              <span>Đăng xuất</span>
             </button>
           </aside>
 
@@ -100,19 +110,20 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
         </div>
 
         {/* Mobile Bottom Navigation */}
-        <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 border-t border-sand bg-mist/95 backdrop-blur-md md:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 border-t border-sand bg-white/95 backdrop-blur-md md:hidden">
           {navItems.slice(0, 5).map((item) => {
+            const Icon = item.icon;
             const isActive = pathname === item.href || (item.href !== "/dashboard/customer" && pathname.startsWith(item.href));
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={`flex flex-1 flex-col items-center justify-center gap-1 transition ${
-                  isActive ? "text-lotus" : "text-stone-500 hover:text-stone-800"
+                  isActive ? "text-lotus font-semibold" : "text-stone-500 hover:text-stone-800"
                 }`}
               >
-                <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-                <span className="text-[10px] font-semibold">{item.label}</span>
+                <Icon className="h-4 w-4" />
+                <span className="text-[10px]">{item.label}</span>
               </Link>
             );
           })}

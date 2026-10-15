@@ -1,6 +1,18 @@
-"use client";
-
 import { statusOf } from "@/lib/status-labels";
+import {
+  FileText,
+  CheckCircle2,
+  CreditCard,
+  Shirt,
+  Truck,
+  Sparkles,
+  RotateCcw,
+  Award,
+  XCircle,
+  Ban,
+  Check,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * Hành trình đơn thuê hiển thị cho khách hàng.
@@ -10,25 +22,25 @@ import { statusOf } from "@/lib/status-labels";
 type Step = {
   key: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   /** Các status backend thuộc mốc này. */
   statuses: string[];
 };
 
 const STEPS: Step[] = [
-  { key: "placed", label: "Đặt đơn", icon: "receipt_long", statuses: ["pending_confirmation"] },
-  { key: "confirmed", label: "Xác nhận", icon: "task_alt", statuses: ["confirmed"] },
-  { key: "payment", label: "Thanh toán", icon: "payments", statuses: ["awaiting_payment", "paid"] },
-  { key: "preparing", label: "Chuẩn bị", icon: "checkroom", statuses: ["preparing"] },
-  { key: "handover", label: "Bàn giao", icon: "local_shipping", statuses: ["ready_for_pickup", "delivering"] },
-  { key: "renting", label: "Đang thuê", icon: "styler", statuses: ["renting"] },
-  { key: "return", label: "Trả & kiểm tra", icon: "assignment_return", statuses: ["returned", "inspection_pending", "refund_pending", "overdue"] },
-  { key: "completed", label: "Hoàn tất", icon: "verified", statuses: ["completed"] },
+  { key: "placed", label: "Đặt đơn", icon: FileText, statuses: ["pending_confirmation"] },
+  { key: "confirmed", label: "Xác nhận", icon: CheckCircle2, statuses: ["confirmed"] },
+  { key: "payment", label: "Thanh toán", icon: CreditCard, statuses: ["awaiting_payment", "paid"] },
+  { key: "preparing", label: "Chuẩn bị", icon: Shirt, statuses: ["preparing"] },
+  { key: "handover", label: "Bàn giao", icon: Truck, statuses: ["ready_for_pickup", "delivering"] },
+  { key: "renting", label: "Đang thuê", icon: Sparkles, statuses: ["renting"] },
+  { key: "return", label: "Trả & kiểm tra", icon: RotateCcw, statuses: ["returned", "inspection_pending", "refund_pending", "overdue"] },
+  { key: "completed", label: "Hoàn tất", icon: Award, statuses: ["completed"] },
 ];
 
-const TERMINAL_NEGATIVE: Record<string, { label: string; detail: string; icon: string }> = {
-  cancelled: { label: "Đơn đã hủy", detail: "Đơn thuê này đã được hủy.", icon: "cancel" },
-  rejected: { label: "Đơn bị từ chối", detail: "Xưởng không thể tiếp nhận đơn này.", icon: "block" },
+const TERMINAL_NEGATIVE: Record<string, { label: string; detail: string; icon: LucideIcon }> = {
+  cancelled: { label: "Đơn đã hủy", detail: "Đơn thuê này đã được hủy.", icon: XCircle },
+  rejected: { label: "Đơn bị từ chối", detail: "Xưởng không thể tiếp nhận đơn này.", icon: Ban },
 };
 
 function stepIndexOfStatus(status: string): number {
@@ -48,9 +60,10 @@ export function BookingStatusStepper({
   // Trạng thái kết thúc tiêu cực: hiện banner riêng, không vẽ tiến trình.
   const negative = TERMINAL_NEGATIVE[status];
   if (negative) {
+    const NegativeIcon = negative.icon;
     return (
       <div className={`flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4 ${className}`}>
-        <span className="material-symbols-outlined text-2xl text-red-600">{negative.icon}</span>
+        <NegativeIcon className="h-6 w-6 text-red-600 shrink-0" />
         <div>
           <p className="font-semibold text-red-700">{negative.label}</p>
           <p className="text-sm text-red-600">{negative.detail}</p>
@@ -70,6 +83,7 @@ export function BookingStatusStepper({
           // Nhãn bàn giao đổi theo hình thức nhận.
           const label = step.key === "handover" && pickupMethod === "delivery" ? "Đang giao" : step.label;
           const isLast = index === STEPS.length - 1;
+          const StepIcon = step.icon;
           return (
             <li key={step.key} className="relative flex flex-1 flex-col items-center text-center">
               {!isLast && (
@@ -88,14 +102,16 @@ export function BookingStatusStepper({
                       : "border-sand bg-white text-stone-300")
                 }
               >
-                <span className="material-symbols-outlined text-[20px]">
-                  {state === "done" ? "check" : step.icon}
-                </span>
+                {state === "done" ? (
+                  <Check className="h-5 w-5" />
+                ) : (
+                  <StepIcon className="h-5 w-5" />
+                )}
               </span>
               <span
                 className={
                   "mt-2 px-1 text-xs font-medium " +
-                  (state === "todo" ? "text-stone-400" : state === "current" ? "text-lotus" : "text-ink")
+                  (state === "todo" ? "text-stone-400" : state === "current" ? "text-lotus font-semibold" : "text-ink")
                 }
               >
                 {label}
@@ -111,6 +127,7 @@ export function BookingStatusStepper({
           const state = index < currentStepIndex ? "done" : index === currentStepIndex ? "current" : "todo";
           const label = step.key === "handover" && pickupMethod === "delivery" ? "Đang giao" : step.label;
           const isLast = index === STEPS.length - 1;
+          const StepIcon = step.icon;
           return (
             <li key={step.key} className="flex gap-3">
               <div className="flex flex-col items-center">
@@ -124,16 +141,18 @@ export function BookingStatusStepper({
                         : "border-sand bg-white text-stone-300")
                   }
                 >
-                  <span className="material-symbols-outlined text-[18px]">
-                    {state === "done" ? "check" : step.icon}
-                  </span>
+                  {state === "done" ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <StepIcon className="h-4 w-4" />
+                  )}
                 </span>
                 {!isLast && <span className={`my-1 h-6 w-0.5 ${index < currentStepIndex ? "bg-lotus" : "bg-sand"}`} aria-hidden />}
               </div>
               <span
                 className={
                   "pt-2 text-sm font-medium " +
-                  (state === "todo" ? "text-stone-400" : state === "current" ? "text-lotus" : "text-ink")
+                  (state === "todo" ? "text-stone-400" : state === "current" ? "text-lotus font-semibold" : "text-ink")
                 }
               >
                 {label}

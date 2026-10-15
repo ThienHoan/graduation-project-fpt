@@ -16,6 +16,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { AddGarmentImageDto } from "./dto/add-image.dto";
 import { CreateGarmentDto } from "./dto/create-garment.dto";
 import { UpdateGarmentDto } from "./dto/update-garment.dto";
+import { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.dto";
+import { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { GarmentsService } from "./garments.service";
 
 @Controller("garments")
@@ -25,7 +27,9 @@ export class GarmentsController {
   // ── Public: Catalog ────────────────────────────────────────────────────────
 
   @Get()
-  findAll() { return this.garmentsService.findAll(); }
+  findAll(@Query("includeDeleted") includeDeleted?: string) {
+    return this.garmentsService.findAll(includeDeleted === "true");
+  }
 
   @Get("sizes")
   findAllSizes() {
@@ -43,12 +47,68 @@ export class GarmentsController {
     return this.garmentsService.findAllCategories();
   }
 
+  @Get(":id/sizes")
+  findSizesByGarment(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.findSizesByGarment(id);
+  }
+
+  @Get(":id/accessories")
+  findGarmentAccessories(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.findGarmentAccessories(id);
+  }
+
+  @Post(":id/accessories")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  addGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: CreateGarmentAccessoryDto,
+  ) {
+    return this.garmentsService.addGarmentAccessory(id, dto);
+  }
+
+  @Patch(":id/accessories/:accessoryId")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  updateGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("accessoryId", ParseUUIDPipe) accessoryId: string,
+    @Body() dto: UpdateGarmentAccessoryDto,
+  ) {
+    return this.garmentsService.updateGarmentAccessory(id, accessoryId, dto);
+  }
+
+  @Delete(":id/accessories/:accessoryId")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  removeGarmentAccessory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("accessoryId", ParseUUIDPipe) accessoryId: string,
+  ) {
+    return this.garmentsService.removeGarmentAccessory(id, accessoryId);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string) { return this.garmentsService.findOne(id); }
 
+  @Get(":id/similar")
+  findSimilar(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("limit") limit?: string,
+  ) {
+    const parsedLimit = limit ? Math.min(Math.max(Number(limit) || 6, 1), 20) : 6;
+    return this.garmentsService.findSimilarGarments(id, parsedLimit);
+  }
+
   @Get(":id/assets/available")
-  findAvailableAssets(@Param("id", ParseUUIDPipe) id: string) {
-    return this.garmentsService.findAvailableAssets(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  findAvailableAssets(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("garmentSizeId", new ParseUUIDPipe({ optional: true })) garmentSizeId?: string,
+    @Query("bookingId", new ParseUUIDPipe({ optional: true })) bookingId?: string,
+  ) {
+    return this.garmentsService.findAvailableAssets(id, garmentSizeId, bookingId);
   }
 
   // ── Manager / Owner: Garment CRUD ──────────────────────────────────────────
@@ -75,6 +135,13 @@ export class GarmentsController {
   @Roles("manager_owner", "admin")
   remove(@Param("id", ParseUUIDPipe) id: string) {
     return this.garmentsService.remove(id);
+  }
+
+  @Patch(":id/restore")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  restore(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.restore(id);
   }
 
   @Post(":id/images")

@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { AiService } from "../ai/ai.service";
+import sharp from "sharp";
 
 const AI_USER_ID = "00000000-0000-0000-0000-000000000000";
 const QUESTION_KEYWORDS = /[?？]|(?:^|(?<=\s))(gì|nào|ko|không|bao nhiêu|có|sao|thế nào|khi nào|mấy|à|nhỉ|hả)(?=\s|$|[.,;:!?])/i;
@@ -1108,13 +1109,30 @@ export class ChatService {
     const bucket = process.env.SUPABASE_CHAT_BUCKET?.trim() || "chat-attachments";
 
     const mimeType = file.mimetype;
-    const ext = mimeType.split("/").pop() || "bin";
+    let uploadBuffer = file.buffer;
+    let uploadMimeType = mimeType;
+    let ext = mimeType.split("/").pop() || "bin";
+
+    if (mimeType.startsWith("image/") && !mimeType.includes("svg")) {
+      try {
+        uploadBuffer = await sharp(file.buffer)
+          .rotate()
+          .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 80, effort: 4 })
+          .toBuffer();
+        uploadMimeType = "image/webp";
+        ext = "webp";
+      } catch (err) {
+        // Fallback to original buffer
+      }
+    }
+
     const objectPath = `${conversationId}/${crypto.randomUUID()}.${ext}`;
 
     const { error: uploadError } = await this.getSupabaseStorage()
       .from(bucket)
-      .upload(objectPath, file.buffer, {
-        contentType: mimeType,
+      .upload(objectPath, uploadBuffer, {
+        contentType: uploadMimeType,
         upsert: true,
       });
 
@@ -1127,8 +1145,8 @@ export class ChatService {
     const meta = {
       bucket,
       path: objectPath,
-      mimetype: mimeType,
-      size: file.size,
+      mimetype: uploadMimeType,
+      size: uploadBuffer.length,
     };
 
     const now = new Date();

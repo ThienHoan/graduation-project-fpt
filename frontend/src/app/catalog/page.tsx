@@ -4,12 +4,168 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
-import { getGarmentCategories, getGarmentsGrouped, type GarmentCategory, type GarmentGrouped } from "@/lib/api";
+import {
+  getGarmentCategories,
+  getGarmentsGrouped,
+  trackGarmentView,
+  type GarmentCategory,
+  type GarmentGrouped,
+} from "@/lib/api";
 import { addToCart, cartCount, removeFromCart, getCart } from "@/lib/cart";
 import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@/lib/chat";
+import { OptimizedImage } from "@/components/common/optimized-image";
+import {
+  Search,
+  Sparkles,
+  ShoppingBag,
+  SlidersHorizontal,
+  X,
+  ArrowRight,
+  CheckCircle2,
+  Trash2,
+  Camera,
+  Award,
+} from "lucide-react";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+}
+
+function CatalogGarmentCard({
+  group,
+  selectedGarmentId,
+  selectedSize,
+  onSelectSize,
+  onAddToCart,
+}: {
+  group: GarmentGrouped;
+  selectedGarmentId: string;
+  selectedSize: any;
+  onSelectSize: (sizeId: string) => void;
+  onAddToCart: () => void;
+}) {
+  const cardRef = useRef<HTMLElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  // Lazy view tracking: chỉ đếm khi thẻ sản phẩm lọt vào tầm mắt ít nhất 1.2s
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !group.garmentId) return;
+
+    let timer: NodeJS.Timeout | null = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          timer = setTimeout(() => {
+            void trackGarmentView(group.garmentId);
+            observer.disconnect();
+          }, 1200);
+        } else if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      },
+      { threshold: 0.4 },
+    );
+
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [group.garmentId]);
+
+  return (
+    <article
+      ref={cardRef}
+      className="group flex flex-col overflow-hidden rounded-xl border border-sand bg-white shadow-xs transition-all duration-300 hover:border-lotus hover:shadow-lg"
+    >
+      {/* Ảnh cổ phục với Lazy Load & Smooth Fade-in */}
+      <Link
+        href={`/catalog/${selectedGarmentId}`}
+        className="relative aspect-[3/4] overflow-hidden bg-stone-100"
+      >
+        <OptimizedImage
+          src={group.imageUrl ?? ""}
+          alt={group.name}
+          fill
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+          className="object-cover transition-all duration-500 group-hover:scale-105"
+        />
+        <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+          {group.categoryName ?? "Triều Nguyễn"}
+        </span>
+      </Link>
+
+      {/* Thông tin card */}
+      <div className="flex flex-1 flex-col p-4">
+        <Link href={`/catalog/${selectedGarmentId}`} className="hover:underline">
+          <h3 className="font-display text-xl font-bold text-oxblood line-clamp-1">
+            {group.name}
+          </h3>
+        </Link>
+
+        {/* Size pills */}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {group.sizes.map((s) => {
+            const isSel = selectedGarmentId === s.garmentSizeId;
+            return (
+              <button
+                key={s.garmentSizeId}
+                type="button"
+                onClick={() => onSelectSize(s.garmentSizeId)}
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${
+                  isSel
+                    ? "bg-lotus text-white"
+                    : "bg-parchment text-stone-600 hover:bg-lotus/15"
+                }`}
+              >
+                {s.sizeLabel ?? "—"}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Giá thuê & Cọc */}
+        <div className="mt-auto border-t border-sand pt-3 space-y-1">
+          <div className="flex items-baseline justify-between text-xs">
+            <span className="text-stone-500 font-medium">Giá thuê</span>
+            <span className="text-sm font-bold text-lotus">
+              {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
+              <span className="text-xs font-normal text-stone-500">/ngày</span>
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-stone-500">Cọc</span>
+            <span className="font-semibold text-ink">
+              {selectedSize ? formatVND(selectedSize.depositAmount) : "—"}
+            </span>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Link
+            href={`/try-on?garmentSizeId=${selectedGarmentId}`}
+            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg border border-sand bg-mist px-2 text-[11px] font-bold text-ink transition hover:border-lotus hover:text-lotus"
+          >
+            <Camera className="h-3 w-3 text-lotus" />
+            <span>Ướm AI</span>
+          </Link>
+
+          <button
+            type="button"
+            onClick={onAddToCart}
+            className="inline-flex min-h-[34px] items-center justify-center gap-1 rounded-lg bg-lotus px-2 text-[11px] font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
+          >
+            <ShoppingBag className="h-3 w-3" />
+            <span>Thuê</span>
+          </button>
+        </div>
+      </div>
+    </article>
+  );
 }
 
 export default function CatalogPage() {
@@ -38,9 +194,11 @@ export default function CatalogPage() {
     getGarmentsGrouped(
       search || undefined,
       category && category !== "all" ? category : undefined,
-    ).then((res) => {
-      if (res.success && res.data) setGroups(res.data);
-    }).finally(() => setLoading(false));
+    )
+      .then((res) => {
+        if (res.success && res.data) setGroups(res.data);
+      })
+      .finally(() => setLoading(false));
   }
 
   // Initial fetch: groups + categories
@@ -65,7 +223,9 @@ export default function CatalogPage() {
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => setSearchDebounced(searchQuery), 300);
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
   }, [searchQuery]);
 
   // Re-fetch when search or category changes
@@ -86,39 +246,26 @@ export default function CatalogPage() {
 
   function handleAddToCart(group: GarmentGrouped) {
     const selectedGarmentId = selectedSizes[group.slug];
-    if (!selectedGarmentId) {
-      // Default to first size
-      const firstSize = group.sizes[0];
-      if (!firstSize) return;
-      const s = firstSize;
-      addToCart({
-        garmentSizeId: s.garmentSizeId,
-        garmentId: group.garmentId,
-        name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
-        sizeLabel: s.sizeLabel,
-        dailyPrice: s.dailyPrice,
-        depositAmount: s.depositAmount,
-        imageUrl: group.imageUrl,
-      });
-    } else {
-      const s = group.sizes.find((sz) => sz.garmentSizeId === selectedGarmentId)!;
-      addToCart({
-        garmentSizeId: s.garmentSizeId,
-        garmentId: group.garmentId,
-        name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
-        sizeLabel: s.sizeLabel,
-        dailyPrice: s.dailyPrice,
-        depositAmount: s.depositAmount,
-        imageUrl: group.imageUrl,
-      });
-    }
+    const s =
+      group.sizes.find((sz) => sz.garmentSizeId === selectedGarmentId) ?? group.sizes[0];
+    if (!s) return;
+
+    addToCart({
+      garmentSizeId: s.garmentSizeId,
+      garmentId: group.garmentId,
+      name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
+      sizeLabel: s.sizeLabel,
+      dailyPrice: s.dailyPrice,
+      depositAmount: s.depositAmount,
+      imageUrl: group.imageUrl,
+    });
     setCartCountVal(cartCount());
     setAddedMsg(`Đã thêm "${group.name}" vào giỏ`);
-    setTimeout(() => setAddedMsg(null), 2000);
+    setTimeout(() => setAddedMsg(null), 2500);
   }
 
-  function handleRemoveFromCart(garmentId: string) {
-    removeFromCart(garmentId);
+  function handleRemoveFromCart(garmentSizeId: string) {
+    removeFromCart(garmentSizeId);
     setCartCountVal(cartCount());
   }
 
@@ -126,22 +273,31 @@ export default function CatalogPage() {
     if (!aiQuery.trim()) return;
     setAiLoading(true);
     setAiError(null);
-    setAiTopics([]);
-    const res = await getProductAdvisor({ message: aiQuery.trim() });
-    if (res.success && res.data) {
-      setAiTopics(res.data.topics);
-    } else {
-      setAiError("Không thể gợi ý sản phẩm. Vui lòng thử lại.");
+    try {
+      const res = await getProductAdvisor({ message: aiQuery.trim() });
+      if (res.success && res.data) {
+        setAiTopics(res.data.topics);
+      } else {
+        setAiError(res.error ?? "Không thể nhận tư vấn từ AI vào lúc này.");
+      }
+    } catch {
+      setAiError("Có lỗi xảy ra khi kết nối trợ lý AI.");
+    } finally {
+      setAiLoading(false);
     }
-    setAiLoading(false);
   }
 
-  function findAiProductSizeId(product: AIAdvisorProduct): string | undefined {
-    const group = groups.find((g) => g.name === product.name || g.garmentId === product.garmentId)
-    if (!group?.sizes.length) return undefined;
-    const sizeLabels = (product.size ?? "").split(/[-,/\s]+/).filter(Boolean).map((s) => s.toUpperCase());
-    const matched = group.sizes.find((s) => s.sizeLabel && sizeLabels.includes(s.sizeLabel.toUpperCase()));
-    return (matched ?? group.sizes[0])?.garmentSizeId;
+  function findAiProductSizeId(product: AIAdvisorProduct): string | null {
+    for (const g of groups) {
+      if (g.garmentId === product.garmentId) {
+        if (product.size) {
+          const s = g.sizes.find((sz) => sz.sizeLabel?.toLowerCase() === product.size?.toLowerCase());
+          if (s) return s.garmentSizeId;
+        }
+        return g.sizes[0]?.garmentSizeId ?? null;
+      }
+    }
+    return null;
   }
 
   function handleAiAddToCart(product: AIAdvisorProduct) {
@@ -158,65 +314,83 @@ export default function CatalogPage() {
     });
     setCartCountVal(cartCount());
     setAddedMsg(`Đã thêm "${product.name}" vào giỏ`);
-    setTimeout(() => setAddedMsg(null), 2000);
+    setTimeout(() => setAddedMsg(null), 2500);
   }
 
   const featured = groups[0];
   const cartItems = getCart();
 
   return (
-    <div className="min-h-screen bg-mist text-ink">
-      <CustomerNavbar active="collection" />
+    <div className="min-h-screen bg-mist text-ink antialiased">
+      <CustomerNavbar active="collection" cartHref="/booking/date-selection" />
 
-      {/* Cart icon floating */}
-      <div className="fixed right-4 top-24 z-30 sm:right-8">
+      {/* Floating Cart Button & Quick Dropdown */}
+      <div className="fixed right-4 top-20 z-30 sm:right-8">
         <button
           type="button"
           onClick={() => setShowCart(!showCart)}
-          className="relative flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-lg border border-sand hover:border-lotus transition"
+          className="relative flex h-12 w-12 items-center justify-center rounded-full border border-sand bg-white text-lotus shadow-lg transition hover:border-lotus active:scale-[0.98]"
+          aria-label="Xem giỏ thuê đồ"
         >
-          <span className="material-symbols-outlined text-2xl text-lotus">shopping_bag</span>
+          <ShoppingBag className="h-5 w-5" />
           {cartCountVal > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-oxblood text-[11px] font-bold text-white">
+            <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-lotus text-[11px] font-bold text-white shadow-xs">
               {cartCountVal}
             </span>
           )}
         </button>
 
-        {/* Cart dropdown */}
         {showCart && (
-          <div className="absolute right-0 top-14 w-80 rounded-xl border border-sand bg-white p-4 shadow-2xl">
-            <h3 className="font-display text-lg text-ink mb-3 border-b border-sand pb-2">
-              Giỏ thuê ({cartCountVal})
-            </h3>
+          <div className="absolute right-0 top-14 w-84 rounded-2xl border border-sand bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-sand pb-3">
+              <h3 className="font-display text-lg font-bold text-oxblood">
+                Giỏ thuê đồ ({cartCountVal})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCart(false)}
+                className="rounded-full p-1 text-stone-400 hover:text-stone-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
             {cartItems.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4">Giỏ hàng trống</p>
+              <p className="py-6 text-center text-xs text-stone-500">Giỏ hàng hiện đang trống</p>
             ) : (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
+              <div className="max-h-64 space-y-3 overflow-y-auto py-3">
                 {cartItems.map((item) => (
-                  <div key={item.garmentSizeId} className="flex items-center justify-between text-sm border-b border-sand/50 pb-2">
-                    <div>
-                      <p className="font-medium text-ink">{item.name}</p>
-                      <p className="text-xs text-stone-500">{formatVND(item.dailyPrice)}/ngày</p>
+                  <div
+                    key={item.garmentSizeId}
+                    className="flex items-center justify-between gap-3 border-b border-sand/50 pb-2.5 text-xs"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-ink">{item.name}</p>
+                      <p className="text-[11px] font-bold text-lotus">
+                        {formatVND(item.dailyPrice)}/ngày
+                      </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleRemoveFromCart(item.garmentSizeId)}
-                      className="text-xs text-red-500 hover:text-red-700"
+                      className="rounded p-1 text-stone-400 transition hover:text-red-600"
+                      title="Xóa khỏi giỏ"
                     >
-                      Xoá
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
               </div>
             )}
+
             {cartItems.length > 0 && (
               <Link
                 href="/booking/date-selection"
-                className="mt-3 block w-full rounded-lg bg-lotus px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-oxblood transition"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-lotus py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood"
                 onClick={() => setShowCart(false)}
               >
-                Thuê ngay
+                <span>Tiến hành đặt thuê</span>
+                <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             )}
           </div>
@@ -225,364 +399,393 @@ export default function CatalogPage() {
 
       {/* Toast message */}
       {addedMsg && (
-        <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full bg-jade px-6 py-3 text-sm font-semibold text-white shadow-lg">
-          {addedMsg}
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border border-emerald-300 bg-emerald-800 px-6 py-3 text-xs font-semibold text-white shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+            <span>{addedMsg}</span>
+          </div>
         </div>
       )}
 
-      <main className="mx-auto max-w-7xl px-4 pb-24 pt-24 sm:px-6 lg:px-8 lg:pt-28">
-        <header className="py-12 text-center lg:py-20">
-          <h1 className="font-display text-5xl uppercase text-ink sm:text-6xl">Lưu Trữ Di Sản</h1>
-          <p className="mx-auto mt-6 max-w-3xl text-base leading-8 text-stone-600 sm:text-lg">
-            Khám phá bộ sưu tập y phục truyền thống Việt Nam được chọn lọc cho thuê. Chọn size và thêm vào giỏ để bắt đầu.
-          </p>
-        </header>
+      <main className="mx-auto max-w-7xl px-4 pb-24 pt-10 sm:px-6 lg:px-8">
+        {/* Banner tiêu đề trang */}
+        <section className="relative overflow-hidden rounded-2xl border border-sand bg-gradient-to-b from-parchment to-mist p-8 sm:p-12 text-center shadow-xs">
+          <div className="animate-ambient-glow pointer-events-none absolute -left-20 -top-20 h-72 w-72 rounded-full bg-red-200/30 blur-3xl" />
+          <div
+            className="animate-ambient-glow pointer-events-none absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-amber-200/25 blur-3xl"
+            style={{ animationDelay: "-4s" }}
+          />
 
-        {/* Filter bar */}
-        <section className="sticky top-20 z-20 mb-10 border-y border-sand/70 bg-mist/95 py-5 backdrop-blur-md">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-lotus">
-                <span className="material-symbols-outlined text-[18px]">tune</span>
-                Bộ lọc
+          <div className="relative mx-auto max-w-3xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-sand bg-white/90 px-3.5 py-1.5 text-xs font-semibold text-bronze shadow-xs">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping-subtle absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" />
               </span>
-              {categories.map((cat) => (
+              <Award className="h-4 w-4 text-lotus" />
+              <span>Kho Lưu Trữ Di Sản Hoàng Cung &amp; Cổ Phục</span>
+            </div>
+
+            <h1 className="text-balance mt-4 font-display text-4xl font-bold tracking-tight text-oxblood sm:text-5xl lg:text-6xl">
+              Bộ Sưu Tập Cổ Phục Tuyển Chọn
+            </h1>
+
+            <p className="mt-4 text-sm leading-relaxed text-stone-600 sm:text-base">
+              Hơn 500 mẫu Nhật Bình, Áo Tấc, Ngũ Thân và Áo Dài phục dựng chuẩn mực quy cách hoàng
+              tộc. Tự do ướm thử với công nghệ AI trước khi quyết định đặt thuê.
+            </p>
+          </div>
+        </section>
+
+        {/* Thanh tìm kiếm & Trợ lý tư vấn AI */}
+        <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* Ô Tìm Kiếm Nhanh */}
+          <div className="lg:col-span-5">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tìm kiếm theo tên áo, triều đại, hoa văn, màu sắc..."
+                className="w-full rounded-xl border border-sand bg-white py-3 pl-11 pr-10 text-xs font-medium text-ink shadow-xs outline-none transition focus:border-lotus focus:ring-1 focus:ring-lotus/20"
+              />
+              {searchQuery && (
                 <button
-                  key={cat}
                   type="button"
-                  onClick={() => setActiveCategory(cat)}
-                  className={`rounded-full border px-4 py-2 text-sm transition ${activeCategory === cat
-                      ? "border-lotus bg-lotus text-white"
-                      : "border-sand bg-white text-stone-600 hover:border-antique hover:text-lotus"
-                    }`}
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700"
                 >
-                  {cat === "all" ? "Tất cả" : cat}
+                  <X className="h-4 w-4" />
                 </button>
-              ))}
-            </div>
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-stone-500">
-              Hiển thị <span className="font-semibold text-oxblood">{groups.length}</span> trang phục
-            </div>
-          </div>
-        </section>
-
-        {/* Search bar */}
-        <section className="mb-6">
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-lg text-stone-400">search</span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Tìm kiếm trang phục theo tên, thể loại, màu sắc..."
-              className="w-full rounded-xl border border-sand bg-white py-3.5 pl-11 pr-4 text-sm outline-none transition focus:border-lotus focus:ring-1 focus:ring-lotus/30"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
-              >
-                <span className="material-symbols-outlined text-lg">close</span>
-              </button>
-            )}
-          </div>
-        </section>
-
-        {/* AI Product Advisor */}
-        <section className="mb-12 rounded-lg border border-sand/70 bg-white p-6 shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="font-display text-2xl text-ink mb-1">Bạn cần tìm trang phục gì?</h2>
-              <p className="text-sm text-stone-500">Mô tả nhu cầu của bạn, AI sẽ gợi ý sản phẩm phù hợp.</p>
-            </div>
-            {aiTopics.length > 0 && (
-              <button
-                type="button"
-                onClick={() => { setAiTopics([]); setAiQuery(""); setAiError(null); }}
-                className="flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100 hover:border-red-300"
-                aria-label="Đóng gợi ý"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-                Bỏ qua
-              </button>
-            )}
-          </div>
-          <div className="flex gap-3 mt-4">
-            <input
-              type="text"
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAiConsult(); }}
-              placeholder="VD: Tôi cần áo dài hồng pastel size M cho tiệc cưới..."
-              className="flex-1 rounded-xl border border-sand bg-mist px-4 py-3 text-sm outline-none focus:border-lotus"
-            />
-            <button
-              type="button"
-              onClick={handleAiConsult}
-              disabled={aiLoading || !aiQuery.trim()}
-              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-lotus px-6 py-3 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {aiLoading ? (
-                <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
               )}
-              Gợi ý
-            </button>
-          </div>
-          {aiError && (
-            <p className="mt-3 text-sm text-red-500">{aiError}</p>
-          )}
-          {aiTopics.length > 0 && (
-            <div className="mt-6 space-y-6">
-              {aiTopics.map((topic, ti) => (
-                <div key={ti}>
-                  <h3 className="font-display text-xl text-ink mb-3">{topic.title}</h3>
-                  {topic.products.length > 0 && (
-                    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 mb-4">
-                      {[...topic.products].sort((a, b) => a.inStock === b.inStock ? 0 : a.inStock ? -1 : 1).map((p) => {
-                        const sizeId = findAiProductSizeId(p);
-                        return (
-                          <div
-                            key={p.garmentId}
-                            className="flex flex-col rounded-xl border border-sand/70 bg-mist p-2"
-                          >
-                            <div className="w-full aspect-[1/1] rounded-lg border border-sand/70 mb-2 overflow-hidden bg-stone-100 flex items-center justify-center">
-                              {p.imageUrl ? (
-                                <img
-                                  src={p.imageUrl}
-                                  alt={p.name}
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => { e.currentTarget.style.display = "none"; }}
-                                />
-                              ) : (
-                                <span className="material-symbols-outlined text-2xl text-stone-300">image</span>
-                              )}
-                            </div>
-                            <p className="text-xs font-semibold text-ink truncate">{p.name}</p>
-                            <p className="text-[11px] text-lotus font-semibold mt-0.5">{formatVND(p.dailyPrice)}</p>
-                            {p.size && <p className="text-[10px] text-stone-500">Size: {p.size}</p>}
-                            {p.reason && (
-                              <p className="text-[10px] text-stone-500 mt-0.5 line-clamp-2">{p.reason}</p>
-                            )}
-                            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                              {sizeId && (
-                                <Link
-                                  href={`/catalog/${sizeId}`}
-                                  className="inline-flex items-center gap-1 rounded-full border border-lotus/30 px-2 py-1 text-[10px] font-semibold text-lotus transition hover:bg-lotus/10"
-                                >
-                                  Xem chi tiết
-                                </Link>
-                              )}
-                              {sizeId && (
-                                <Link
-                                  href={`/try-on?garmentSizeId=${sizeId}`}
-                                  className="inline-flex items-center gap-1 rounded-full border border-jade/30 px-2 py-1 text-[10px] font-semibold text-jade transition hover:bg-jade/5"
-                                >
-                                  Thử đồ AI
-                                </Link>
-                              )}
-                              {p.inStock ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleAiAddToCart(p)}
-                                  disabled={!sizeId}
-                                  className="inline-flex items-center gap-1 rounded-full bg-lotus px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-oxblood disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  <span className="material-symbols-outlined text-[12px]">shopping_bag</span>
-                                  Thêm vào giỏ
-                                </button>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-semibold text-stone-400">
-                                  Đang hết hàng
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <p className="text-sm text-stone-700 italic border-l-2 border-sand pl-3">
-                    {topic.assistantReply}
-                  </p>
-                </div>
-              ))}
             </div>
-          )}
-        </section>
+          </div>
 
-        {/* Featured */}
-        {featured && (
-          <section className="mb-20 grid items-center gap-10 lg:grid-cols-[1.25fr_0.9fr] lg:gap-20">
-            <div className="relative overflow-hidden rounded-sm border border-sand/70 bg-lotus/5 shadow-lg">
-              <div className="flex aspect-[4/5] items-center justify-center">
-                {featured.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={featured.imageUrl} alt={featured.name} className="h-full w-full object-cover" />
+          {/* AI Style Advisor Input */}
+          <div className="lg:col-span-7">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Sparkles className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-lotus" />
+                <input
+                  type="text"
+                  value={aiQuery}
+                  onChange={(e) => setAiQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleAiConsult();
+                  }}
+                  placeholder="Hỏi AI tư vấn: VD: Tôi cần áo Nhật Bình màu đỏ chụp ảnh kỷ yếu..."
+                  className="w-full rounded-xl border border-sand bg-white py-3 pl-11 pr-4 text-xs font-medium text-ink shadow-xs outline-none transition focus:border-lotus focus:ring-1 focus:ring-lotus/20"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAiConsult}
+                disabled={aiLoading || !aiQuery.trim()}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-lotus px-5 py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {aiLoading ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 ) : (
-                  <span className="material-symbols-outlined text-[80px] text-antique/30">checkroom</span>
+                  <Sparkles className="h-3.5 w-3.5" />
+                )}
+                <span>Tư Vấn AI</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Khung kết quả tư vấn AI nếu có */}
+        {(aiTopics.length > 0 || aiError) && (
+          <section className="mt-6 rounded-2xl border border-sand bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between border-b border-sand pb-3">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-lotus">
+                <Sparkles className="h-4 w-4 text-lotus" />
+                <span>Gợi ý phong cách từ Trợ lý AI xưởng may</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAiTopics([]);
+                  setAiQuery("");
+                  setAiError(null);
+                }}
+                className="rounded-full p-1 text-stone-400 hover:text-stone-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {aiError && <p className="mt-3 text-xs text-red-600">{aiError}</p>}
+
+            {aiTopics.map((topic, ti) => (
+              <div key={ti} className="mt-4">
+                <h3 className="font-display text-lg font-bold text-oxblood">{topic.title}</h3>
+                <p className="mt-1 text-xs italic text-stone-600">{topic.assistantReply}</p>
+
+                {topic.products.length > 0 && (
+                  <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    {topic.products.map((p) => {
+                      const sizeId = findAiProductSizeId(p);
+                      return (
+                        <div
+                          key={p.garmentId}
+                          className="flex flex-col overflow-hidden rounded-xl border border-sand bg-mist p-3 text-xs"
+                        >
+                          <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-stone-100">
+                            <OptimizedImage
+                              src={p.imageUrl ?? ""}
+                              alt={p.name}
+                              fill
+                              sizes="(max-width: 640px) 50vw, 25vw"
+                              className="object-cover"
+                            />
+                          </div>
+                          <p className="mt-2 truncate font-bold text-ink">{p.name}</p>
+                          <p className="font-bold text-lotus">{formatVND(p.dailyPrice)}/ngày</p>
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {sizeId && (
+                              <Link
+                                href={`/catalog/${sizeId}`}
+                                className="rounded border border-sand bg-white px-2 py-1 text-[11px] font-semibold text-stone-700 hover:border-lotus"
+                              >
+                                Xem chi tiết
+                              </Link>
+                            )}
+                            {sizeId && (
+                              <Link
+                                href={`/try-on?garmentSizeId=${sizeId}`}
+                                className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-800"
+                              >
+                                <Camera className="h-3 w-3" />
+                                <span>Thử AI</span>
+                              </Link>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
-            <div>
-              <span className="text-xs font-semibold uppercase tracking-[0.26em] text-antique">
-                {featured.categoryName ?? "Trang phục"}
-              </span>
-              <h2 className="mt-5 font-display text-5xl text-oxblood">{featured.name}</h2>
-              <dl className="mt-8 space-y-4 border-y border-sand py-6 text-sm text-ink">
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="uppercase tracking-[0.16em] text-stone-500">Size</dt>
-                  <dd className="flex gap-2">
-                    {featured.sizes.map((s) => (
-                      <button
-                        key={s.garmentSizeId}
-                        type="button"
-                        onClick={() => handleSelectSize(featured.slug, s.garmentSizeId)}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold transition ${(selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId) === s.garmentSizeId
-                            ? "bg-lotus text-white"
-                            : "bg-parchment text-stone-600 hover:bg-lotus/20"
-                          }`}
-                      >
-                        {s.sizeLabel ?? "—"}
-                      </button>
-                    ))}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="uppercase tracking-[0.16em] text-stone-500">Giá thuê</dt>
-                  <dd className="font-semibold text-lotus">
-                    {(() => {
-                      const sel = selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId;
-                      const sz = featured.sizes.find((s) => s.garmentSizeId === sel) ?? featured.sizes[0];
-                      return sz ? formatVND(sz.dailyPrice) + " / ngày" : "—";
-                    })()}
-                  </dd>
-                </div>
-              </dl>
-              <button
-                type="button"
-                onClick={() => handleAddToCart(featured)}
-                className="mt-8 inline-flex items-center gap-3 border border-lotus px-8 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-lotus transition hover:bg-lotus hover:text-white"
-              >
-                Thêm vào giỏ
-                <span className="material-symbols-outlined text-[18px]">shopping_bag</span>
-              </button>
-            </div>
+            ))}
           </section>
         )}
 
-        {/* Grid */}
-        {loading ? (
-          <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="flex flex-col border border-sand bg-white/80 p-4">
-                <div className="aspect-[3/4] w-full animate-pulse bg-stone-200" />
-                <div className="mt-6 h-6 w-3/4 animate-pulse rounded bg-stone-200" />
-                <div className="mt-3 flex gap-2">
-                  <div className="h-6 w-8 animate-pulse rounded-full bg-stone-200" />
-                  <div className="h-6 w-8 animate-pulse rounded-full bg-stone-200" />
-                </div>
-                <div className="mt-auto pt-4">
-                  <div className="h-4 w-full animate-pulse rounded bg-stone-200" />
-                  <div className="mt-2 h-4 w-2/3 animate-pulse rounded bg-stone-200" />
-                  <div className="mt-4 h-10 w-full animate-pulse rounded-lg bg-stone-200" />
+        {/* Thanh Lọc Danh Mục (Category Tabs) */}
+        <section className="sticky top-16 z-20 mt-8 border-y border-sand bg-mist/95 py-4 backdrop-blur-md">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-bronze mr-2">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <span>Triều đại / Danh mục:</span>
+              </span>
+              {categories.map((cat) => {
+                const isSelected = activeCategory === cat;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setActiveCategory(cat)}
+                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+                      isSelected
+                        ? "bg-lotus text-white shadow-xs"
+                        : "border border-sand bg-white text-stone-700 hover:border-lotus hover:text-lotus"
+                    }`}
+                  >
+                    {cat === "all" ? "Tất cả cổ phục" : cat}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="text-xs font-medium text-stone-500">
+              Hiển thị <span className="font-bold text-oxblood">{groups.length}</span> mẫu y phục
+            </div>
+          </div>
+        </section>
+
+        {/* Tiêu Điểm Tác Phẩm Nổi Bật (Featured Garment) */}
+        {featured && activeCategory === "all" && !searchDebounced && (
+          <section className="mt-10 overflow-hidden rounded-2xl border border-sand bg-white p-6 shadow-sm lg:p-8">
+            <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-12">
+              <div className="lg:col-span-5">
+                <div className="relative aspect-[3/4] overflow-hidden rounded-xl bg-stone-100">
+                  <OptimizedImage
+                    src={featured.imageUrl ?? ""}
+                    alt={featured.name}
+                    fill
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 40vw"
+                    className="object-cover"
+                  />
+                  <span className="absolute left-3 top-3 rounded-md bg-black/75 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-md">
+                    Tiêu điểm phục dựng
+                  </span>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : groups.length === 0 ? (
-          <div className="py-20 text-center text-stone-400">
-            <span className="material-symbols-outlined text-[48px]">checkroom</span>
-            <p className="mt-4">Chưa có trang phục nào.</p>
-          </div>
-        ) : (
-          <section className="grid gap-8 md:grid-cols-2 xl:grid-cols-4">
-            {groups.slice(featured ? 1 : 0).map((group) => {
-              const selectedGarmentId = selectedSizes[group.slug] ?? group.sizes[0]?.garmentSizeId;
-              const selectedSize = group.sizes.find((s) => s.garmentSizeId === selectedGarmentId) ?? group.sizes[0];
-              return (
-                <article
-                  key={group.slug}
-                  className="group flex flex-col border border-antique/20 bg-white/80 p-4 backdrop-blur-sm transition duration-500 hover:border-antique/60 hover:shadow-lg"
-                >
-                  <Link href={`/catalog/${selectedGarmentId}`} className="relative flex aspect-[3/4] items-center justify-center overflow-hidden bg-lotus/5 cursor-pointer">
-                    {group.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={group.imageUrl} alt={group.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-                    ) : (
-                      <span className="material-symbols-outlined text-[60px] text-antique/40">checkroom</span>
-                    )}
-                    <div className="absolute left-4 top-4 rounded bg-white/95 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-ink backdrop-blur">
-                      {group.categoryName ?? "Trang phục"}
-                    </div>
-                  </Link>
 
-                  <div className="flex flex-1 flex-col px-2 pb-4 pt-6">
-                    <Link href={`/catalog/${selectedGarmentId}`} className="hover:underline">
-                      <h3 className="font-display text-2xl text-oxblood">{group.name}</h3>
-                    </Link>
+              <div className="lg:col-span-7">
+                <span className="text-xs font-bold uppercase tracking-widest text-bronze">
+                  {featured.categoryName ?? "Triều Nguyễn"}
+                </span>
+                <h2 className="mt-2 font-display text-3xl font-bold text-oxblood sm:text-4xl">
+                  {featured.name}
+                </h2>
+                <p className="mt-3 text-xs leading-relaxed text-stone-600 sm:text-sm">
+                  Tác phẩm tiêu biểu phục dựng chuẩn mực văn hóa di sản. Tơ tằm tự nhiên kết hợp thêu
+                  tay thủ công tinh xảo từng đường kim mũi chỉ.
+                </p>
 
-                    {/* Size pills */}
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {group.sizes.map((s) => (
+                {/* Chọn size */}
+                <div className="mt-6 border-t border-sand pt-4">
+                  <span className="text-xs font-bold uppercase tracking-wider text-stone-700">
+                    Kích thước có sẵn:
+                  </span>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {featured.sizes.map((s) => {
+                      const sel =
+                        (selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId) ===
+                        s.garmentSizeId;
+                      return (
                         <button
                           key={s.garmentSizeId}
                           type="button"
-                          onClick={() => handleSelectSize(group.slug, s.garmentSizeId)}
-                          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase transition ${selectedGarmentId === s.garmentSizeId
-                              ? "bg-lotus text-white"
-                              : "bg-parchment text-stone-500 hover:bg-lotus/20"
-                            }`}
+                          onClick={() => handleSelectSize(featured.slug, s.garmentSizeId)}
+                          className={`min-w-[40px] rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                            sel
+                              ? "bg-lotus text-white shadow-xs"
+                              : "border border-sand bg-parchment text-stone-700 hover:border-lotus"
+                          }`}
                         >
-                          {s.sizeLabel ?? "—"}
+                          Size {s.sizeLabel ?? "Chuẩn"}
                         </button>
-                      ))}
-                    </div>
-
-                    <div className="mt-auto space-y-2 border-t border-antique/20 pt-4">
-                      <div className="flex items-end justify-between gap-4">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">Giá thuê</span>
-                        <span className="text-base font-semibold text-lotus">
-                          {selectedSize ? formatVND(selectedSize.dailyPrice) + " / ngày" : "—"}
-                        </span>
-                      </div>
-                      <div className="flex items-end justify-between gap-4">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">Tiền cọc</span>
-                        <span className="text-sm text-ink">
-                          {selectedSize ? formatVND(selectedSize.depositAmount) : "—"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleAddToCart(group)}
-                      className="mt-4 w-full rounded-lg bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood"
-                    >
-                      Thêm vào giỏ
-                    </button>
+                      );
+                    })}
                   </div>
-                </article>
-              );
-            })}
+                </div>
+
+                {/* Giá thuê & Cọc */}
+                <div className="mt-6 flex flex-wrap items-baseline gap-6 border-t border-sand pt-4">
+                  <div>
+                    <span className="block text-xs text-stone-500">Giá thuê</span>
+                    <span className="font-display text-2xl font-bold text-lotus sm:text-3xl">
+                      {(() => {
+                        const sel =
+                          selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId;
+                        const sz =
+                          featured.sizes.find((s) => s.garmentSizeId === sel) ?? featured.sizes[0];
+                        return sz ? formatVND(sz.dailyPrice) : "—";
+                      })()}
+                      <span className="text-xs font-normal text-stone-600">/ngày</span>
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-xs text-stone-500">Tiền cọc minh bạch</span>
+                    <span className="text-sm font-semibold text-ink">
+                      {(() => {
+                        const sel =
+                          selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId;
+                        const sz =
+                          featured.sizes.find((s) => s.garmentSizeId === sel) ?? featured.sizes[0];
+                        return sz ? formatVND(sz.depositAmount) : "—";
+                      })()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Hành động */}
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleAddToCart(featured)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-lotus px-6 py-3 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
+                  >
+                    <ShoppingBag className="h-4 w-4" />
+                    <span>Thêm vào giỏ</span>
+                  </button>
+
+                  <Link
+                    href={`/try-on?garmentSizeId=${
+                      selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId
+                    }`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-6 py-3 text-xs font-semibold uppercase tracking-wider text-ink shadow-xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
+                  >
+                    <Camera className="h-4 w-4 text-lotus" />
+                    <span>Ướm thử AI</span>
+                  </Link>
+                </div>
+              </div>
+            </div>
           </section>
         )}
 
-        {/* Bottom CTA */}
+        {/* Lưới Sản Phẩm Chính (Main Costume Grid) */}
+        <section className="mt-12">
+          {loading ? (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex flex-col rounded-xl border border-sand bg-white p-4 shadow-xs"
+                >
+                  <div className="aspect-[3/4] w-full animate-pulse rounded-lg bg-stone-200" />
+                  <div className="mt-4 h-5 w-3/4 animate-pulse rounded bg-stone-200" />
+                  <div className="mt-2 h-4 w-1/2 animate-pulse rounded bg-stone-200" />
+                  <div className="mt-4 h-9 w-full animate-pulse rounded-lg bg-stone-200" />
+                </div>
+              ))}
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="rounded-2xl border border-sand bg-white py-16 text-center shadow-xs">
+              <ShoppingBag className="mx-auto h-12 w-12 text-stone-300" />
+              <h3 className="mt-3 font-display text-xl font-bold text-stone-800">
+                Không tìm thấy y phục phù hợp
+              </h3>
+              <p className="mt-1 text-xs text-stone-500">
+                Vui lòng thử đổi từ khóa tìm kiếm hoặc chọn danh mục cổ phục khác.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {groups
+                .slice(featured && activeCategory === "all" && !searchDebounced ? 1 : 0)
+                .map((group) => {
+                  const selectedGarmentId =
+                    selectedSizes[group.slug] ?? group.sizes[0]?.garmentSizeId;
+                  const selectedSize =
+                    group.sizes.find((s) => s.garmentSizeId === selectedGarmentId) ??
+                    group.sizes[0];
+
+                  return (
+                    <CatalogGarmentCard
+                      key={group.slug}
+                      group={group}
+                      selectedGarmentId={selectedGarmentId}
+                      selectedSize={selectedSize}
+                      onSelectSize={(sizeId) => handleSelectSize(group.slug, sizeId)}
+                      onAddToCart={() => handleAddToCart(group)}
+                    />
+                  );
+                })}
+            </div>
+          )}
+        </section>
+
+        {/* CTA Cuối trang khi giỏ có hàng */}
         {cartCountVal > 0 && (
           <div className="mt-16 text-center">
             <Link
               href="/booking/date-selection"
-              className="inline-flex items-center gap-3 rounded-lg bg-oxblood px-10 py-5 text-base font-semibold text-white shadow-lg transition hover:bg-red-950"
+              className="inline-flex items-center gap-2 rounded-xl bg-oxblood px-8 py-4 text-sm font-semibold uppercase tracking-wider text-white shadow-lg transition hover:bg-red-950 active:scale-[0.98]"
             >
-              Xem giỏ & đặt lịch ({cartCountVal} món)
-              <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+              <span>Xem giỏ &amp; chọn ngày thuê ({cartCountVal} trang phục)</span>
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         )}
       </main>
+
       <CustomerFooter />
     </div>
   );

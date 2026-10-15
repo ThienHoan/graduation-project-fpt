@@ -25,3 +25,4 @@ export class CreateTryonDto {
   @IsIn(TRYON_SOURCES)
   source?: TryonSource;
 }
+

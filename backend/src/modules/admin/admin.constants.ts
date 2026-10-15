@@ -37,14 +37,14 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
     label: "Địa chỉ cửa hàng",
     description: "Địa chỉ hiển thị trên cổng vận hành và phiếu hỗ trợ.",
     kind: "text",
-    defaultValue: { value: "123 Lê Thánh Tôn, Bến Nghé, Quận 1, TP.HCM" },
+    defaultValue: { value: "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng" },
   },
   {
     key: "store_phone",
     label: "Số điện thoại cửa hàng",
     description: "Số điện thoại hỗ trợ và xác nhận đơn.",
     kind: "text",
-    defaultValue: { value: "0901999888" },
+    defaultValue: { value: "0236 730 0999" },
   },
   {
     key: "business_hours",
@@ -58,14 +58,14 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
     label: "Vĩ độ atelier",
     description: "Tọa độ vĩ độ (latitude) của atelier, dùng để tính phí giao hàng.",
     kind: "text",
-    defaultValue: { value: "10.7769" },
+    defaultValue: { value: "15.967945" },
   },
   {
     key: "store_lng",
     label: "Kinh độ atelier",
     description: "Tọa độ kinh độ (longitude) của atelier, dùng để tính phí giao hàng.",
     kind: "text",
-    defaultValue: { value: "106.7009" },
+    defaultValue: { value: "108.260727" },
   },
   {
     key: "shipping_fee_intra",

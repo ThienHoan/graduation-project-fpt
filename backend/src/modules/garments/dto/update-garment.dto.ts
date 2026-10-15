@@ -1,14 +1,17 @@
 import {
+  IsArray,
   IsBoolean,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   Matches,
   IsString,
+  ValidateNested,
 } from "class-validator";
-import { Transform } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import { normalizeOptionalString } from "../../users/dto/transformers";
 import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
+import { GarmentMeasurementsDto } from "./garment-details.dto";
 
 export class UpdateGarmentDto {
   @IsOptional()
@@ -32,6 +35,31 @@ export class UpdateGarmentDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  material?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  occasion?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  careInstructions?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  usageConditions?: string[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GarmentMeasurementsDto)
+  measurements?: GarmentMeasurementsDto;
 
   @IsOptional()
   @IsNumber()

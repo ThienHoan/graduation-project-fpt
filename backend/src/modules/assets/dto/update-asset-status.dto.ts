@@ -7,6 +7,7 @@ const ALLOWED_STATUSES = [
   "inspection_pending",
   "laundry",
   "maintenance",
+  "cleaned",
   "damaged",
   "retired",
   "lost",

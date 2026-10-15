@@ -6,6 +6,15 @@ import { UpdateReviewDto } from './dto/update-review.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 import { ReportReviewDto } from './dto/report-review.dto';
 import { ok } from '../../common/api-response';
+import { moderateReviewContent, extractFitFeedback, embedFitFeedback } from './utils/content-moderator';
+
+export type ReviewFilterOptions = {
+  rating?: number;
+  hasMedia?: boolean;
+  fit?: string;
+  page?: number;
+  limit?: number;
+};
 
 @Injectable()
 export class ReviewsService {
@@ -15,8 +24,19 @@ export class ReviewsService {
   ) {}
 
   async create(customerId: string, createReviewDto: CreateReviewDto) {
-    const { garmentId, rating, comment } = createReviewDto;
+    const { garmentId, rating } = createReviewDto;
     let { bookingId } = createReviewDto;
+
+    // 1. AI Content Moderation
+    const moderation = moderateReviewContent(createReviewDto.comment);
+    if (moderation.shouldBlock) {
+      throw new BadRequestException(
+        `Bình luận vi phạm tiêu chuẩn cộng đồng: ${moderation.flaggedReason}. Vui lòng sử dụng ngôn từ phù hợp.`
+      );
+    }
+
+    // Gắn tag fitFeedback nếu có vào comment
+    const finalComment = embedFitFeedback(createReviewDto.comment, createReviewDto.fitFeedback);
 
     // If bookingId is not provided, try to find an eligible one
     if (!bookingId) {
@@ -92,17 +112,24 @@ export class ReviewsService {
         garmentId,
         bookingId,
         rating,
-        comment,
+        comment: finalComment,
         images: createReviewDto.images || [],
         video: createReviewDto.video || null,
+        isReported: !moderation.isClean,
+        reportedReason: moderation.flaggedReason ?? null,
       },
     });
 
-    return ok(review);
+    const parsed = extractFitFeedback(review.comment);
+    return ok({
+      ...review,
+      comment: parsed.cleanComment,
+      fitFeedback: parsed.fitFeedback,
+    });
   }
 
-  async findAllByGarment(garmentId: string) {
-    const reviews = await this.prisma.review.findMany({
+  async findAllByGarment(garmentId: string, filterOptions?: ReviewFilterOptions) {
+    const rawReviews = await this.prisma.review.findMany({
       where: { garmentId, status: 'public' },
       include: {
         customer: {
@@ -130,14 +157,62 @@ export class ReviewsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const averageRating = reviews.length > 0 
-      ? reviews.reduce((sum: number, review) => sum + review.rating, 0) / reviews.length 
+    // Tính toán thống kê toàn bộ (Rating breakdown & Fit counts)
+    const ratingCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const fitCounts: Record<string, number> = { tight: 0, true_to_size: 0, loose: 0 };
+    let mediaCount = 0;
+
+    const parsedReviews = rawReviews.map((r) => {
+      ratingCounts[r.rating] = (ratingCounts[r.rating] || 0) + 1;
+      const hasMedia = (r.images && r.images.length > 0) || Boolean(r.video);
+      if (hasMedia) mediaCount++;
+
+      const { cleanComment, fitFeedback } = extractFitFeedback(r.comment);
+      if (fitFeedback) {
+        fitCounts[fitFeedback] = (fitCounts[fitFeedback] || 0) + 1;
+      }
+
+      return {
+        ...r,
+        comment: cleanComment,
+        fitFeedback,
+        hasMedia,
+      };
+    });
+
+    const averageRating = parsedReviews.length > 0 
+      ? parsedReviews.reduce((sum: number, review) => sum + review.rating, 0) / parsedReviews.length 
       : 0;
 
+    // Áp dụng bộ lọc
+    let filtered = parsedReviews;
+    if (filterOptions?.rating) {
+      filtered = filtered.filter((r) => r.rating === filterOptions.rating);
+    }
+    if (filterOptions?.hasMedia !== undefined) {
+      filtered = filtered.filter((r) => r.hasMedia === filterOptions.hasMedia);
+    }
+    if (filterOptions?.fit) {
+      filtered = filtered.filter((r) => r.fitFeedback === filterOptions.fit);
+    }
+
+    // Phân trang
+    const page = filterOptions?.page || 1;
+    const limit = filterOptions?.limit || 10;
+    const totalPages = Math.ceil(filtered.length / limit) || 1;
+    const paginatedReviews = filtered.slice((page - 1) * limit, page * limit);
+
     return ok({
-      reviews,
-      total: reviews.length,
+      reviews: paginatedReviews,
+      total: parsedReviews.length,
+      filteredTotal: filtered.length,
       averageRating: Number(averageRating.toFixed(1)),
+      ratingCounts,
+      mediaCount,
+      fitCounts,
+      page,
+      totalPages,
+      limit,
     });
   }
 
@@ -157,7 +232,17 @@ export class ReviewsService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    return ok(reviews);
+
+    const parsed = reviews.map((r) => {
+      const { cleanComment, fitFeedback } = extractFitFeedback(r.comment);
+      return {
+        ...r,
+        comment: cleanComment,
+        fitFeedback,
+      };
+    });
+
+    return ok(parsed);
   }
 
   async update(id: string, customerId: string, updateReviewDto: UpdateReviewDto) {
@@ -173,19 +258,50 @@ export class ReviewsService {
       throw new ForbiddenException('Đánh giá này đã bị khóa vĩnh viễn và không thể chỉnh sửa');
     }
 
+    // AI Content Moderation khi sửa
+    let moderationFlagged = false;
+    let moderationReason: string | null = null;
+    if (updateReviewDto.comment !== undefined) {
+      const moderation = moderateReviewContent(updateReviewDto.comment);
+      if (moderation.shouldBlock) {
+        throw new BadRequestException(
+          `Bình luận vi phạm tiêu chuẩn cộng đồng: ${moderation.flaggedReason}. Vui lòng sử dụng ngôn từ phù hợp.`
+        );
+      }
+      moderationFlagged = !moderation.isClean;
+      moderationReason = moderation.flaggedReason ?? null;
+    }
+
+    const { fitFeedback, ...restDto } = updateReviewDto;
+    let finalComment = restDto.comment;
+    if (finalComment !== undefined || fitFeedback !== undefined) {
+      const existing = extractFitFeedback(review.comment);
+      const chosenFit = fitFeedback !== undefined ? fitFeedback : existing.fitFeedback;
+      const chosenComment = finalComment !== undefined ? finalComment : existing.cleanComment;
+      finalComment = embedFitFeedback(chosenComment, chosenFit) ?? undefined;
+    }
+
     const isCurrentlyHidden = review.status === 'hidden';
     const newEditCount = isCurrentlyHidden ? review.editCount + 1 : review.editCount;
 
     const updated = await this.prisma.review.update({
       where: { id },
       data: {
-        ...updateReviewDto,
+        ...restDto,
+        comment: finalComment,
         editCount: newEditCount,
         status: isCurrentlyHidden ? 'public' : review.status,
-        isReported: isCurrentlyHidden ? false : review.isReported,
+        isReported: moderationFlagged ? true : (isCurrentlyHidden ? false : review.isReported),
+        reportedReason: moderationReason ?? review.reportedReason,
       },
     });
-    return ok(updated);
+
+    const parsed = extractFitFeedback(updated.comment);
+    return ok({
+      ...updated,
+      comment: parsed.cleanComment,
+      fitFeedback: parsed.fitFeedback,
+    });
   }
 
   async remove(id: string, customerId: string, isAdmin = false) {

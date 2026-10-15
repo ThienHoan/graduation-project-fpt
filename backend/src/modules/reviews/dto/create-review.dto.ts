@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min, ArrayMaxSize } from 'class-validator';
+import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, ArrayMaxSize } from 'class-validator';
 
 export class CreateReviewDto {
   @IsString()
@@ -18,6 +18,10 @@ export class CreateReviewDto {
   @IsString()
   @IsOptional()
   comment?: string;
+
+  @IsString()
+  @IsOptional()
+  fitFeedback?: "tight" | "true_to_size" | "loose";
 
   @IsArray()
   @IsString({ each: true })
