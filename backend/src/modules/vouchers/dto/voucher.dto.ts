@@ -9,11 +9,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   MaxLength,
   Min,
 } from "class-validator";
+import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export const VOUCHER_DISCOUNT_TYPES = ["percentage", "fixed"] as const;
 
@@ -69,12 +69,12 @@ export class CreateVoucherDto {
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in categoryIds must be a UUID" })
   categoryIds?: string[];
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentIds must be a UUID" })
   garmentIds?: string[];
 
   @IsOptional()
@@ -132,12 +132,12 @@ export class UpdateVoucherDto {
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in categoryIds must be a UUID" })
   categoryIds?: string[];
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentIds must be a UUID" })
   garmentIds?: string[];
 
   @IsOptional()
@@ -152,7 +152,7 @@ export class ValidateVoucherDto {
 
   @IsArray()
   @ArrayMinSize(1)
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentSizeIds must be a UUID" })
   garmentSizeIds!: string[];
 
   @IsDateString()

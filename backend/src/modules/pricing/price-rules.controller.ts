@@ -59,6 +59,12 @@ export class PriceRulesController {
 export class PriceQuoteController {
   constructor(private readonly pricing: PricingService) {}
 
+  @Get("effective")
+  effective(@Query("sizeIds") sizeIds?: string) {
+    const ids = (sizeIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    return this.pricing.effectivePrices(ids);
+  }
+
   @Post()
   preview(@Body() dto: PreviewPriceDto) {
     return this.pricing.previewRental(dto.garmentSizeIds, dto.startDate, dto.endDate);

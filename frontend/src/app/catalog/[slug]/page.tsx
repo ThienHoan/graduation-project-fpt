@@ -7,12 +7,15 @@ import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
+  getEffectivePrices,
   getGarmentsGrouped,
   getGarmentReviews,
   getMyMeasurements,
   getSizeAvailabilityCalendar,
   trackGarmentView,
+  PRICE_EVENT_TYPE_LABELS,
   type CustomerMeasurement,
+  type EffectivePrice,
   type GarmentGrouped,
   type GarmentReviewsData,
   type GroupedGarmentAccessory,
@@ -67,6 +70,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [loading, setLoading] = useState(true);
   const [notFoundFlag, setNotFoundFlag] = useState(false);
   const [selectedGarmentId, setSelectedGarmentId] = useState<string | null>(null);
+  const [effectiveMap, setEffectiveMap] = useState<Record<string, EffectivePrice>>({});
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [consultMsg, setConsultMsg] = useState<string | null>(null);
@@ -228,6 +232,12 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
             setSelectedGarmentId(initialSizeId);
             setLoading(false);
 
+            getEffectivePrices(g.sizes.map((s) => s.garmentSizeId)).then((eff) => {
+              if (eff.success && eff.data) {
+                setEffectiveMap(Object.fromEntries(eff.data.map((e) => [e.sizeId, e])));
+              }
+            });
+
             if (g.garmentId) {
               trackGarmentView(g.garmentId);
               getGarmentReviews(g.garmentId).then((revRes) => {
@@ -331,12 +341,13 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
 
   function handleAddToCart() {
     if (!group || !selectedSize) return;
+    const eff = effectiveMap[selectedSize.garmentSizeId];
     addToCart({
       garmentSizeId: selectedSize.garmentSizeId,
       garmentId: group.garmentId,
       name: group.name + (selectedSize.sizeLabel ? ` (Size ${selectedSize.sizeLabel})` : ""),
       sizeLabel: selectedSize.sizeLabel,
-      dailyPrice: selectedSize.dailyPrice,
+      dailyPrice: eff ? eff.effectivePrice : selectedSize.dailyPrice,
       depositAmount: selectedSize.depositAmount,
       imageUrl: group.imageUrl,
     });
@@ -346,12 +357,13 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
 
   function handleBookNow() {
     if (!group || !selectedSize) return;
+    const eff = effectiveMap[selectedSize.garmentSizeId];
     addToCart({
       garmentSizeId: selectedSize.garmentSizeId,
       garmentId: group.garmentId,
       name: group.name + (selectedSize.sizeLabel ? ` (Size ${selectedSize.sizeLabel})` : ""),
       sizeLabel: selectedSize.sizeLabel,
-      dailyPrice: selectedSize.dailyPrice,
+      dailyPrice: eff ? eff.effectivePrice : selectedSize.dailyPrice,
       depositAmount: selectedSize.depositAmount,
       imageUrl: group.imageUrl,
     });
@@ -540,9 +552,39 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                         Giá thuê theo ngày
                       </span>
                       <div className="mt-1 font-display text-3xl font-bold text-lotus sm:text-4xl">
-                        {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
-                        <span className="text-xs font-normal text-stone-600">/ngày</span>
+                        {(() => {
+                          if (!selectedSize) return "—";
+                          const eff = effectiveMap[selectedSize.garmentSizeId];
+                          if (!eff?.hasOverride) {
+                            return (
+                              <>
+                                {formatVND(selectedSize.dailyPrice)}
+                                <span className="text-xs font-normal text-stone-600">/ngày</span>
+                              </>
+                            );
+                          }
+                          return (
+                            <>
+                              <span className="mr-2 text-lg font-normal text-stone-400 line-through">
+                                {formatVND(eff.basePrice)}
+                              </span>
+                              {formatVND(eff.effectivePrice)}
+                              <span className="text-xs font-normal text-stone-600">/ngày</span>
+                            </>
+                          );
+                        })()}
                       </div>
+                      {(() => {
+                        const eff = selectedSize ? effectiveMap[selectedSize.garmentSizeId] : undefined;
+                        if (!eff?.hasOverride || !eff.eventName) return null;
+                        const typeLabel = eff.eventType ? (PRICE_EVENT_TYPE_LABELS[eff.eventType] ?? eff.eventType) : null;
+                        return (
+                          <p className="mt-1.5 text-xs font-semibold text-jade">
+                            Đang giảm: {eff.eventName}
+                            {typeLabel ? ` · ${typeLabel}` : ""}
+                          </p>
+                        );
+                      })()}
                     </div>
                     <div className="text-right">
                       <span className="block text-xs font-medium text-stone-600">
