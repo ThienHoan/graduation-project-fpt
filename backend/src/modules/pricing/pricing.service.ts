@@ -1284,6 +1284,87 @@ export class PricingService {
     return map.get(sizeId) ?? 0;
   }
 
+  /**
+   * Giá hiệu lực hôm nay cho danh sách size (public cho /catalog).
+   * Thứ tự: price_period thủ công đã duyệt → luật giá tự động → giá gốc.
+   * Trả base + effective + cờ hasOverride.
+   */
+  async effectivePrices(sizeIds: string[]) {
+    const uniqueIds = [...new Set((sizeIds ?? []).map((s) => s?.trim()).filter(Boolean))].slice(0, 500);
+    if (uniqueIds.length === 0) return ok([]);
+    const day = this.dayUtc(new Date());
+    const [periods, sizes] = await Promise.all([
+      this.prisma.price_periods.findMany({
+        where: {
+          garment_size_id: { in: uniqueIds },
+          is_active: true,
+          from_date: { lte: day },
+          to_date: { gte: day },
+        },
+        select: { garment_size_id: true, daily_price: true, from_date: true, to_date: true, source_suggestion_id: true },
+      }),
+      this.prisma.garment_sizes.findMany({
+        where: { id: { in: uniqueIds } },
+        select: { id: true, daily_price: true, garment_id: true, garments: { select: { categoryId: true } } },
+      }),
+    ]);
+    const targets = sizes.map((s) => ({
+      sizeId: s.id,
+      garmentId: s.garment_id,
+      categoryId: s.garments?.categoryId ?? null,
+      basePrice: Number(s.daily_price ?? 0),
+      overrides: periods
+        .filter((p) => p.garment_size_id === s.id)
+        .map((p) => ({ from: p.from_date, to: p.to_date, price: Number(p.daily_price) })),
+    }));
+    const quotes = await this.priceRules.priceOnDay(targets, day);
+    const periodMap = new Map(periods.map((p) => [p.garment_size_id, Number(p.daily_price)]));
+    // Tên sự kiện cho period thủ công: period → suggestion → calendar.
+    const suggestionIds = [...new Set(periods.map((p) => p.source_suggestion_id).filter((v): v is string => !!v))];
+    const periodEvent = new Map<string, { name: string; type: string | null }>();
+    if (suggestionIds.length > 0) {
+      const suggestions = await this.prisma.price_suggestions.findMany({
+        where: { id: { in: suggestionIds } },
+        select: { id: true, price_calendar: { select: { name: true, occasion_type: true } } },
+      });
+      const calBySug = new Map(suggestions.map((s) => [s.id, s.price_calendar]));
+      for (const p of periods) {
+        if (!p.source_suggestion_id || periodEvent.has(p.garment_size_id)) continue;
+        const cal = p.source_suggestion_id ? calBySug.get(p.source_suggestion_id) : undefined;
+        periodEvent.set(p.garment_size_id, {
+          name: cal?.name ?? "Giá điều chỉnh thủ công",
+          type: cal?.occasion_type ?? null,
+        });
+      }
+    }
+    const items = sizes.map((s) => {
+      const basePrice = Number(s.daily_price ?? 0);
+      const q = quotes.get(s.id);
+      const effectivePrice = q?.discountPrice ?? basePrice;
+      const hasOverride = effectivePrice !== basePrice;
+      const hasPeriod = periodMap.has(s.id);
+      const applied = q?.appliedPriceRule ?? null;
+      return {
+        sizeId: s.id,
+        basePrice,
+        effectivePrice,
+        hasOverride,
+        source: !hasOverride ? null : hasPeriod ? "period" : applied && applied.id !== "manual" ? "rule" : null,
+        eventName: !hasOverride
+          ? null
+          : hasPeriod
+            ? (periodEvent.get(s.id)?.name ?? "Giá điều chỉnh thủ công")
+            : (applied && applied.id !== "manual" ? applied.name : null),
+        eventType: !hasOverride
+          ? null
+          : hasPeriod
+            ? (periodEvent.get(s.id)?.type ?? null)
+            : (applied && applied.id !== "manual" ? applied.ruleType : null),
+      };
+    });
+    return ok(items);
+  }
+
   // ── Giá tự động theo luật (price_rules) ────────────────────────────────
 
   /**

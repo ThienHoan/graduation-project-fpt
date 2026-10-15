@@ -2524,6 +2524,41 @@ export async function getRentalQuote(garmentSizeIds: string[], startDate: string
   });
 }
 
+export type EffectivePrice = {
+  sizeId: string;
+  basePrice: number;
+  effectivePrice: number;
+  hasOverride: boolean;
+  source: "period" | "rule" | null;
+  eventName: string | null;
+  eventType: string | null;
+};
+
+export const PRICE_EVENT_TYPE_LABELS: Record<string, string> = {
+  tet: "Tết",
+  holiday: "Ngày lễ",
+  occasion: "Dịp đặc biệt",
+  peak_season: "Mùa cao điểm",
+  off_season: "Mùa thấp điểm",
+  store_program: "Chương trình cửa hàng",
+  double_sale: "Sale đôi",
+  weekend: "Cuối tuần",
+};
+
+export async function getEffectivePrices(garmentSizeIds: string[]) {
+  const ids = [...new Set(garmentSizeIds.filter(Boolean))];
+  if (ids.length === 0) return { success: true as const, data: [] as EffectivePrice[] };
+  const out: EffectivePrice[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const res = await apiRequest<EffectivePrice[]>(
+      `/pricing/quote/effective?sizeIds=${encodeURIComponent(chunk.join(","))}`,
+    );
+    if (res.success && res.data) out.push(...res.data);
+  }
+  return { success: true as const, data: out };
+}
+
 // ---------- Voucher & khuyến mãi ----------
 
 export type VoucherDiscountType = "percentage" | "fixed";

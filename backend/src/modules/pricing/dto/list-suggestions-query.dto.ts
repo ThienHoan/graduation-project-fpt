@@ -1,5 +1,6 @@
 import { Type } from "class-transformer";
-import { IsDateString, IsInt, IsOptional, IsString, IsUUID, Min } from "class-validator";
+import { IsDateString, IsInt, IsOptional, IsString, IsUUID, Matches, Min } from "class-validator";
+import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export class ListSuggestionsQueryDto {
   @IsOptional()
@@ -7,7 +8,7 @@ export class ListSuggestionsQueryDto {
   status?: string;
 
   @IsOptional()
-  @IsUUID("4")
+  @Matches(CANONICAL_UUID_REGEX, { message: "sizeId must be a UUID" })
   sizeId?: string;
 
   @IsOptional()
