@@ -69,8 +69,15 @@ export function useRealtimeInvalidation(handlers: ResourceHandlers, enabled = tr
         flush("notifications");
       });
 
+      // Bỏ qua lần connect đầu tiên vì mỗi trang đã tự fetch data qua useEffect.
+      // Chỉ flush khi reconnect (mất kết nối rồi kết nối lại) để bắt kịp event bị miss.
+      let isFirstConnect = true;
       socket.on("connect", () => {
-        // Socket vừa (re)connect: có thể đã miss event → đồng bộ toàn bộ resource đang đăng ký.
+        if (isFirstConnect) {
+          isFirstConnect = false;
+          return;
+        }
+        // Socket vừa reconnect sau khi mất kết nối → đồng bộ lại toàn bộ resource.
         (Object.keys(handlersRef.current) as RealtimeResource[]).forEach(flush);
       });
     });

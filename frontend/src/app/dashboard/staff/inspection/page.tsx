@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StaffPortalShell } from "@/components/heritage/ui";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { uploadFile } from "@/lib/upload";
@@ -22,6 +22,7 @@ import {
   type BookingItem,
   type BookingAccessoryItem,
 } from "@/lib/api";
+import { InspectionDetailModal } from "@/components/bookings/inspection-detail-modal";
 import {
   AlertTriangle,
   Circle,
@@ -44,6 +45,9 @@ import {
   RefreshCw,
   CheckCheck,
   ShieldCheck,
+  ShieldAlert,
+  FileText,
+  Send,
   Trash2,
   Loader2,
   type LucideIcon,
@@ -62,7 +66,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   overdue:            { label: "Quá hạn",        color: "bg-red-200 text-red-800" },
 };
 
-type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "completed";
+type ItemInspectionState = "missing_asset" | "not_started" | "in_progress" | "pending_manager_approval" | "completed";
 
 type AccInspectionState = "missing_asset" | "not_started" | "good" | "laundry" | "maintenance" | "damaged" | "lost";
 
@@ -90,6 +94,7 @@ const ITEM_STATE_META: Record<ItemInspectionState, { label: string; color: strin
   missing_asset: { label: "Chưa gán asset", color: "bg-red-100 text-red-700", icon: AlertTriangle },
   not_started: { label: "Chưa kiểm tra", color: "bg-stone-100 text-stone-600", icon: Circle },
   in_progress: { label: "Đang kiểm tra", color: "bg-lotus/10 text-lotus", icon: Clock },
+  pending_manager_approval: { label: "Chờ Quản lý duyệt", color: "bg-amber-100 text-amber-800 border border-amber-300", icon: ShieldAlert },
   completed: { label: "Đã kiểm tra", color: "bg-jade/10 text-jade", icon: CheckCircle2 },
 };
 
@@ -97,16 +102,19 @@ const FINAL_ACTIONS = [
   {
     key: "laundry",
     label: "Chuyển giặt sấy",
+    approvalLabel: "Gửi QL duyệt & Giặt sấy",
     style: "border border-bronze text-bronze hover:bg-parchment",
   },
   {
     key: "maintenance",
     label: "Cần bảo trì",
+    approvalLabel: "Gửi QL duyệt & Bảo trì",
     style: "border border-orange-300 text-orange-700 hover:bg-orange-50",
   },
   {
     key: "damaged",
     label: "Ghi nhận hư hỏng",
+    approvalLabel: "Gửi QL duyệt & Báo hỏng",
     style: "border border-red-300 text-red-700 hover:bg-red-50",
   },
 ];
@@ -147,6 +155,18 @@ export default function StaffInspectionPage() {
   const [accInspect, setAccInspect] = useState<Record<string, { status: string; note: string; penalty: string; images: string[] }>>({});
   const [inspectingAcc, setInspectingAcc] = useState<string | null>(null);
   const [uploadingAccPhoto, setUploadingAccPhoto] = useState<string | null>(null);
+
+  // Confirmation state for high penalties (> 30% deposit) requiring manager approval
+  const [pendingManagerConfirm, setPendingManagerConfirm] = useState<{
+    actionKey: string;
+    actionLabel: string;
+    penalty: number;
+    deposit: number;
+    ratio: number;
+  } | null>(null);
+
+  // Modal to view detailed inspection report
+  const [viewingModalSessionId, setViewingModalSessionId] = useState<string | null>(null);
 
   // Lightbox phóng to ảnh khi bấm vào
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -200,61 +220,115 @@ export default function StaffInspectionPage() {
     return "not_started";
   }
 
-  // 1. Load return queue
-  const refreshReturnBookings = useCallback(() => {
-    return getStaffReturnBookings()
-      .then((res) => {
-        if (res.success && res.data) {
-          const data = res.data;
-          setBookings(data);
-          if (data.length > 0) {
-            setSelectedBookingId((prev) =>
-              prev && data.some((b) => b.id === prev) ? prev : data[0].id,
-            );
-          } else {
-            setSelectedBookingId(null);
-          }
+  // 1. Đồng bộ tải hàng chờ trả đồ và phiên kiểm tra
+  const activeBookingIdRef = useRef<string | null>(null);
+  const isInitialLoadedRef = useRef(false);
+
+  const refreshReturnBookings = useCallback(async (preserveCurrent = true) => {
+    try {
+      const res = await getStaffReturnBookings();
+      if (res.success && res.data) {
+        const data = res.data;
+        setBookings(data);
+        if (data.length > 0) {
+          const currentId = activeBookingIdRef.current;
+          const targetId = preserveCurrent && currentId && data.some((b) => b.id === currentId)
+            ? currentId
+            : data[0].id;
+          activeBookingIdRef.current = targetId;
+          setSelectedBookingId(targetId);
+          return targetId;
         } else {
-          setErrorMsg(res.message ?? "Không thể tải danh sách đơn trả.");
+          activeBookingIdRef.current = null;
+          setSelectedBookingId(null);
+          setSessions([]);
+          return null;
         }
-      })
-      .finally(() => setLoadingBookings(false));
+      } else {
+        setErrorMsg(res.message ?? "Không thể tải danh sách đơn trả.");
+        return null;
+      }
+    } finally {
+      setLoadingBookings(false);
+    }
   }, []);
 
-  useEffect(() => {
-    setLoadingBookings(true);
-    setErrorMsg(null);
-    void refreshReturnBookings();
-  }, [refreshReturnBookings]);
-
-  // 2. Load inspection sessions when booking is selected
-  const refreshSessions = useCallback((bookingId: string | null) => {
+  const refreshSessions = useCallback(async (bookingId: string | null) => {
     if (!bookingId) {
       setSessions([]);
-      return Promise.resolve();
+      setLoadingSessions(false);
+      return;
     }
-    return getBookingInspections(bookingId).then((res) => {
-      if (res.success && res.data) setSessions(res.data);
-      else setSessions([]);
-    });
+    setLoadingSessions(true);
+    try {
+      const res = await getBookingInspections(bookingId);
+      if (res.success && res.data) {
+        setSessions(res.data);
+      } else {
+        setSessions([]);
+      }
+    } catch {
+      setSessions([]);
+    } finally {
+      setLoadingSessions(false);
+    }
   }, []);
 
+  // Tải đồng bộ lần đầu: queue đơn trả + sessions của đơn đầu tiên cùng lúc (không bị waterfall, không bị nháy trang tạo kiểm tra)
   useEffect(() => {
-    setLoadingSessions(true);
-    void refreshSessions(selectedBookingId).finally(() => setLoadingSessions(false));
+    let cancelled = false;
+    async function init() {
+      setLoadingBookings(true);
+      setLoadingSessions(true);
+      setErrorMsg(null);
+      const targetBookingId = await refreshReturnBookings(false);
+      if (cancelled) return;
+      if (targetBookingId) {
+        await refreshSessions(targetBookingId);
+      } else {
+        setLoadingSessions(false);
+      }
+      isInitialLoadedRef.current = true;
+    }
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshReturnBookings, refreshSessions]);
+
+  // Khi nhân viên chọn thủ công một đơn khác trong danh sách
+  useEffect(() => {
+    if (!isInitialLoadedRef.current) return;
+    if (!selectedBookingId) {
+      activeBookingIdRef.current = null;
+      setSessions([]);
+      return;
+    }
+    if (activeBookingIdRef.current !== selectedBookingId) {
+      activeBookingIdRef.current = selectedBookingId;
+      setSelectedItemId(null);
+      void refreshSessions(selectedBookingId);
+    }
   }, [selectedBookingId, refreshSessions]);
 
-  const refreshAll = useCallback(() => {
-    return refreshReturnBookings().then(() => refreshSessions(selectedBookingId));
-  }, [refreshReturnBookings, refreshSessions, selectedBookingId]);
+  const refreshQueueOnly = useCallback(async () => {
+    await refreshReturnBookings(true);
+  }, [refreshReturnBookings]);
+
+  const refreshAll = useCallback(async () => {
+    const targetBookingId = await refreshReturnBookings(true);
+    if (targetBookingId) {
+      await refreshSessions(targetBookingId);
+    }
+  }, [refreshReturnBookings, refreshSessions]);
 
   useRealtimeInvalidation({
     bookings: refreshAll,
     inspections: refreshAll,
-    assets: refreshReturnBookings,
-    refunds: refreshReturnBookings,
-    maintenance: refreshReturnBookings,
-    laundry: refreshReturnBookings,
+    assets: refreshQueueOnly,
+    refunds: refreshQueueOnly,
+    maintenance: refreshQueueOnly,
+    laundry: refreshQueueOnly,
   });
 
   function getSessionForItem(item: BookingItem) {
@@ -271,6 +345,7 @@ export default function StaffInspectionPage() {
     if (!item.garmentAssetId) return "missing_asset";
     const session = getSessionForItem(item);
     if (session?.status === "completed") return "completed";
+    if (session?.status === "pending_manager_approval") return "pending_manager_approval";
     if (session) return "in_progress";
     return "not_started";
   }
@@ -304,21 +379,91 @@ export default function StaffInspectionPage() {
   const selectedItemSession = selectedItem ? getSessionForItem(selectedItem) : null;
   const selectedItemState = selectedItem ? getItemInspectionState(selectedItem) : null;
 
+  const currentTotalPenalty = useMemo(() => {
+    return activeSession?.findings?.reduce((sum, f) => sum + (Number(f.penaltyAmount) || 0), 0) ?? 0;
+  }, [activeSession?.findings]);
+
+  const currentDeposit = Number(selectedItem?.depositAmount) || 0;
+  const garmentValue = useMemo(() => {
+    const fromItem = Number(selectedItem?.purchaseCost);
+    if (fromItem > 0) return fromItem;
+    const fromSessionAsset = Number(activeSession?.asset?.purchaseCost);
+    if (fromSessionAsset > 0) return fromSessionAsset;
+    const fromAi = Number(activeSession?.aiComparisonResult?.garmentValue);
+    if (fromAi > 0) return fromAi;
+    const fromDeposit = Number(selectedItem?.depositAmount);
+    if (fromDeposit > 0) return fromDeposit;
+    const fromDaily = Number(selectedItem?.dailyPrice);
+    if (fromDaily > 0) return fromDaily * 4;
+    return 0;
+  }, [selectedItem, activeSession]);
+
+  const isPenaltyHigh = currentDeposit > 0
+    ? (currentTotalPenalty / currentDeposit > 0.3 || currentTotalPenalty > currentDeposit)
+    : currentTotalPenalty > 0;
+  const isPendingApproval = activeSession?.status === "pending_manager_approval";
+  // Check toan bo sessions cua booking - neu con session nao cho manager duyet
+  // thi booking chua the dong, hien canh bao thay vi de staff bam nut loi
+  const hasPendingManagerApproval = sessions.some((s) => s.status === "pending_manager_approval");
+  const pendingApprovalSessions = sessions.filter((s) => s.status === "pending_manager_approval");
+
+  // Tính sẵn sàng hoàn tất đơn trên frontend để hiển thị blocker rõ ràng
+  const bookingReadiness = useMemo(() => {
+    if (!booking) return { ready: false, blockers: [] as string[], garmentBlockers: [] as { name: string; hint: string }[], accessoryBlockers: [] as string[] };
+
+    // 1. Trang phục: items có garmentAssetId mà chưa có session completed/pending_manager_approval
+    const assignedItems = (booking.items ?? []).filter((item) => item.garmentAssetId);
+    const notInspectedItems = assignedItems.filter((item) => {
+      const s = sessions.find((ss) => ss.garmentAssetId === item.garmentAssetId);
+      return !s || (s.status !== "completed" && s.status !== "pending_manager_approval");
+    });
+    const garmentBlockers = notInspectedItems.map((item) => {
+      const label = item.garmentName ?? "Trang phục";
+      const size = item.sizeLabel ? ` (${item.sizeLabel})` : "";
+      const code = item.assetCode ? ` — Mã: ${item.assetCode}` : "";
+      const name = `${label}${size}${code}`;
+      const s = sessions.find((ss) => ss.garmentAssetId === item.garmentAssetId);
+      const hint = s?.status === "in_progress"
+        ? "Đang kiểm tra — hãy bấm Giặt sấy / Bảo trì / Hư hỏng để kết thúc phiên"
+        : "Chưa tạo phiên kiểm tra";
+      return { name, hint };
+    });
+
+    // 2. Phụ kiện: accessory có accessoryAssetId mà chưa có conditionStatus
+    const assignedAccessories = (booking.accessories ?? []).filter((acc) => acc.accessoryAssetId);
+    const notInspectedAcc = assignedAccessories.filter((acc) => !acc.conditionStatus);
+    const accessoryBlockers = notInspectedAcc.map((acc) => {
+      const name = acc.accessoryName ?? "Phụ kiện";
+      const code = acc.assetCode ? ` — Mã: ${acc.assetCode}` : "";
+      return `${name}${code}`;
+    });
+
+    const blockers = [
+      ...(garmentBlockers.length > 0 ? garmentBlockers.map((g) => g.name) : []),
+      ...(accessoryBlockers.length > 0 ? accessoryBlockers : []),
+    ];
+
+    return { ready: blockers.length === 0, blockers, garmentBlockers, accessoryBlockers };
+  }, [booking, sessions]);
+
   // ── Actions ──
 
   async function handleCreateSession() {
-    if (!booking || !selectedItem?.garmentAssetId) return;
+    if (!booking || !selectedItem?.garmentAssetId || actioning) return;
     setActioning("create");
     setErrorMsg(null);
-    const res = await createInspectionSession({
-      bookingId: booking.id,
-      garmentAssetId: selectedItem.garmentAssetId,
-    });
-    setActioning(null);
-    if (res.success && res.data) {
-      setSessions((prev) => [res.data!, ...prev.filter((s) => s.id !== res.data!.id)]);
-    } else {
-      setErrorMsg(res.message ?? "Không thể tạo phiên kiểm tra.");
+    try {
+      const res = await createInspectionSession({
+        bookingId: booking.id,
+        garmentAssetId: selectedItem.garmentAssetId,
+      });
+      if (res.success && res.data) {
+        setSessions((prev) => [res.data!, ...prev.filter((s) => s.id !== res.data!.id)]);
+      } else {
+        setErrorMsg(res.message ?? "Không thể tạo phiên kiểm tra.");
+      }
+    } finally {
+      setActioning(null);
     }
   }
 
@@ -560,6 +705,15 @@ export default function StaffInspectionPage() {
     });
     setActioning(null);
     if (res.success) {
+      const isPendingApproval = res.data?.status === "pending_manager_approval";
+      if (isPendingApproval) {
+        // Tiền phạt cao — backend đã chuyển sang chờ manager duyệt
+        setFinalizeMsg({
+          type: "success",
+          text: "⚠️ Tiền phạt vượt 30% tiền cọc. Biên bản đã gửi lên Quản lý để duyệt — chưa kấu tiền. Vui lòng thông báo Quản lý kiểm tra và phê duyệt biên bản này.",
+        });
+      }
+
       const currentBookingId = selectedBookingId;
       let refreshedSessions = sessions;
       if (currentBookingId) {
@@ -569,7 +723,7 @@ export default function StaffInspectionPage() {
           setSessions(sessionsRes.data);
         }
       }
-      clearItemForm();
+      if (!isPendingApproval) clearItemForm();
 
       const queueRes = await getStaffReturnBookings();
       if (queueRes.success && queueRes.data) {
@@ -580,13 +734,14 @@ export default function StaffInspectionPage() {
             refreshedBooking.items.find((item) => {
               if (!item.garmentAssetId) return false;
               const session = refreshedSessions.find((s) => s.garmentAssetId === item.garmentAssetId);
-              if (session?.status && session.status !== "completed") return true;
-              if (session?.status === "completed") return false;
+              if (session?.status && session.status !== "completed" && session.status !== "pending_manager_approval") return true;
+              if (session?.status === "completed" || session?.status === "pending_manager_approval") return false;
               return item.assetStatus === "inspection_pending";
             }) ?? refreshedBooking.items[0] ?? null;
           setSelectedItemId(nextItem?.id ?? null);
         } else {
           const nextBooking = queueRes.data[0] ?? null;
+          activeBookingIdRef.current = nextBooking?.id ?? null;
           setSelectedBookingId(nextBooking?.id ?? null);
           setSelectedItemId(nextBooking?.items[0]?.id ?? null);
         }
@@ -909,7 +1064,11 @@ export default function StaffInspectionPage() {
                     <button
                       key={b.id}
                       type="button"
-                      onClick={() => setSelectedBookingId(b.id)}
+                      onClick={() => {
+                        setSelectedBookingId(b.id);
+                        setSelectedItemId(null);
+                        clearItemForm();
+                      }}
                       className={`w-full rounded-lg border p-3 text-left text-sm transition ${
                         isActive
                           ? "border-lotus bg-parchment"
@@ -1115,6 +1274,14 @@ export default function StaffInspectionPage() {
                         Chưa gán tài sản
                       </p>
                     )}
+                    {garmentValue > 0 && (
+                      <p className="mt-1 text-xs text-stone-600">
+                        Giá trị trang phục:{" "}
+                        <strong className="text-ink font-bold">
+                          {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(garmentValue)}
+                        </strong>
+                      </p>
+                    )}
                     {selectedItemState && (
                       <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${ITEM_STATE_META[selectedItemState].color}`}>
                         {ITEM_STATE_META[selectedItemState].label}
@@ -1165,7 +1332,12 @@ export default function StaffInspectionPage() {
 
           {/* ── Main content ── */}
           <div className="space-y-6 lg:col-span-8">
-            {!activeSession && booking ? (
+            {loadingSessions ? (
+              <section className="flex h-80 flex-col items-center justify-center rounded-xl border border-sand bg-white p-10 text-center shadow-sm">
+                <Loader2 className="h-8 w-8 animate-spin text-lotus" />
+                <p className="mt-3 text-sm text-stone-500">Đang tải phiên kiểm tra...</p>
+              </section>
+            ) : !activeSession && booking ? (
               /* No active session — prompt to start */
               <section className="rounded-xl border border-sand bg-white p-10 text-center shadow-sm">
                 {selectedItemSession?.status === "completed" ? (
@@ -1318,9 +1490,27 @@ export default function StaffInspectionPage() {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <span className="font-semibold text-ink">{f.findingType}</span>
-                                <span className="rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-700">
-                                  {f.severity}
-                                </span>
+                                {(() => {
+                                  const s = f.severity?.toLowerCase();
+                                  const isSevere = s === "severe" || s === "critical";
+                                  const isHigh = s === "high" || s === "nang";
+                                  const isMed = s === "medium" || s === "moderate" || s === "vua";
+                                  return (
+                                    <span
+                                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold border ${
+                                        isSevere
+                                          ? "bg-red-100 text-red-800 border-red-300"
+                                          : isHigh
+                                          ? "bg-orange-100 text-orange-800 border-orange-300"
+                                          : isMed
+                                          ? "bg-amber-100 text-amber-800 border-amber-300"
+                                          : "bg-blue-100 text-blue-700 border-blue-200"
+                                      }`}
+                                    >
+                                      {isSevere ? "Nghiêm trọng" : isHigh ? "Nặng" : isMed ? "Trung bình" : "Nhẹ"}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               {f.description && (
                                 <p className="mt-0.5 text-xs text-stone-600 line-clamp-2">{f.description}</p>
@@ -1372,6 +1562,7 @@ export default function StaffInspectionPage() {
                       <option value="low">Nhẹ</option>
                       <option value="medium">Trung bình</option>
                       <option value="high">Nặng</option>
+                      <option value="severe">Nghiêm trọng (Hủy hoại)</option>
                     </select>
                     <input
                       className="w-36 rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
@@ -1696,13 +1887,29 @@ export default function StaffInspectionPage() {
                       {/* Danh sách các lỗi AI phát hiện */}
                       {activeSession.aiComparisonResult.detectedIssues && activeSession.aiComparisonResult.detectedIssues.length > 0 ? (
                         <div className="mt-4 space-y-2 border-t border-sand pt-3">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
                             <span className="text-xs font-bold uppercase tracking-[0.12em] text-red-700">
                               Phát hiện {activeSession.aiComparisonResult.detectedIssues.length} điểm bất thường:
                             </span>
-                            <span className="text-xs font-semibold text-red-700">
-                              Tổng phạt ước tính: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(activeSession.aiComparisonResult.totalSuggestedPenalty)}
-                            </span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-xs font-bold text-red-700">
+                                Tổng phạt ước tính: {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(activeSession.aiComparisonResult.totalSuggestedPenalty)}
+                              </span>
+                              {garmentValue > 0 && (
+                                <span className="text-[11px] text-stone-600">
+                                  Giá trị trang phục: <strong className="text-stone-900">{garmentValue.toLocaleString("vi-VN")}đ</strong>
+                                  {" — "}
+                                  <span className="font-semibold text-red-700">
+                                    tổn thất ~{Math.min(100, Math.round(activeSession.aiComparisonResult.totalSuggestedPenalty / garmentValue * 100))}% giá trị áo
+                                  </span>
+                                </span>
+                              )}
+                              {currentDeposit > 0 && activeSession.aiComparisonResult.totalSuggestedPenalty / currentDeposit > 0.3 && (
+                                <span className="text-[10px] text-amber-700 font-medium">
+                                  ⚠️ Tiền phạt vượt 30% tiền cọc ({currentDeposit.toLocaleString("vi-VN")}đ) ➔ cần Quản lý duyệt
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="space-y-2">
@@ -1727,9 +1934,16 @@ export default function StaffInspectionPage() {
                                   <p className="text-stone-600">{issue.description}</p>
                                 </div>
                                 {issue.suggestedPenalty > 0 && (
-                                  <span className="shrink-0 font-bold text-red-700">
-                                    +{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(issue.suggestedPenalty)}
-                                  </span>
+                                  <div className="shrink-0 text-right">
+                                    <div className="font-bold text-red-700">
+                                      +{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(issue.suggestedPenalty)}
+                                    </div>
+                                    {garmentValue > 0 && (
+                                      <div className="text-[10px] text-stone-500 mt-0.5">
+                                        ~{Math.round(issue.suggestedPenalty / garmentValue * 100)}% giá trị áo ({garmentValue.toLocaleString("vi-VN")}đ)
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             ))}
@@ -1775,33 +1989,90 @@ export default function StaffInspectionPage() {
                   </div>
                 )}
 
-                {/* Actions bar */}
-                <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
-                  {/* Nút hoàn tất kiểm tra đơn — chỉ hiển thị khi đơn đang inspection_pending */}
-                  {booking?.status === "inspection_pending" && (
-                    <button
-                      type="button"
-                      disabled={finalizingBooking || actioning !== null}
-                      onClick={handleFinalizeBooking}
-                      className="rounded-lg border border-jade bg-jade/5 px-4 py-2.5 text-sm font-semibold text-jade transition hover:bg-jade/15 disabled:opacity-50"
-                    >
-                      {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
-                    </button>
-                  )}
-                  <div className="flex flex-wrap gap-3 ml-auto">
-                    {FINAL_ACTIONS.map((action) => (
+                {/* Actions bar / Pending approval notice */}
+                {isPendingApproval ? (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50/90 p-5 shadow-sm space-y-3">
+                    <div className="flex items-start gap-3.5">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+                        <Clock className="h-6 w-6" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-bold text-amber-950">
+                            Biên bản đã được gửi lên Quản lý phê duyệt phạt
+                          </h3>
+                          <span className="rounded-full bg-amber-200/80 px-2.5 py-0.5 text-xs font-bold text-amber-900">
+                            Phạt &gt; 30% cọc
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-amber-800">
+                          Mức phạt ({currentTotalPenalty.toLocaleString("vi-VN")}đ) vượt 30% tiền cọc ({currentDeposit.toLocaleString("vi-VN")}đ).
+                          Biên bản đã được chuyển tự động sang danh sách chờ duyệt của Quản lý. Hệ thống chưa trừ cọc của khách hàng.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end pt-2 border-t border-amber-200/80">
                       <button
-                        key={action.key}
                         type="button"
-                        disabled={actioning !== null}
-                        onClick={() => handleComplete(action.key)}
-                        className={`rounded-lg px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
+                        onClick={() => setViewingModalSessionId(activeSession.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-amber-900 shadow-2xs hover:bg-amber-100"
                       >
-                        {actioning === `complete-${action.key}` ? "Đang xử lý..." : action.label}
+                        <FileText className="h-3.5 w-3.5" />
+                        Xem chi tiết biên bản kiểm tra
                       </button>
-                    ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="sticky bottom-0 space-y-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
+                    {/* Cảnh báo khi phạt vượt 30% cọc */}
+                    {isPenaltyHigh && (
+                      <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                        <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold">Mức phạt vượt 30% tiền cọc (hoặc vượt cọc):</p>
+                          <p className="mt-0.5">
+                            Tổng phạt ghi nhận: <strong>{currentTotalPenalty.toLocaleString("vi-VN")}đ</strong> / Cọc: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong>.
+                            Khi bạn bấm một trong các nút bên dưới, hệ thống sẽ <strong>tự động gửi biên bản sang Quản lý duyệt</strong> (chưa trừ cọc của khách hàng).
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      {/* Nút hoàn tất — safety net khi booking ready nhưng chưa tự đóng.
+                           Bình thường booking sẽ tự finalize sau khi staff bấm nút hoàn tất phiên cuối cùng.
+                           Nút này chỉ xuất hiện khi tất cả trang phục/phụ kiện đã xong nhưng booking vẫn còn inspection_pending. */}
+                      {booking?.status === "inspection_pending" && bookingReadiness.ready && !hasPendingManagerApproval && (
+                        <button
+                          type="button"
+                          disabled={finalizingBooking || actioning !== null}
+                          onClick={handleFinalizeBooking}
+                          className="rounded-lg border border-jade bg-jade/5 px-4 py-2.5 text-sm font-semibold text-jade transition hover:bg-jade/15 disabled:opacity-50"
+                        >
+                          {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
+                        </button>
+                      )}
+                      <div className="flex flex-wrap gap-3 ml-auto">
+                        {FINAL_ACTIONS.map((action) => (
+                          <button
+                            key={action.key}
+                            type="button"
+                            disabled={actioning !== null}
+                            onClick={() => handleComplete(action.key)}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
+                          >
+                            {isPenaltyHigh && <Send className="h-3.5 w-3.5" />}
+                            {actioning === `complete-${action.key}`
+                              ? "Đang xử lý..."
+                              : isPenaltyHigh
+                              ? action.approvalLabel
+                              : action.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             ) : null}
           </div>

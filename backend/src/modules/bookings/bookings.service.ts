@@ -798,7 +798,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -873,7 +873,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -909,7 +909,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -941,7 +941,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -2417,6 +2417,7 @@ export class BookingsService {
         assetCode: item.garmentAsset?.assetCode ?? null,
         assetStatus: item.garmentAsset?.status ?? null,
         conditionNote: item.garmentAsset?.conditionNote ?? null,
+        purchaseCost: item.garmentAsset?.purchaseCost ? Number(item.garmentAsset.purchaseCost) : null,
       })),
       accessories: accessoryRows.map((row: any) => ({
         id: row.id,

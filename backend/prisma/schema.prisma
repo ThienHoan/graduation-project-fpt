@@ -805,6 +805,7 @@ enum PaymentStatus {
 enum InspectionStatus {
   pending
   in_progress
+  pending_manager_approval
   completed
   disputed
 

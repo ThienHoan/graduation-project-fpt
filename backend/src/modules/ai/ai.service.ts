@@ -1286,6 +1286,7 @@ Tối đa 3 topics.`;
       suggestedPenalty: number;
     }>;
     totalSuggestedPenalty: number;
+    garmentValue?: number;
     confidence: number;
     beforePhotosAnalyzed: number;
     afterPhotosAnalyzed: number;
@@ -1555,6 +1556,7 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         actionReason: String(parsed.actionReason || "Dựa trên tình trạng bề mặt và kết cấu vải."),
         detectedIssues,
         totalSuggestedPenalty: totalPenalty,
+        garmentValue,
         confidence: Math.min(1, Math.max(0.5, Number(parsed.confidence) || 0.9)),
         beforePhotosAnalyzed: beforeImages.length,
         afterPhotosAnalyzed: afterImages.length,
@@ -1570,6 +1572,7 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         actionReason: "Cần giặt sấy đồ trước khi xếp vào kho.",
         detectedIssues: [],
         totalSuggestedPenalty: 0,
+        garmentValue,
         confidence: 0.75,
         beforePhotosAnalyzed: beforeImages.length,
         afterPhotosAnalyzed: afterImages.length,
