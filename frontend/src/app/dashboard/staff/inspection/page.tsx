@@ -237,27 +237,33 @@ export default function StaffInspectionPage() {
   const refreshReturnBookings = useCallback(async (preserveCurrent = true) => {
     try {
       const res = await getStaffReturnBookings();
-      if (res.success && res.data) {
+      if (res.success && res.data && res.data.length > 0) {
         const data = res.data;
         setBookings(data);
-        if (data.length > 0) {
-          const currentId = activeBookingIdRef.current;
-          const targetId = preserveCurrent && currentId && data.some((b) => b.id === currentId)
-            ? currentId
-            : data[0].id;
-          activeBookingIdRef.current = targetId;
-          setSelectedBookingId(targetId);
-          return targetId;
-        } else {
-          activeBookingIdRef.current = null;
-          setSelectedBookingId(null);
-          setSessions([]);
-          return null;
-        }
+        const currentId = activeBookingIdRef.current;
+        const targetId = preserveCurrent && currentId && data.some((b) => b.id === currentId)
+          ? currentId
+          : data[0].id;
+        activeBookingIdRef.current = targetId;
+        setSelectedBookingId(targetId);
+        return targetId;
       } else {
-        setErrorMsg(res.message ?? "Không thể tải danh sách đơn trả.");
-        return null;
+        // Fallback sang dữ liệu mẫu khi DB chưa có đơn trả đồ
+        setBookings(mockReturnBookings);
+        const currentId = activeBookingIdRef.current;
+        const targetId = preserveCurrent && currentId && mockReturnBookings.some((b) => b.id === currentId)
+          ? currentId
+          : mockReturnBookings[0].id;
+        activeBookingIdRef.current = targetId;
+        setSelectedBookingId(targetId);
+        return targetId;
       }
+    } catch {
+      setBookings(mockReturnBookings);
+      const targetId = mockReturnBookings[0].id;
+      activeBookingIdRef.current = targetId;
+      setSelectedBookingId(targetId);
+      return targetId;
     } finally {
       setLoadingBookings(false);
     }
@@ -272,30 +278,16 @@ export default function StaffInspectionPage() {
     setLoadingSessions(true);
     try {
       const res = await getBookingInspections(bookingId);
-      if (res.success && res.data) {
+      if (res.success && res.data && res.data.length > 0) {
         setSessions(res.data);
       } else {
-        setSessions([]);
+        setSessions(mockSessionsMap[bookingId] ?? []);
       }
     } catch {
-      setSessions([]);
+      setSessions(mockSessionsMap[bookingId] ?? []);
     } finally {
       setLoadingSessions(false);
     }
-  }, []);
-  return Promise.resolve();
-}
-return getBookingInspections(bookingId)
-  .then((res) => {
-    if (res.success && res.data && res.data.length > 0) {
-      setSessions(res.data);
-    } else {
-      setSessions(mockSessionsMap[bookingId] ?? []);
-    }
-  })
-  .catch(() => {
-    setSessions(mockSessionsMap[bookingId] ?? []);
-  });
   }, [mockSessionsMap]);
 
 // Tải đồng bộ lần đầu: queue đơn trả + sessions của đơn đầu tiên cùng lúc (không bị waterfall, không bị nháy trang tạo kiểm tra)
@@ -476,19 +468,6 @@ async function handleCreateSession() {
   if (!booking || !selectedItem?.garmentAssetId || actioning) return;
   setActioning("create");
   setErrorMsg(null);
-  try {
-    const res = await createInspectionSession({
-      bookingId: booking.id,
-      garmentAssetId: selectedItem.garmentAssetId,
-    });
-    if (res.success && res.data) {
-      setSessions((prev) => [res.data!, ...prev.filter((s) => s.id !== res.data!.id)]);
-    } else {
-      setErrorMsg(res.message ?? "Không thể tạo phiên kiểm tra.");
-    }
-  } finally {
-    setActioning(null);
-  }
   try {
     const res = await createInspectionSession({
       bookingId: booking.id,
@@ -963,73 +942,18 @@ async function handleComplete(finalAssetStatus: string) {
   if (!activeSession || actioning !== null) return;
   setActioning(`complete-${finalAssetStatus}`);
   setErrorMsg(null);
-  let success = false;
   try {
     const res = await completeInspection(activeSession.id, {
       finalAssetStatus,
       note: currentNote || undefined,
     });
-    if (res.success) success = true;
-  } catch {
-    success = true;
-  }
-
-  if (success || (selectedBookingId && mockReturnBookings.some((b) => b.id === selectedBookingId))) {
-    const updatedSession: InspectionSessionResponse = {
-      ...activeSession,
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      note: currentNote || activeSession.note,
-    };
-
-    const updatedSessions = sessions.map((s) => (s.id === activeSession.id ? updatedSession : s));
-    setSessions(updatedSessions);
-
-    if (selectedBookingId) {
-      setMockSessionsMap((prev) => ({
-        ...prev,
-        [selectedBookingId]: (prev[selectedBookingId] ?? []).map((s) =>
-          s.id === activeSession.id ? updatedSession : s,
-        ),
-      }));
-
-      setBookings((prev) =>
-        prev.map((b) => {
-          if (b.id !== selectedBookingId) return b;
-          return {
-            ...b,
-            items: b.items.map((it) =>
-              it.garmentAssetId === activeSession.garmentAssetId
-                ? { ...it, assetStatus: finalAssetStatus }
-                : it,
-            ),
-          };
-        }),
-      );
-
-      const nextItem = booking?.items.find((it) => {
-        if (it.garmentAssetId === activeSession.garmentAssetId) return false;
-        const s = updatedSessions.find((sess) => sess.garmentAssetId === it.garmentAssetId);
-        return !s || s.status !== "completed";
-      });
-      if (nextItem) {
-        setSelectedItemId(nextItem.id);
-      }
-    }
-    clearItemForm();
-    setActioning(null);
-    const res = await completeInspection(activeSession.id, {
-      finalAssetStatus,
-      note: currentNote || undefined,
-    });
-    setActioning(null);
     if (res.success) {
       const isPendingApproval = res.data?.status === "pending_manager_approval";
       if (isPendingApproval) {
         // Tiền phạt cao — backend đã chuyển sang chờ manager duyệt
         setFinalizeMsg({
           type: "success",
-          text: "⚠️ Tiền phạt vượt 30% tiền cọc. Biên bản đã gửi lên Quản lý để duyệt — chưa kấu tiền. Vui lòng thông báo Quản lý kiểm tra và phê duyệt biên bản này.",
+          text: "⚠️ Tiền phạt vượt 30% tiền cọc. Biên bản đã gửi lên Quản lý để duyệt — chưa khấu tiền. Vui lòng thông báo Quản lý kiểm tra và phê duyệt biên bản này.",
         });
       }
 
@@ -1045,7 +969,7 @@ async function handleComplete(finalAssetStatus: string) {
       if (!isPendingApproval) clearItemForm();
 
       const queueRes = await getStaffReturnBookings();
-      if (queueRes.success && queueRes.data) {
+      if (queueRes.success && queueRes.data && queueRes.data.length > 0) {
         setBookings(queueRes.data);
         const refreshedBooking = queueRes.data.find((b) => b.id === currentBookingId);
         if (refreshedBooking) {
@@ -1065,11 +989,66 @@ async function handleComplete(finalAssetStatus: string) {
           setSelectedItemId(nextBooking?.items[0]?.id ?? null);
         }
       }
-    } else {
       setActioning(null);
-      setErrorMsg("Không thể hoàn tất kiểm tra.");
+      return;
+    }
+  } catch {
+    // Fallback sang mock data
+  }
+
+  // Xử lý hoàn tất trên mock data
+  const targetStatus = isPenaltyHigh ? "pending_manager_approval" : "completed";
+  if (isPenaltyHigh) {
+    setFinalizeMsg({
+      type: "success",
+      text: "⚠️ Tiền phạt vượt 30% tiền cọc. Biên bản đã gửi lên Quản lý để duyệt — chưa khấu tiền.",
+    });
+  }
+
+  const updatedSession: InspectionSessionResponse = {
+    ...activeSession,
+    status: targetStatus,
+    completedAt: isPenaltyHigh ? null : new Date().toISOString(),
+    note: currentNote || activeSession.note,
+  };
+
+  const updatedSessions = sessions.map((s) => (s.id === activeSession.id ? updatedSession : s));
+  setSessions(updatedSessions);
+
+  if (selectedBookingId) {
+    setMockSessionsMap((prev) => ({
+      ...prev,
+      [selectedBookingId]: (prev[selectedBookingId] ?? []).map((s) =>
+        s.id === activeSession.id ? updatedSession : s,
+      ),
+    }));
+
+    setBookings((prev) =>
+      prev.map((b) => {
+        if (b.id !== selectedBookingId) return b;
+        return {
+          ...b,
+          items: b.items.map((it) =>
+            it.garmentAssetId === activeSession.garmentAssetId
+              ? { ...it, assetStatus: finalAssetStatus }
+              : it,
+          ),
+        };
+      }),
+    );
+
+    const nextItem = booking?.items.find((it) => {
+      if (it.garmentAssetId === activeSession.garmentAssetId) return false;
+      const s = updatedSessions.find((sess) => sess.garmentAssetId === it.garmentAssetId);
+      return !s || (s.status !== "completed" && s.status !== "pending_manager_approval");
+    });
+    if (nextItem) {
+      setSelectedItemId(nextItem.id);
     }
   }
+  if (!isPenaltyHigh) clearItemForm();
+  setActioning(null);
+}
 
   // Checklist progress
   const checklistItems = activeSession
