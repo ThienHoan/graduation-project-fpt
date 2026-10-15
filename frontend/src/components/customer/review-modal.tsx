@@ -17,6 +17,7 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
   const [existingReview, setExistingReview] = useState<ReviewResponse | null>(null);
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
+  const [fitFeedback, setFitFeedback] = useState<"tight" | "true_to_size" | "loose">("true_to_size");
   
   // Media state
   const [images, setImages] = useState<string[]>([]);
@@ -46,6 +47,9 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
             setExistingReview(review);
             setRating(review.rating);
             setComment(review.comment || "");
+            if (review.fitFeedback) {
+              setFitFeedback(review.fitFeedback);
+            }
             setImages(review.images || []);
             setVideo(review.video || null);
           }
@@ -145,6 +149,7 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
       res = await updateReview(existingReview.id, {
         rating,
         comment: comment.trim() || undefined,
+        fitFeedback,
         images,
         video: video || undefined,
       });
@@ -154,6 +159,7 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
         garmentId,
         rating,
         comment: comment.trim() || undefined,
+        fitFeedback,
         images,
         video: video || undefined,
       });
@@ -233,6 +239,33 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
                       star <= rating ? "text-amber-400 fill-amber-400" : "text-stone-300 fill-transparent"
                     }`}
                   />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Fit Feedback */}
+          <div>
+            <label className="mb-2 block text-sm font-semibold uppercase tracking-wider text-ink">
+              Độ vừa vặn thực tế khi mặc
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: "tight" as const, label: "Hơi chật" },
+                { value: "true_to_size" as const, label: "Vừa vặn chuẩn" },
+                { value: "loose" as const, label: "Hơi rộng" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFitFeedback(opt.value)}
+                  className={`rounded-xl border py-2.5 px-2 text-xs font-semibold transition ${
+                    fitFeedback === opt.value
+                      ? "border-lotus bg-lotus/10 text-lotus shadow-xs"
+                      : "border-sand bg-white text-stone-600 hover:border-lotus/40"
+                  }`}
+                >
+                  {opt.label}
                 </button>
               ))}
             </div>

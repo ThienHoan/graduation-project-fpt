@@ -13,6 +13,8 @@ import {
   X,
   Split,
   Image as ImageIcon,
+  Share2,
+  Check,
 } from "lucide-react";
 
 type TryonResultViewerProps = {
@@ -23,6 +25,14 @@ type TryonResultViewerProps = {
   sizeLabel?: string | null;
   selectedSizeId?: string | null;
   isCached?: boolean;
+  customerMeasurements?: {
+    heightCm?: number | null;
+    weightKg?: number | null;
+    bustCm?: number | null;
+    waistCm?: number | null;
+    hipCm?: number | null;
+    usualSize?: string | null;
+  } | null;
   onRetry: () => void;
   onReset: () => void;
 };
@@ -35,15 +45,38 @@ export function TryonResultViewer({
   sizeLabel,
   selectedSizeId,
   isCached = false,
+  customerMeasurements,
   onRetry,
   onReset,
 }: TryonResultViewerProps) {
   const [viewMode, setViewMode] = useState<"result" | "side_by_side" | "original">("result");
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const originalSrc = userImageBase64
     ? `data:image/jpeg;base64,${userImageBase64}`
     : referenceGarmentImageUrl ?? "";
+
+  const handleShare = async () => {
+    const shareData = {
+      title: `Thử đồ AI: ${garmentName}`,
+      text: `Xem tôi thử trang phục cổ phục "${garmentName}" bằng công nghệ AI Virtual Try-On!`,
+      url: window.location.href,
+    };
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch {
+        // Fallback to clipboard
+      }
+    }
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(resultImageUrl || window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
 
   return (
     <div className="flex h-full flex-col justify-between p-4">
@@ -159,6 +192,28 @@ export function TryonResultViewer({
         )}
       </div>
 
+      {/* Khung Nhận Định Vóc Dáng & Phối Đồ AI Stylist */}
+      <div className="mt-3 rounded-xl border border-lotus/25 bg-parchment/80 p-3.5 text-xs text-stone-700 shadow-2xs">
+        <div className="flex items-center gap-2 font-bold text-lotus mb-1">
+          <Sparkles className="h-4 w-4 text-antique" />
+          <span>Nhận định phom dáng & phối đồ từ AI Stylist:</span>
+        </div>
+        <p className="leading-relaxed text-stone-600">
+          {customerMeasurements?.heightCm ? (
+            <>
+              Dựa trên chiều cao <strong className="text-ink">{customerMeasurements.heightCm}cm</strong>
+              {customerMeasurements.weightKg ? ` và cân nặng ${customerMeasurements.weightKg}kg` : ""}, 
+              tà áo dài <strong className="text-lotus">{garmentName}</strong> {sizeLabel ? `(size ${sizeLabel})` : ""} sẽ có độ phủ tà cách mặt đất khoảng 12-15cm, tạo nét thanh thoát uyển chuyển.
+            </>
+          ) : (
+            <>
+              Phom dáng áo dài <strong className="text-lotus">{garmentName}</strong> {sizeLabel ? `(size ${sizeLabel})` : ""} giúp tôn vinh đường nét cơ thể thanh thoát, tà áo thướt tha mang đậm nét đoan trang truyền thống.
+            </>
+          )}
+          {" "}Khuyến nghị phối cùng guốc mộc cao từ 5-7cm và nón quai thao hoặc mấn đội đầu tiệp màu để có diện mạo hoàn hảo nhất.
+        </p>
+      </div>
+
       {/* Action Toolbar */}
       <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5 border-t border-sand/70 pt-4">
         <button
@@ -177,6 +232,16 @@ export function TryonResultViewer({
         >
           <Camera className="h-3.5 w-3.5" />
           Đổi ảnh khác
+        </button>
+
+        <button
+          type="button"
+          onClick={handleShare}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-xs transition hover:bg-stone-50"
+          title="Chia sẻ kết quả thử đồ với bạn bè"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Share2 className="h-3.5 w-3.5 text-lotus" />}
+          <span>{copied ? "Đã chép link!" : "Chia sẻ"}</span>
         </button>
 
         <a

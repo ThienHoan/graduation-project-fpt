@@ -11,6 +11,10 @@ export class UpdateReviewDto {
   @IsOptional()
   comment?: string;
 
+  @IsString()
+  @IsOptional()
+  fitFeedback?: "tight" | "true_to_size" | "loose";
+
   @IsArray()
   @IsString({ each: true })
   @ArrayMaxSize(3)

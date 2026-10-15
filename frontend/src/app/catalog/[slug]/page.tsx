@@ -9,9 +9,12 @@ import { useAuth } from "@/components/auth/auth-provider";
 import {
   getGarmentsGrouped,
   getGarmentReviews,
+  getMyMeasurements,
   getSizeAvailabilityCalendar,
   trackGarmentView,
+  type CustomerMeasurement,
   type GarmentGrouped,
+  type GarmentReviewsData,
   type GroupedGarmentAccessory,
   type ReviewResponse,
 } from "@/lib/api";
@@ -35,6 +38,10 @@ import {
   Plus,
   ArrowRight,
   Loader2,
+  AlertTriangle,
+  TrendingUp,
+  ThumbsUp,
+  Filter,
 } from "lucide-react";
 
 function formatVND(amount: number) {
@@ -63,12 +70,17 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [consultMsg, setConsultMsg] = useState<string | null>(null);
   const [isConsulting, setIsConsulting] = useState(false);
-  const [reviewsData, setReviewsData] = useState<{
-    reviews: ReviewResponse[];
-    averageRating: number;
-    total: number;
-  } | null>(null);
+  const [reviewsData, setReviewsData] = useState<GarmentReviewsData | null>(null);
+  const [reviewFilter, setReviewFilter] = useState<{
+    rating?: number;
+    hasMedia?: boolean;
+    fit?: string;
+  }>({});
   const [showReviewModal, setShowReviewModal] = useState(false);
+
+  // Số đo người dùng & Smart Size Matching
+  const [customerMeas, setCustomerMeas] = useState<CustomerMeasurement | null>(null);
+  const [measLoading, setMeasLoading] = useState(false);
 
   const today = todayIso();
   const [startDate, setStartDate] = useState(today);
@@ -77,6 +89,115 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [fullyBookedDates, setFullyBookedDates] = useState<Set<string>>(new Set());
   const [calLoading, setCalLoading] = useState(false);
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!user) {
+      setCustomerMeas(null);
+      return;
+    }
+    setMeasLoading(true);
+    getMyMeasurements()
+      .then((res) => {
+        if (res.success && res.data) {
+          setCustomerMeas(res.data);
+        }
+      })
+      .finally(() => setMeasLoading(false));
+  }, [user]);
+
+  // Thuật toán đối chiếu số đo thông minh (Smart Size Matching)
+  const sizeRecommendations = useMemo(() => {
+    if (!group || !group.sizes || !customerMeas) return null;
+
+    const hasAnyMeasurement = Boolean(
+      customerMeas.bustCm || customerMeas.waistCm || customerMeas.hipCm || customerMeas.usualSize
+    );
+    if (!hasAnyMeasurement) return null;
+
+    const scoredSizes = group.sizes.map((s) => {
+      const m = s.measurements;
+      let score = 80;
+      const warnings: string[] = [];
+      const fits: string[] = [];
+
+      if (m) {
+        // Vòng ngực
+        if (m.bustCm != null && customerMeas.bustCm != null) {
+          const diff = m.bustCm - customerMeas.bustCm;
+          if (diff < -2) {
+            score -= 35;
+            warnings.push(`Vòng ngực áo (${m.bustCm}cm) chật hơn ngực bạn (${customerMeas.bustCm}cm)`);
+          } else if (diff < 0) {
+            score -= 15;
+            warnings.push(`Vòng ngực ôm sát (${m.bustCm}cm so với ${customerMeas.bustCm}cm)`);
+          } else if (diff <= 5) {
+            score += 15;
+            fits.push(`Vòng ngực vừa vặn lý tưởng (+${diff.toFixed(0)}cm)`);
+          } else if (diff <= 9) {
+            score += 5;
+            fits.push(`Vòng ngực thoải mái (+${diff.toFixed(0)}cm)`);
+          } else {
+            score -= 15;
+            warnings.push(`Vòng ngực hơi rộng (+${diff.toFixed(0)}cm)`);
+          }
+        }
+
+        // Vòng eo
+        if (m.waistCm != null && customerMeas.waistCm != null) {
+          const diff = m.waistCm - customerMeas.waistCm;
+          if (diff < -2) {
+            score -= 35;
+            warnings.push(`Vòng eo áo (${m.waistCm}cm) chật hơn eo bạn (${customerMeas.waistCm}cm)`);
+          } else if (diff < 0) {
+            score -= 15;
+            warnings.push(`Vòng eo ôm sát (${m.waistCm}cm so với ${customerMeas.waistCm}cm)`);
+          } else if (diff <= 4) {
+            score += 15;
+            fits.push(`Vòng eo chiết eo chuẩn dáng (+${diff.toFixed(0)}cm)`);
+          } else if (diff <= 8) {
+            score += 5;
+          } else {
+            score -= 15;
+            warnings.push(`Vòng eo hơi rộng (+${diff.toFixed(0)}cm)`);
+          }
+        }
+
+        // Vòng hông
+        if (m.hipCm != null && customerMeas.hipCm != null) {
+          const diff = m.hipCm - customerMeas.hipCm;
+          if (diff < -2) {
+            score -= 25;
+            warnings.push(`Vòng hông áo (${m.hipCm}cm) có thể kích so với hông bạn (${customerMeas.hipCm}cm)`);
+          } else if (diff <= 6) {
+            score += 10;
+          }
+        }
+      }
+
+      if (customerMeas.usualSize && s.sizeLabel && s.sizeLabel.toUpperCase() === customerMeas.usualSize.toUpperCase()) {
+        score += 10;
+        fits.push(`Trùng với size bạn thường mặc (${customerMeas.usualSize})`);
+      }
+
+      const clampedScore = Math.max(30, Math.min(99, score));
+      return {
+        garmentSizeId: s.garmentSizeId,
+        sizeLabel: s.sizeLabel,
+        score: clampedScore,
+        warnings,
+        fits,
+      };
+    });
+
+    scoredSizes.sort((a, b) => b.score - a.score);
+    const best = scoredSizes[0];
+    return {
+      best,
+      bySizeId: new Map(scoredSizes.map((s) => [s.garmentSizeId, s])),
+    };
+  }, [group, customerMeas]);
+
+  const currentSizeRec = sizeRecommendations?.bySizeId.get(selectedGarmentId ?? "");
 
   const hasPublicReview = Boolean(
     user && reviewsData?.reviews.some((r) => r.customerId === user.id),
@@ -457,7 +578,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                 })()}
               </div>
 
-              {/* Lựa chọn Kích Thước (Size Selector) */}
+              {/* Lựa chọn Kích Thước (Size Selector) & Smart Size Recommendation */}
               <div className="border-b border-sand pb-6">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-stone-800">
@@ -467,45 +588,145 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                     href="/dashboard/customer/measurements"
                     className="text-xs font-semibold text-lotus hover:underline"
                   >
-                    Xem số đo cơ thể của tôi
+                    {customerMeas ? "Số đo của bạn (Chỉnh sửa)" : "Thiết lập số đo của tôi"}
                   </Link>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-2.5">
+                {/* Khối gợi ý size thông minh (Smart Size Recommendation) */}
+                {sizeRecommendations?.best && (
+                  <div className="mt-3 rounded-xl border border-lotus/25 bg-lotus/5 p-4 shadow-2xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-lotus text-xs text-white">
+                          🎯
+                        </span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-lotus">
+                          Gợi Ý Kích Cỡ Vừa Vặn Nhất
+                        </span>
+                      </div>
+                      <span className="rounded-full bg-lotus px-2.5 py-0.5 text-xs font-bold text-white shadow-2xs">
+                        Độ phù hợp {sizeRecommendations.best.score}%
+                      </span>
+                    </div>
+
+                    <p className="mt-2 text-xs leading-relaxed text-stone-700">
+                      Dựa trên số đo cơ thể bạn
+                      {customerMeas?.bustCm && customerMeas?.waistCm ? (
+                        <span className="font-semibold text-ink">
+                          {" "}(Ngực: {customerMeas.bustCm}cm, Eo: {customerMeas.waistCm}cm
+                          {customerMeas.hipCm ? `, Hông: ${customerMeas.hipCm}cm` : ""})
+                        </span>
+                      ) : null}
+                      , hệ thống đề xuất bạn nên chọn{" "}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGarmentId(sizeRecommendations.best.garmentSizeId)}
+                        className="font-bold text-lotus underline hover:text-oxblood"
+                      >
+                        Size {sizeRecommendations.best.sizeLabel ?? "Chuẩn"}
+                      </button>{" "}
+                      để tôn dáng và thoải mái nhất khi cử động.
+                    </p>
+
+                    {/* Cảnh báo nếu size đang chọn có nguy cơ chật hoặc không vừa */}
+                    {currentSizeRec && currentSizeRec.garmentSizeId !== sizeRecommendations.best.garmentSizeId && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                          <div>
+                            <span className="font-bold">Lưu ý cho Size {currentSizeRec.sizeLabel}:</span>{" "}
+                            {currentSizeRec.warnings.length > 0 ? (
+                              <span>{currentSizeRec.warnings.join("; ")}. Có thể gây khó chịu khi mặc lâu.</span>
+                            ) : (
+                              <span>Độ vừa vặn đạt {currentSizeRec.score}%. Bạn vẫn có thể mặc được nếu thích phom dáng này.</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Nhắc nhở nếu khách đã đăng nhập nhưng chưa có số đo */}
+                {user && !customerMeas && !measLoading && (
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-sand bg-parchment/60 p-3 text-xs text-stone-600">
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-antique" />
+                      Nhập số đo cá nhân để hệ thống tự động tính toán size vừa vặn nhất cho bạn.
+                    </span>
+                    <Link
+                      href="/dashboard/customer/measurements"
+                      className="ml-2 font-bold text-lotus hover:underline shrink-0"
+                    >
+                      Nhập ngay →
+                    </Link>
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-2.5">
                   {group.sizes.map((s) => {
                     const active = s.garmentSizeId === selectedGarmentId;
+                    const isBest = s.garmentSizeId === sizeRecommendations?.best?.garmentSizeId;
                     return (
                       <button
                         key={s.garmentSizeId}
                         type="button"
                         onClick={() => setSelectedGarmentId(s.garmentSizeId)}
-                        className={`flex min-h-[42px] min-w-[56px] items-center justify-center rounded-xl px-4 text-xs font-bold uppercase tracking-wider transition ${
+                        className={`relative flex min-h-[46px] min-w-[70px] flex-col items-center justify-center rounded-xl px-4 py-1 text-xs font-bold uppercase tracking-wider transition ${
                           active
                             ? "bg-lotus text-white shadow-xs"
+                            : isBest
+                            ? "border-2 border-lotus/60 bg-lotus/5 text-lotus hover:bg-lotus/10"
                             : "border border-sand bg-white text-stone-700 hover:border-lotus"
                         }`}
                       >
-                        Size {s.sizeLabel ?? "Chuẩn"}
+                        <span>Size {s.sizeLabel ?? "Chuẩn"}</span>
+                        {isBest && (
+                          <span className={`text-[10px] lowercase font-medium ${active ? "text-amber-200" : "text-lotus font-bold"}`}>
+                            vừa nhất
+                          </span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
 
-                {/* Bảng số đo chi tiết thực tế của áo */}
+                {/* Bảng số đo chi tiết thực tế của áo kết hợp đối chiếu số đo khách */}
                 <div className="mt-6">
-                  <div className="mb-2 text-xs font-bold text-stone-700">
-                    Bảng số đo chi tiết trang phục (cm):
+                  <div className="mb-2 flex items-center justify-between text-xs font-bold text-stone-700">
+                    <span>Bảng số đo chi tiết trang phục (cm):</span>
+                    {customerMeas && (
+                      <span className="text-[11px] font-normal text-stone-500">
+                        * Cột được đánh dấu là size bạn đang chọn
+                      </span>
+                    )}
                   </div>
                   {(() => {
                     const rows: Array<{
                       key: string;
                       label: string;
+                      customerValue?: number | null;
                       get: (m: NonNullable<typeof selectedSize>["measurements"]) => number | null;
                     }> = [
                       { key: "shoulder", label: "Rộng vai", get: (m) => m?.shoulderCm ?? null },
-                      { key: "bust", label: "Vòng ngực", get: (m) => m?.bustCm ?? null },
-                      { key: "waist", label: "Vòng eo", get: (m) => m?.waistCm ?? null },
-                      { key: "hip", label: "Vòng hông", get: (m) => m?.hipCm ?? null },
+                      {
+                        key: "bust",
+                        label: "Vòng ngực",
+                        customerValue: customerMeas?.bustCm ?? null,
+                        get: (m) => m?.bustCm ?? null,
+                      },
+                      {
+                        key: "waist",
+                        label: "Vòng eo",
+                        customerValue: customerMeas?.waistCm ?? null,
+                        get: (m) => m?.waistCm ?? null,
+                      },
+                      {
+                        key: "hip",
+                        label: "Vòng hông",
+                        customerValue: customerMeas?.hipCm ?? null,
+                        get: (m) => m?.hipCm ?? null,
+                      },
                       { key: "length", label: "Chiều dài áo", get: (m) => m?.lengthCm ?? null },
                       { key: "sleeve", label: "Dài tay áo", get: (m) => m?.sleeveLengthCm ?? null },
                     ];
@@ -530,6 +751,11 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                               <th className="px-3.5 py-2.5 text-left font-bold text-stone-600">
                                 Vị trí đo
                               </th>
+                              {customerMeas && (
+                                <th className="px-3 py-2.5 text-center font-bold text-lotus bg-lotus/10">
+                                  Bạn
+                                </th>
+                              )}
                               {(group.sizes ?? []).map((s) => (
                                 <th
                                   key={s.garmentSizeId}
@@ -550,10 +776,31 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                                 key={r.key}
                                 className="border-b border-sand/50 last:border-0 hover:bg-mist"
                               >
-                                <td className="px-3.5 py-2 font-medium text-stone-600">{r.label}</td>
+                                <td className="px-3.5 py-2 font-medium text-stone-600">
+                                  {r.label}
+                                </td>
+                                {customerMeas && (
+                                  <td className="px-3 py-2 text-center font-bold text-lotus bg-lotus/5">
+                                    {r.customerValue != null ? `${r.customerValue} cm` : "—"}
+                                  </td>
+                                )}
                                 {(group.sizes ?? []).map((s) => {
                                   const v = r.get(s.measurements);
                                   const isSel = s.garmentSizeId === selectedGarmentId;
+                                  
+                                  // Hiển thị chỉ báo chênh lệch nếu có số đo của khách
+                                  let diffHint: string | null = null;
+                                  if (isSel && v != null && r.customerValue != null) {
+                                    const diff = v - r.customerValue;
+                                    if (diff < 0) {
+                                      diffHint = `(Chật ${Math.abs(diff).toFixed(0)}cm)`;
+                                    } else if (diff <= 5) {
+                                      diffHint = `(Chuẩn)`;
+                                    } else {
+                                      diffHint = `(+${diff.toFixed(0)}cm)`;
+                                    }
+                                  }
+
                                   return (
                                     <td
                                       key={s.garmentSizeId}
@@ -562,6 +809,11 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                                       }`}
                                     >
                                       {v !== null ? `${v} cm` : "—"}
+                                      {diffHint && (
+                                        <div className={`text-[10px] font-normal ${diffHint.includes("Chật") ? "text-red-500 font-bold" : "text-emerald-600 font-bold"}`}>
+                                          {diffHint}
+                                        </div>
+                                      )}
                                     </td>
                                   );
                                 })}
@@ -756,7 +1008,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                 )}
               </div>
 
-              {user && (
+              {user ? (
                 <button
                   type="button"
                   onClick={() => setShowReviewModal(true)}
@@ -764,10 +1016,116 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                 >
                   {hasPublicReview ? "Chỉnh Sửa Đánh Giá" : "Viết Đánh Giá"}
                 </button>
+              ) : (
+                <Link
+                  href={`/login?redirect=/catalog/${garmentId}`}
+                  className="rounded-xl border border-sand bg-parchment px-5 py-2 text-xs font-semibold uppercase tracking-wider text-stone-700 transition hover:border-lotus hover:text-lotus shadow-2xs"
+                >
+                  Đăng nhập để đánh giá
+                </Link>
               )}
             </div>
 
-            {reviewsData && reviewsData.reviews.length > 0 && (
+            {/* Bộ lọc Review thông minh */}
+            {reviewsData && reviewsData.total > 0 && (
+              <div className="mt-6 flex flex-wrap items-center gap-2 border-b border-sand/60 pb-4 text-xs">
+                <span className="flex items-center gap-1.5 font-bold uppercase text-stone-500 mr-1 text-[11px]">
+                  <Filter className="h-3.5 w-3.5" /> Lọc theo:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewFilter({});
+                    if (group.garmentId) {
+                      getGarmentReviews(group.garmentId, {}).then((r) => r.data && setReviewsData(r.data));
+                    }
+                  }}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    !reviewFilter.rating && reviewFilter.hasMedia === undefined && !reviewFilter.fit
+                      ? "bg-lotus text-white shadow-2xs"
+                      : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                  }`}
+                >
+                  Tất cả ({reviewsData.total})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const f = { rating: 5 };
+                    setReviewFilter(f);
+                    if (group.garmentId) {
+                      getGarmentReviews(group.garmentId, f).then((r) => r.data && setReviewsData(r.data));
+                    }
+                  }}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    reviewFilter.rating === 5
+                      ? "bg-lotus text-white shadow-2xs"
+                      : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                  }`}
+                >
+                  5 Sao ({reviewsData.ratingCounts?.[5] || 0})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const f = { rating: 4 };
+                    setReviewFilter(f);
+                    if (group.garmentId) {
+                      getGarmentReviews(group.garmentId, f).then((r) => r.data && setReviewsData(r.data));
+                    }
+                  }}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    reviewFilter.rating === 4
+                      ? "bg-lotus text-white shadow-2xs"
+                      : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                  }`}
+                >
+                  4 Sao ({reviewsData.ratingCounts?.[4] || 0})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const f = { hasMedia: true };
+                    setReviewFilter(f);
+                    if (group.garmentId) {
+                      getGarmentReviews(group.garmentId, f).then((r) => r.data && setReviewsData(r.data));
+                    }
+                  }}
+                  className={`rounded-full px-3 py-1 font-semibold transition ${
+                    reviewFilter.hasMedia === true
+                      ? "bg-lotus text-white shadow-2xs"
+                      : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                  }`}
+                >
+                  Có ảnh / video ({reviewsData.mediaCount || 0})
+                </button>
+
+                {(reviewsData.fitCounts?.true_to_size || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const f = { fit: "true_to_size" };
+                      setReviewFilter(f);
+                      if (group.garmentId) {
+                        getGarmentReviews(group.garmentId, f).then((r) => r.data && setReviewsData(r.data));
+                      }
+                    }}
+                    className={`rounded-full px-3 py-1 font-semibold transition ${
+                      reviewFilter.fit === "true_to_size"
+                        ? "bg-lotus text-white shadow-2xs"
+                        : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                    }`}
+                  >
+                    Vừa vặn chuẩn ({reviewsData.fitCounts.true_to_size})
+                  </button>
+                )}
+              </div>
+            )}
+
+            {reviewsData && reviewsData.reviews.length > 0 ? (
               <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {reviewsData.reviews.map((rev) => (
                   <div
@@ -775,18 +1133,39 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                     className="flex flex-col justify-between rounded-xl border border-sand bg-white p-5 shadow-xs"
                   >
                     <div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-lotus text-xs font-bold text-white">
-                          {rev.customer?.profile?.fullName?.[0]?.toUpperCase() || "K"}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-lotus text-xs font-bold text-white">
+                            {rev.customer?.profile?.fullName?.[0]?.toUpperCase() || "K"}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-ink">
+                              {rev.customer?.profile?.fullName || "Khách hàng"}
+                            </p>
+                            <p className="text-[11px] text-stone-400">
+                              {new Date(rev.createdAt).toLocaleDateString("vi-VN")}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-xs font-bold text-ink">
-                            {rev.customer?.profile?.fullName || "Khách hàng"}
-                          </p>
-                          <p className="text-[11px] text-stone-400">
-                            {new Date(rev.createdAt).toLocaleDateString("vi-VN")}
-                          </p>
-                        </div>
+
+                        {/* Fit Feedback Badge */}
+                        {rev.fitFeedback && (
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${
+                              rev.fitFeedback === "true_to_size"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : rev.fitFeedback === "tight"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-blue-50 text-blue-700 border-blue-200"
+                            }`}
+                          >
+                            {rev.fitFeedback === "true_to_size"
+                              ? "Vừa vặn"
+                              : rev.fitFeedback === "tight"
+                              ? "Hơi chật"
+                              : "Hơi rộng"}
+                          </span>
+                        )}
                       </div>
 
                       <div className="mt-3 flex text-amber-400">
@@ -807,11 +1186,46 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                           {rev.comment}
                         </p>
                       )}
+
+                      {/* Review Media Previews */}
+                      {rev.images && rev.images.length > 0 && (
+                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                          {rev.images.map((imgUrl, imgIdx) => (
+                            <a
+                              key={imgIdx}
+                              href={imgUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-sand transition hover:opacity-90"
+                            >
+                              <img
+                                src={imgUrl}
+                                alt="Ảnh review"
+                                className="h-full w-full object-cover"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Phản hồi từ Staff */}
+                      {rev.staffReply && (
+                        <div className="mt-3 rounded-lg border border-sand bg-parchment/60 p-2.5 text-xs">
+                          <p className="font-bold text-lotus text-[11px]">Phản hồi từ Atelier:</p>
+                          <p className="mt-0.5 text-stone-700 text-[11px] leading-relaxed">
+                            {rev.staffReply}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
-            )}
+            ) : reviewsData && reviewsData.total > 0 ? (
+              <div className="mt-8 rounded-xl border border-dashed border-sand bg-parchment/40 p-8 text-center text-xs text-stone-500">
+                Không tìm thấy đánh giá nào phù hợp với bộ lọc đã chọn.
+              </div>
+            ) : null}
           </section>
         )}
 

@@ -28,10 +28,12 @@ import {
 } from "lucide-react";
 import {
   getGarmentsGrouped,
+  getMyMeasurements,
   getTryonHistory,
   getTryonStatus,
   hideTryonHistoryItem,
   submitTryon,
+  type CustomerMeasurement,
   type GarmentGrouped,
   type TryonHistoryItem,
   type TryonMode,
@@ -69,6 +71,7 @@ function TryOnInner() {
   const [historyItems, setHistoryItems] = useState<TryonHistoryItem[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [customerMeasurements, setCustomerMeasurements] = useState<CustomerMeasurement | null>(null);
 
   async function loadHistory() {
     if (!readStoredAccessToken()) {
@@ -114,7 +117,14 @@ function TryOnInner() {
   useEffect(() => {
     const token = readStoredAccessToken();
     setHasAccessToken(Boolean(token));
-    if (token) void loadHistory();
+    if (token) {
+      void loadHistory();
+      void getMyMeasurements().then((res) => {
+        if (res.success && res.data) {
+          setCustomerMeasurements(res.data);
+        }
+      });
+    }
   }, []);
 
   const selectedGroup = groups[selectedGroupIdx] ?? null;
@@ -542,6 +552,7 @@ function TryOnInner() {
                   sizeLabel={selectedSize?.sizeLabel ?? null}
                   selectedSizeId={selectedSizeId}
                   isCached={isCachedResult}
+                  customerMeasurements={customerMeasurements}
                   onRetry={handleTryOn}
                   onReset={handleReset}
                 />

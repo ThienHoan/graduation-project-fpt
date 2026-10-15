@@ -185,6 +185,21 @@ export async function getMyAddresses() {
   return apiRequest<CustomerAddress[]>("/users/me/addresses");
 }
 
+export type CustomerMeasurement = {
+  id: string;
+  heightCm: number | null;
+  weightKg: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  usualSize: string | null;
+  createdAt: string;
+};
+
+export async function getMyMeasurements() {
+  return apiRequest<CustomerMeasurement | null>("/users/me/measurements");
+}
+
 // ---------- Shipping / Locations ----------
 
 export type ShippingFeeEstimate = {
@@ -2243,6 +2258,7 @@ export type ReviewResponse = {
   reportedBy: string | null;
   editCount: number;
   isLocked: boolean;
+  fitFeedback?: "tight" | "true_to_size" | "loose" | null;
   createdAt: string;
   updatedAt: string;
   garment?: {
@@ -2257,15 +2273,51 @@ export type ReviewResponse = {
   } | null;
 };
 
-export async function createReview(payload: { garmentId: string; bookingId?: string; rating: number; comment?: string; images?: string[]; video?: string; }) {
+export type GarmentReviewsQuery = {
+  rating?: number;
+  hasMedia?: boolean;
+  fit?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type GarmentReviewsData = {
+  reviews: ReviewResponse[];
+  averageRating: number;
+  total: number;
+  filteredTotal: number;
+  ratingCounts: Record<number, number>;
+  mediaCount: number;
+  fitCounts: Record<string, number>;
+  page: number;
+  totalPages: number;
+  limit: number;
+};
+
+export async function createReview(payload: {
+  garmentId: string;
+  bookingId?: string;
+  rating: number;
+  comment?: string;
+  fitFeedback?: "tight" | "true_to_size" | "loose";
+  images?: string[];
+  video?: string;
+}) {
   return apiRequest<ReviewResponse>("/reviews", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function getGarmentReviews(garmentId: string) {
-  return apiRequest<{ reviews: ReviewResponse[]; averageRating: number; total: number }>(`/reviews/garment/${garmentId}`);
+export async function getGarmentReviews(garmentId: string, query?: GarmentReviewsQuery) {
+  const params = new URLSearchParams();
+  if (query?.rating) params.set("rating", String(query.rating));
+  if (query?.hasMedia !== undefined) params.set("hasMedia", String(query.hasMedia));
+  if (query?.fit) params.set("fit", query.fit);
+  if (query?.page) params.set("page", String(query.page));
+  if (query?.limit) params.set("limit", String(query.limit));
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<GarmentReviewsData>(`/reviews/garment/${garmentId}${q}`);
 }
 
 export async function getMyReviews() {
@@ -2304,7 +2356,16 @@ export async function hideReview(reviewId: string, reason?: string) {
   });
 }
 
-export async function updateReview(id: string, payload: { rating?: number; comment?: string; images?: string[]; video?: string; }) {
+export async function updateReview(
+  id: string,
+  payload: {
+    rating?: number;
+    comment?: string;
+    fitFeedback?: "tight" | "true_to_size" | "loose";
+    images?: string[];
+    video?: string;
+  },
+) {
   return apiRequest<ReviewResponse>(`/reviews/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
