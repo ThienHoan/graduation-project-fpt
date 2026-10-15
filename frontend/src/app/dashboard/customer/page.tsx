@@ -59,6 +59,20 @@ function formatDate(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+const DEMO_DELIVERY_TRACK: DeliveryTrackData = {
+  bookingId: "DEMO-CP-2026",
+  status: "in_transit",
+  shipperLocationAvailable: true,
+  storeLat: 10.7769,
+  storeLng: 106.7009,
+  customerLat: 10.7932,
+  customerLng: 106.6800,
+  deliveredAt: null,
+  handoverConfirmed: false,
+  customerName: "Nguyễn Văn An",
+  customerAddress: "123 Đường Pasteur, Phường Võ Thị Sáu, Quận 3, TP.HCM",
+};
+
 export default function CustomerDashboardPage() {
   const [bookings, setBookings] = useState<BookingResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +82,7 @@ export default function CustomerDashboardPage() {
   const [refundMap, setRefundMap] = useState<Record<string, CustomerRefundResponse | null>>({});
   // Delivery tracking
   const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
+  const [showDemoTracking, setShowDemoTracking] = useState(false);
 
   // Inspection report modal state
   const [inspectingBooking, setInspectingBooking] = useState<BookingResponse | null>(null);
@@ -111,7 +126,20 @@ export default function CustomerDashboardPage() {
     const fetchTracking = () => {
       getDeliveryTrack(deliveryBooking.id).then((res) => {
         if (res.success && res.data) {
-          setDeliveryTrack(res.data);
+          const newData = res.data;
+          setDeliveryTrack((prev) => {
+            if (
+              prev &&
+              prev.bookingId === newData.bookingId &&
+              prev.status === newData.status &&
+              prev.storeLat === newData.storeLat &&
+              prev.customerLat === newData.customerLat &&
+              prev.deliveredAt === newData.deliveredAt
+            ) {
+              return prev;
+            }
+            return newData;
+          });
         } else {
           setDeliveryTrack(null);
         }
@@ -551,14 +579,49 @@ export default function CustomerDashboardPage() {
           )}
 
           {/* Delivery tracking */}
-          {deliveryTrack && (
+          {(deliveryTrack || showDemoTracking) ? (
             <section className="space-y-4">
-              <h2 className="font-display text-3xl text-ink flex items-center gap-2">
-                <Truck className="h-6 w-6 text-antique" />
-                Theo dõi giao hàng
-              </h2>
-              <DeliveryTracker data={deliveryTrack} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-display text-3xl text-ink flex items-center gap-2">
+                  <Truck className="h-6 w-6 text-antique" />
+                  Theo dõi giao hàng
+                  {showDemoTracking && !deliveryTrack && (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                      Mô phỏng Demo
+                    </span>
+                  )}
+                </h2>
+                {showDemoTracking && !deliveryTrack && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDemoTracking(false)}
+                    className="text-xs font-medium text-stone-500 underline transition hover:text-stone-800"
+                  >
+                    Đóng mô phỏng
+                  </button>
+                )}
+              </div>
+              <DeliveryTracker data={deliveryTrack || DEMO_DELIVERY_TRACK} />
             </section>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-dashed border-sand bg-white/70 p-5 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                  <Truck className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink">Mô phỏng GPS giao hàng thực tế (Leaflet + OSRM)</p>
+                  <p className="text-xs text-stone-500">Xem thử xe máy giao hàng chạy men theo đường phố thực tế TP.HCM kèm tốc độ và thời gian đến dự kiến.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDemoTracking(true)}
+                className="shrink-0 whitespace-nowrap rounded-xl bg-lotus px-4 py-2.5 text-xs font-semibold text-white shadow-xs transition hover:bg-oxblood"
+              >
+                Bật xem thử mô phỏng 🛵
+              </button>
+            </div>
           )}
 
           {/* Lịch sử */}

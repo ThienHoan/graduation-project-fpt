@@ -1099,9 +1099,10 @@ export class BookingsService {
     return ok(points);
   }
 
-  async getDeliveryTrack(customerId: string, id: string) {
+  async getDeliveryTrack(customerId: string, id: string, role?: string) {
+    const isStaffOrHigher = ["staff", "manager_owner", "admin"].includes(role ?? "");
     const booking = await this.prisma.booking.findFirst({
-      where: { id, customerId },
+      where: isStaffOrHigher ? { id } : { id, customerId },
       include: { deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } },
     });
 

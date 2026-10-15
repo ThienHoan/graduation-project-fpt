@@ -12,9 +12,12 @@ import {
   markBookingReturned,
   markBookingPaid,
   createRefund,
+  getDeliveryTrack,
   type BookingResponse,
   type StaffBookingResponse,
+  type DeliveryTrackData,
 } from "@/lib/api";
+import { DeliveryTracker } from "@/components/location/delivery-tracker";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import {
@@ -24,6 +27,7 @@ import {
   Shirt,
   Banknote,
   QrCode,
+  Truck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -106,6 +110,7 @@ export default function StaffBookingDetailPage() {
   const [refundBankName, setRefundBankName] = useState("");
   const [refundBankAccount, setRefundBankAccount] = useState("");
   const [refundBankHolder, setRefundBankHolder] = useState("");
+  const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -123,6 +128,15 @@ export default function StaffBookingDetailPage() {
     const res = await getStaffBooking(bookingId);
     if (res.success && res.data) setBooking(res.data);
   }, [bookingId]);
+
+  useEffect(() => {
+    if (!bookingId || booking?.pickupMethod !== "delivery") return;
+    getDeliveryTrack(bookingId).then((res) => {
+      if (res.success && res.data) {
+        setDeliveryTrack(res.data);
+      }
+    });
+  }, [bookingId, booking?.pickupMethod, booking?.status]);
 
   useRealtimeInvalidation({ bookings: refreshBooking }, Boolean(bookingId));
 
@@ -474,20 +488,41 @@ export default function StaffBookingDetailPage() {
         </div>
       </div>
 
-      {/* Delivery address */}
+      {/* Delivery address & Live Delivery Tracker */}
       {(booking.deliverySnapshot ?? booking.deliveryAddress) && (() => {
         const address = booking.deliverySnapshot ?? booking.deliveryAddress!;
         return (
-          <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-            <div className="border-b border-sand bg-stone-50 px-6 py-3">
-              <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600">Địa chỉ giao nhận</h3>
+          <div className="mb-6 space-y-4">
+            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+              <div className="border-b border-sand bg-stone-50 px-6 py-3 flex items-center justify-between">
+                <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600 flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-antique" />
+                  Địa chỉ giao nhận tận nơi
+                </h3>
+                {booking.status === "delivering" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Đang trên đường giao hàng
+                  </span>
+                )}
+              </div>
+              <div className="p-6">
+                <p className="font-medium text-ink">{address.receiverName} - {address.phone}</p>
+                <p className="mt-1 text-sm text-stone-600">
+                  {[address.line1, address.ward, address.district, address.city].filter(Boolean).join(", ")}
+                </p>
+              </div>
             </div>
-            <div className="p-6">
-              <p className="font-medium text-ink">{address.receiverName} - {address.phone}</p>
-              <p className="mt-1 text-sm text-stone-600">
-                {[address.line1, address.ward, address.district, address.city].filter(Boolean).join(", ")}
-              </p>
-            </div>
+
+            {deliveryTrack && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600 flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-antique" />
+                  Tiến trình di chuyển của Shipper (Bản đồ thực tế OSRM)
+                </h3>
+                <DeliveryTracker data={deliveryTrack} />
+              </div>
+            )}
           </div>
         );
       })()}

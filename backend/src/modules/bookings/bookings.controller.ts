@@ -58,7 +58,7 @@ export class BookingsController {
   @Get(":id/delivery-track")
   @UseGuards(JwtAuthGuard)
   getDeliveryTrack(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string) {
-    return this.bookingsService.getDeliveryTrack(user.id, id);
+    return this.bookingsService.getDeliveryTrack(user.id, id, user.role);
   }
 
   @Patch(":id/cancel")
