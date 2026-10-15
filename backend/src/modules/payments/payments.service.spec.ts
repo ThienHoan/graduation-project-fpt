@@ -5,6 +5,7 @@ const payos = vi.hoisted(() => ({
   paymentRequests: {
     create: vi.fn(),
     get: vi.fn(),
+    cancel: vi.fn(),
   },
   webhooks: {
     verify: vi.fn(),
@@ -63,7 +64,14 @@ function createLinkService(booking = paymentLinkBooking()) {
       create: vi.fn().mockResolvedValue({ id: "payment-1" }),
     },
   };
+  const pendingPayos = ((booking as { payments?: Array<Record<string, unknown>> }).payments ?? [])
+    .filter((p) => p.provider === "payos" && p.status === PaymentStatus.pending && p.providerTransactionId)
+    .map((p) => ({ id: p.id, providerTransactionId: p.providerTransactionId }));
   const prisma = {
+    payment: {
+      findMany: vi.fn().mockResolvedValue(pendingPayos),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     runSerializable: vi.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
   };
   return { service: new PaymentsService(prisma as never, config() as never), prisma, tx };
@@ -107,6 +115,7 @@ beforeEach(() => {
     qrCode: "qr-code",
   });
   payos.webhooks.verify.mockResolvedValue({ orderCode: ORDER_CODE, amount: 160, currency: "VND" });
+  payos.paymentRequests.get.mockRejectedValue(new Error("Order not found"));
 });
 
 describe("PaymentsService.createPaymentLink", () => {
@@ -158,6 +167,74 @@ describe("PaymentsService.createPaymentLink", () => {
 
     expect(tx.payment.create).not.toHaveBeenCalled();
     expect(payos.paymentRequests.create).toHaveBeenCalledWith(expect.objectContaining({ orderCode: 100000000002 }));
+  });
+
+  it("creates a new order code after the customer cancelled the previous PayOS link", async () => {
+    const cancelledIntent = {
+      id: "cancelled-intent",
+      provider: "payos",
+      providerTransactionId: "100000000001",
+      status: PaymentStatus.pending as PaymentStatus,
+      amount: new Prisma.Decimal(160),
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+    };
+    const booking = paymentLinkBooking({ payments: [cancelledIntent] });
+    const { service, prisma, tx } = createLinkService(booking);
+    payos.paymentRequests.get.mockResolvedValueOnce({ status: "CANCELLED" });
+    prisma.payment.updateMany.mockImplementation(async () => {
+      cancelledIntent.status = PaymentStatus.cancelled;
+      return { count: 1 };
+    });
+
+    await service.createPaymentLink(BOOKING_ID, CUSTOMER_ID);
+
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "cancelled-intent", status: PaymentStatus.pending },
+      data: { status: PaymentStatus.cancelled },
+    });
+    expect(payos.paymentRequests.cancel).not.toHaveBeenCalled();
+    expect(tx.payment.create).toHaveBeenCalledTimes(1);
+    const created = payos.paymentRequests.create.mock.calls.at(-1)![0];
+    expect(created.orderCode).not.toBe(100000000001);
+  });
+
+  it("cancels a still-open PayOS link before issuing a new one", async () => {
+    const openIntent = {
+      id: "open-intent",
+      provider: "payos",
+      providerTransactionId: "100000000001",
+      status: PaymentStatus.pending as PaymentStatus,
+      amount: new Prisma.Decimal(160),
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+    };
+    const { service, prisma } = createLinkService(paymentLinkBooking({ payments: [openIntent] }));
+    payos.paymentRequests.get.mockResolvedValueOnce({ status: "PENDING" });
+    prisma.payment.updateMany.mockImplementation(async () => {
+      openIntent.status = PaymentStatus.cancelled;
+      return { count: 1 };
+    });
+
+    await service.createPaymentLink(BOOKING_ID, CUSTOMER_ID);
+
+    expect(payos.paymentRequests.cancel).toHaveBeenCalledWith(100000000001, expect.any(String));
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: PaymentStatus.cancelled } }));
+  });
+
+  it("does not open a second link while PayOS reports the old one as paid", async () => {
+    const paidIntent = {
+      id: "paid-intent",
+      provider: "payos",
+      providerTransactionId: "100000000001",
+      status: PaymentStatus.pending as PaymentStatus,
+      amount: new Prisma.Decimal(160),
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+    };
+    const { service, prisma } = createLinkService(paymentLinkBooking({ payments: [paidIntent] }));
+    payos.paymentRequests.get.mockResolvedValueOnce({ status: "PAID" });
+
+    await expect(service.createPaymentLink(BOOKING_ID, CUSTOMER_ID)).rejects.toThrow("PayOS ghi nhận thanh toán");
+    expect(prisma.runSerializable).not.toHaveBeenCalled();
+    expect(payos.paymentRequests.create).not.toHaveBeenCalled();
   });
 
   it("matches the booking amount when a voucher reduced the rental total", async () => {

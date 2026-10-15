@@ -31,6 +31,7 @@ export class PaymentsService {
 
   /** Creates/reuses a durable intent before making any provider request. */
   async createPaymentLink(bookingId: string, customerId: string) {
+    await this.releaseClosedPayosIntents(bookingId);
     const intent = await this.prisma.runSerializable(async (tx) => {
       // Serialize intents per booking at the database level; this survives
       // multiple app processes and does not rely on an in-memory mutex.
@@ -318,6 +319,49 @@ export class PaymentsService {
       result[order[k].index] += 1;
     }
     return result;
+  }
+
+  /**
+   * A PayOS order code cannot be reused once its link was cancelled, expired or
+   * is still open. Before reusing a local pending intent, ask PayOS about it:
+   * - CANCELLED / EXPIRED / FAILED: close the local intent so a new code is used.
+   * - PENDING: cancel the old link (customer asked for a new QR) and close it.
+   * - PAID / PROCESSING / UNDERPAID: money may be moving, so never open a second link.
+   * - Unknown to PayOS (create never reached it): keep it and reuse the same code.
+   */
+  private async releaseClosedPayosIntents(bookingId: string) {
+    const pending = await this.prisma.payment.findMany({
+      where: { bookingId, provider: "payos", status: PaymentStatus.pending, providerTransactionId: { not: null } },
+      select: { id: true, providerTransactionId: true },
+    });
+    for (const payment of pending) {
+      const orderCode = Number(payment.providerTransactionId);
+      let link: { status?: string } | undefined;
+      try {
+        link = await this.payos.paymentRequests.get(orderCode);
+      } catch (error) {
+        this.logger.warn(`PayOS order ${orderCode} not found, keeping intent for reuse: ${this.errorMessage(error)}`);
+        continue;
+      }
+      const status = link?.status;
+      if (status === "PAID" || status === "PROCESSING" || status === "UNDERPAID") {
+        throw new BadRequestException("Đơn hàng đang được PayOS ghi nhận thanh toán. Vui lòng chờ trong giây lát rồi tải lại trang.");
+      }
+      if (status === "PENDING") {
+        try {
+          await this.payos.paymentRequests.cancel(orderCode, "Khách hàng tạo lại liên kết thanh toán");
+        } catch (error) {
+          this.logger.warn(`Cannot cancel PayOS order ${orderCode}: ${this.errorMessage(error)}`);
+          throw new BadRequestException("Không thể tạo liên kết thanh toán. Vui lòng thử lại.");
+        }
+      }
+      if (status === "PENDING" || status === "CANCELLED" || status === "EXPIRED" || status === "FAILED") {
+        await this.prisma.payment.updateMany({
+          where: { id: payment.id, status: PaymentStatus.pending },
+          data: { status: status === "FAILED" ? PaymentStatus.failed : PaymentStatus.cancelled },
+        });
+      }
+    }
   }
 
   private allocateOrderCode(bookingId: string, existingCodes: Array<string | null>) {
