@@ -23,6 +23,7 @@ import {
   statusBadgeClass,
   statusOf,
   ACTIVE_BOOKING_STATUSES,
+  DEPOSIT_HELD_STATUSES,
   CANCELLABLE_STATUSES,
 } from "@/lib/status-labels";
 import { ReviewModal } from "@/components/customer/review-modal";
@@ -312,7 +313,7 @@ export default function CustomerDashboardPage() {
     const activeCount = sortedBookings.filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status)).length;
     const completedCount = sortedBookings.filter((b) => b.status === "completed" || b.status === "returned").length;
     const totalHoldingDeposit = sortedBookings
-      .filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status) || b.status === "refund_pending")
+      .filter((b) => DEPOSIT_HELD_STATUSES.has(b.status))
       .reduce((sum, b) => sum + (Number(b.depositTotal) || 0), 0);
     const refundPendingCount = sortedBookings.filter((b) => b.status === "refund_pending").length;
 
