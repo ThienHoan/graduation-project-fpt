@@ -433,6 +433,33 @@ describe("BookingsService handover", () => {
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
   });
 
+  it("recovers a rejected handover by cancelling and refunding even if asset is not reserved", async () => {
+    const booking = makeHandoverBooking();
+    booking.handoverStatus = "REJECTED";
+    booking.confirmedAt = new Date("2026-10-15T10:00:00.000Z");
+    booking.conditionBeforeRental = ConditionBeforeRental.MAJOR_DAMAGE;
+    booking.items[0].garmentAsset!.status = "available";
+    (booking as any).payments = [];
+    (booking as any).refunds = [];
+
+    const { service, tx } = createHandoverService(booking);
+
+    const result = await service.recoverHandover(
+      BOOKING_ID,
+      {
+        action: "cancel",
+        reason: "Hủy đơn và hoàn cọc vì đồ lỗi nặng",
+        expectedDecidedAt: "2026-10-15T10:00:00.000Z",
+      },
+      { id: "manager-id", role: "manager_owner" },
+    );
+
+    expect(result.data).toBeDefined();
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "cancelled" }),
+    }));
+  });
+
   it("blocks direct advanceStatus to renting until handover is confirmed", async () => {
     const booking = makeHandoverBooking();
     const tx = {

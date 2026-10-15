@@ -228,7 +228,7 @@ export function StaffPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
         <div className="mb-6 px-3 pt-3">
           <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
@@ -451,7 +451,7 @@ export function ManagerPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
         <div className="mb-6 px-3 pt-3">
           <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
@@ -640,7 +640,7 @@ export function AdminPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       {/* Side Navigation */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex">
         <div className="mb-8 px-3 pt-4">

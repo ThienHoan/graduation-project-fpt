@@ -24,8 +24,12 @@ export class AnalyticsService {
 
   /** Ghi nhận 1 lượt xem; dùng Redis Atomic Deduplication (TTL 30 phút) để tối ưu tải */
   async trackView(dto: TrackViewDto, viewerId?: string | null) {
-    const visitorKey = dto.visitorKey.trim().slice(0, 64);
-    if (!visitorKey) throw new BadRequestException("visitorKey không hợp lệ.");
+    const garmentId = dto.garmentId?.trim();
+    const visitorKey = dto.visitorKey?.trim().slice(0, 64);
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!garmentId || !visitorKey || !UUID_REGEX.test(garmentId)) {
+      return ok({ counted: false });
+    }
 
     if (this.redisService) {
       // Chống đếm trùng 30 phút bằng Redis SET NX
@@ -54,12 +58,12 @@ export class AnalyticsService {
 
     // Tăng atomic counter trên RAM nếu có redis
     if (this.redisService) {
-      void this.redisService.incr(`garment:views:${dto.garmentId}`);
+      void this.redisService.incr(`garment:views:${garmentId}`);
       void this.redisService.incr(`site:views:total`);
     }
 
     await this.prisma.garment_views.create({
-      data: { garment_id: dto.garmentId, visitor_key: visitorKey, viewer_id: viewerId ?? null },
+      data: { garment_id: garmentId, visitor_key: visitorKey, viewer_id: viewerId ?? null },
     });
 
     return ok({ counted: true });

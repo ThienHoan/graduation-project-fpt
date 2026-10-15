@@ -291,11 +291,11 @@ function BookingLogisticsInner() {
             <div className="mt-5 flex items-start gap-4 rounded-xl border border-sand bg-white p-4">
               <MapPin className="h-5 w-5 mt-1 text-antique shrink-0" />
               <div>
-                <h3 className="font-semibold text-ink">{storeInfo?.name ?? "Heritage Atelier"}</h3>
-                <p className="mt-1 text-sm leading-7 text-stone-600">{storeInfo?.address ?? "123 Silk Road, Quận 1, TP. Hồ Chí Minh"}</p>
+                <h3 className="font-semibold text-ink">{storeInfo?.name ?? "Heritage Atelier - FPT Đà Nẵng"}</h3>
+                <p className="mt-1 text-sm leading-7 text-stone-600">{storeInfo?.address ?? "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng"}</p>
                 <div className="mt-3 flex flex-wrap gap-4 text-xs font-semibold uppercase tracking-[0.16em] text-bronze">
                   <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{storeInfo?.businessHours ?? "09:00 - 20:00"}</span>
-                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{storeInfo?.phone ?? "+84 28 3822 0000"}</span>
+                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{storeInfo?.phone ?? "0236 730 0999"}</span>
                 </div>
               </div>
             </div>

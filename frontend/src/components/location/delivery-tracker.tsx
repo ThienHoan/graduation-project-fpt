@@ -15,6 +15,7 @@ import {
   MapPin,
   ExternalLink,
 } from "lucide-react";
+import { getMapTileConfig, fetchDirections } from "@/lib/map-config";
 
 export type DeliveryTrackData = {
   bookingId: string;
@@ -77,25 +78,17 @@ export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
     const { storeLat, storeLng, customerLat, customerLng } = data;
 
     async function fetchRoute() {
-      try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${storeLng},${storeLat};${customerLng},${customerLat}?overview=full&geometries=geojson`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
-        if (!res.ok) throw new Error("OSRM error");
-        const json = await res.json();
-
-        if (active && json.code === "Ok" && json.routes?.[0]?.geometry?.coordinates?.length) {
-          const rawCoords = json.routes[0].geometry.coordinates as [number, number][];
-          // OSRM trả về [lng, lat], Leaflet cần [lat, lng]
-          const latLngs: [number, number][] = rawCoords.map((c) => [c[1], c[0]]);
-          setRouteCoords(latLngs);
-          setRouteInfo({
-            distanceKm: Number((json.routes[0].distance / 1000).toFixed(1)),
-            durationMin: Math.max(3, Math.round(json.routes[0].duration / 60)),
-          });
-          return;
-        }
-      } catch {
-        // Fallback nội suy nếu OSRM timeout hoặc mạng chậm
+      const route = await fetchDirections(
+        { lat: storeLat, lng: storeLng },
+        { lat: customerLat, lng: customerLng },
+      );
+      if (active && route && route.coordinates.length > 0) {
+        setRouteCoords(route.coordinates);
+        setRouteInfo({
+          distanceKm: route.distanceKm,
+          durationMin: route.durationMin,
+        });
+        return;
       }
 
       // Tạo đường nội suy 40 điểm thẳng nếu OSRM không phản hồi
@@ -148,9 +141,11 @@ export function DeliveryTracker({ data }: { data: DeliveryTrackData }) {
       }).setView([storeLat, storeLng], 14);
       mapRef.current = map;
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-        maxZoom: 19,
+      const tileConfig = getMapTileConfig();
+      L.tileLayer(tileConfig.url, {
+        attribution: tileConfig.attribution,
+        maxZoom: tileConfig.maxZoom,
+        subdomains: tileConfig.subdomains || "0123",
       }).addTo(map);
 
       // Điểm Cửa hàng (Atelier)

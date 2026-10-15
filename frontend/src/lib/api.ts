@@ -2614,8 +2614,10 @@ export async function getProductStats(query: {
 }
 
 /** Ghi nhận lượt xem sản phẩm (ẩn danh, chống trùng 30 phút ở server). Không chặn UI nếu lỗi. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function trackGarmentView(garmentId: string) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !garmentId || !UUID_REGEX.test(garmentId)) return;
   let visitorKey = "";
   try {
     visitorKey = localStorage.getItem("heritage-visitor-key") ?? "";
@@ -2630,7 +2632,7 @@ export function trackGarmentView(garmentId: string) {
     method: "POST",
     body: JSON.stringify({ garmentId, visitorKey }),
     authToken: null,
-  });
+  }).catch(() => {});
 }
 
 // ---------- AI Virtual Try-On & Recommendations ----------

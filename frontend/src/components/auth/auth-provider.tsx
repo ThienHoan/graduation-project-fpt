@@ -32,7 +32,7 @@ function getInitialSession() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const initialSession = getInitialSession();
   const [session, setSession] = useState<AuthSession | null>(initialSession);
-  const [status, setStatus] = useState<AuthStatus>(initialSession ? "loading" : "unauthenticated");
+  const [status, setStatus] = useState<AuthStatus>(initialSession ? "authenticated" : "unauthenticated");
 
   const signOut = useCallback(() => {
     clearAuthSession();
@@ -100,7 +100,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setStatus("loading");
     void refreshUser();
   }, [refreshUser, session?.accessToken]);
 

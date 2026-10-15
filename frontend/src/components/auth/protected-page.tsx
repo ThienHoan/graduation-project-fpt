@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { resolveDashboardPath, type AppRole } from "@/lib/auth";
 import { useAuth } from "./auth-provider";
@@ -15,12 +15,17 @@ export function ProtectedPage({ allowedRoles, children }: ProtectedPageProps) {
   const router = useRouter();
   const { session, status } = useAuth();
 
+  const allowedRolesKey = useMemo(
+    () => allowedRoles?.slice().sort().join(",") ?? "",
+    [allowedRoles],
+  );
+
   useEffect(() => {
-    if (status === "loading") {
+    if (status === "loading" && !session) {
       return;
     }
 
-    if (status === "unauthenticated") {
+    if (status === "unauthenticated" && !session) {
       const nextSuffix = pathname ? `?next=${encodeURIComponent(pathname)}` : "";
       router.replace(`/login${nextSuffix}`);
       return;
@@ -29,16 +34,22 @@ export function ProtectedPage({ allowedRoles, children }: ProtectedPageProps) {
     if (allowedRoles && session && !allowedRoles.includes(session.user.role)) {
       router.replace(resolveDashboardPath(session.user.role));
     }
-  }, [allowedRoles, pathname, router, session, status]);
+  }, [allowedRoles, allowedRolesKey, pathname, router, session, status]);
 
-  if (status !== "authenticated" || (allowedRoles && session && !allowedRoles.includes(session.user.role))) {
+  const isAuthorized = session && (!allowedRoles || allowedRoles.includes(session.user.role));
+
+  if (!session && status === "loading") {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16">
-        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">
-          Loading your account...
+        <div className="rounded-lg border border-sand bg-white p-6 text-sm text-stone-600 shadow-xs">
+          Đang xác thực tài khoản...
         </div>
       </div>
     );
+  }
+
+  if (!isAuthorized) {
+    return null;
   }
 
   return <>{children}</>;

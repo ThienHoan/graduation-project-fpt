@@ -80,14 +80,14 @@ const DEMO_DELIVERY_TRACK: DeliveryTrackData = {
   bookingId: "DEMO-CP-2026",
   status: "in_transit",
   shipperLocationAvailable: true,
-  storeLat: 10.7769,
-  storeLng: 106.7009,
-  customerLat: 10.7932,
-  customerLng: 106.6800,
+  storeLat: 15.967945,
+  storeLng: 108.260727,
+  customerLat: 16.0544,
+  customerLng: 108.2022,
   deliveredAt: null,
   handoverConfirmed: false,
-  customerName: "Nguyễn Văn An",
-  customerAddress: "123 Đường Pasteur, Phường Võ Thị Sáu, Quận 3, TP.HCM",
+  customerName: "Thiện Hoàn",
+  customerAddress: "29 Kiệt 569, Hòa Thuận Đông, Hải Châu, Đà Nẵng",
 };
 
 type HistoryTab = "all" | "active" | "refund" | "completed" | "cancelled";
