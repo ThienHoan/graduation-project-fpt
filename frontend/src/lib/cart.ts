@@ -65,6 +65,7 @@ function readCartData(): CartData {
 function writeCartData(data: CartData): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(data));
+  window.dispatchEvent(new CustomEvent("cart:updated"));
 }
 
 export function getCart(): CartItem[] {

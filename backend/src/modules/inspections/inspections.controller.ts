@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards, ParseUUIDPipe } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, ParseUUIDPipe } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -26,6 +26,15 @@ export class InspectionsController {
   @Get("booking/:bookingId")
   findByBooking(@Param("bookingId", ParseUUIDPipe) bookingId: string) {
     return this.inspectionsService.findByBooking(bookingId);
+  }
+
+  @Get("customer/booking/:bookingId")
+  @Roles("customer", "staff", "manager_owner", "admin")
+  findCustomerBookingInspections(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("bookingId", ParseUUIDPipe) bookingId: string,
+  ) {
+    return this.inspectionsService.findByCustomerBooking(user.id, bookingId);
   }
 
   @Get("assets/needing-processing")
@@ -79,9 +88,39 @@ export class InspectionsController {
     return this.inspectionsService.addFinding(id, body);
   }
 
+  @Delete(":id/findings/:findingId")
+  deleteFinding(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("findingId", ParseUUIDPipe) findingId: string,
+  ) {
+    return this.inspectionsService.deleteFinding(id, findingId);
+  }
+
   @Post(":id/photos")
   addPhoto(@Param("id", ParseUUIDPipe) id: string, @Body() body: CreatePhotoDto) {
     return this.inspectionsService.addPhoto(id, body);
+  }
+
+  @Delete(":id/photos/:photoId")
+  deletePhoto(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("photoId", ParseUUIDPipe) photoId: string,
+  ) {
+    return this.inspectionsService.deletePhoto(id, photoId);
+  }
+
+  @Post(":id/ai-compare")
+  compareAi(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: { afterImageUrls?: string[] },
+  ) {
+    return this.inspectionsService.runAiComparison(id, body, user.id);
+  }
+
+  @Post(":id/ai-apply-findings")
+  applyAiFindings(@Param("id", ParseUUIDPipe) id: string) {
+    return this.inspectionsService.applyAiFindings(id);
   }
 
   @Patch(":id/complete")
@@ -92,5 +131,17 @@ export class InspectionsController {
   @Patch("assets/:assetId/mark-ready")
   markAssetReady(@CurrentUser() user: AuthenticatedUser, @Param("assetId", ParseUUIDPipe) assetId: string) {
     return this.inspectionsService.markAssetReady(assetId, user.id);
+  }
+
+  /**
+   * Hoàn tất kiểm tra đơn thủ công — dùng khi trang phục + phụ kiện đều
+   * đã kiểm tra xong nhưng đơn vẫn kẹt ở inspection_pending.
+   */
+  @Post("booking/:bookingId/finalize")
+  finalizeBookingInspection(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("bookingId", ParseUUIDPipe) bookingId: string,
+  ) {
+    return this.inspectionsService.tryFinalizeBookingInspection(bookingId, user.id);
   }
 }

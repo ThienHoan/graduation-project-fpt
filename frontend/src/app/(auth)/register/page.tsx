@@ -8,6 +8,7 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { apiRequest } from "@/lib/api";
 import { resolveDashboardPath, toAuthenticatedUser, type AppRole } from "@/lib/auth";
 import { PasswordVisibilityToggle } from "@/components/auth/password-visibility-toggle";
+import { Calendar, Truck, Sparkles } from "lucide-react";
 
 type RegisterResult = {
   email: string;
@@ -54,9 +55,9 @@ function StrengthItem({ ok, label }: { ok: boolean; label: string }) {
 }
 
 const benefitItems = [
-  { icon: "calendar_today", label: "Đặt lịch nhanh chóng" },
-  { icon: "local_shipping", label: "Theo dõi đơn hàng" },
-  { icon: "magic_button", label: "Thử đồ ảo AI" },
+  { icon: Calendar, label: "Đặt lịch nhanh chóng" },
+  { icon: Truck, label: "Theo dõi đơn hàng" },
+  { icon: Sparkles, label: "Thử đồ ảo AI" },
 ];
 
 function RegisterPageContent() {
@@ -362,7 +363,7 @@ function RegisterPageContent() {
             <ul className="flex flex-col space-y-4">
               {benefitItems.map((item) => (
                 <li key={item.label} className="flex items-center space-x-3 text-[#5a403c]">
-                  <span className="material-symbols-outlined text-[20px] text-antique">{item.icon}</span>
+                  <item.icon className="h-5 w-5 text-antique shrink-0" />
                   <span className="text-sm">{item.label}</span>
                 </li>
               ))}

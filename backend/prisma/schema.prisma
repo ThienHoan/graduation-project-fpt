@@ -338,19 +338,21 @@ model FinancialTransaction {
 }
 
 model InspectionSession {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  bookingId      String              @map("booking_id") @db.Uuid
-  garmentAssetId String              @map("garment_asset_id") @db.Uuid
-  status         InspectionStatus    @default(pending)
-  inspectedBy    String?             @map("inspected_by") @db.Uuid
-  note           String?
-  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  completedAt    DateTime?           @map("completed_at") @db.Timestamptz(6)
-  findings       InspectionFinding[]
-  photos         InspectionPhoto[]
-  booking        Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  garmentAsset   GarmentAsset        @relation(fields: [garmentAssetId], references: [id])
-  inspector      UserAccount?        @relation("InspectedBy", fields: [inspectedBy], references: [id])
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId            String              @map("booking_id") @db.Uuid
+  garmentAssetId       String              @map("garment_asset_id") @db.Uuid
+  status               InspectionStatus    @default(pending)
+  inspectedBy          String?             @map("inspected_by") @db.Uuid
+  note                 String?
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt          DateTime?           @map("completed_at") @db.Timestamptz(6)
+  aiComparisonResult   Json?               @map("ai_comparison_result")
+  aiComparedAt         DateTime?           @map("ai_compared_at") @db.Timestamptz(6)
+  findings             InspectionFinding[]
+  photos               InspectionPhoto[]
+  booking              Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  garmentAsset         GarmentAsset        @relation(fields: [garmentAssetId], references: [id])
+  inspector            UserAccount?        @relation("InspectedBy", fields: [inspectedBy], references: [id])
 
   @@map("inspection_sessions")
 }
@@ -373,7 +375,9 @@ model InspectionPhoto {
   id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   inspectionSessionId String            @map("inspection_session_id") @db.Uuid
   imageUrl            String            @map("image_url")
+  photoType           String            @default("after") @map("photo_type")
   note                String?
+  aiAnalysis          Json?             @map("ai_analysis")
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   inspectionSession   InspectionSession @relation(fields: [inspectionSessionId], references: [id], onDelete: Cascade)
 

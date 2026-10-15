@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import sharp from "sharp";
 
 type AppRole = "customer" | "staff" | "manager_owner" | "admin";
 type UploadPurpose = "catalog" | "accessories" | "reviews" | "handover" | "refund-proof";
@@ -155,10 +156,28 @@ export async function POST(req: NextRequest) {
     }
     if (!(await hasValidSignature(file, contentType))) return errorResponse("File content does not match its type", 400);
 
-    const objectPath = `${purpose}/${identity.id}/${randomUUID()}.${extensionFor(contentType)}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const { error: uploadError } = await getSupabaseAdmin().storage.from(policy.bucket).upload(objectPath, buffer, {
-      contentType,
+    let uploadBuffer = Buffer.from(await file.arrayBuffer());
+    let uploadContentType = contentType;
+    let extension = extensionFor(contentType);
+
+    if (isImage) {
+      try {
+        // Tự động tối ưu hoá: Chuyển đổi sang WebP chất lượng 82%, giới hạn tối đa 2048px
+        uploadBuffer = await sharp(uploadBuffer)
+          .rotate()
+          .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 82, effort: 4 })
+          .toBuffer();
+        uploadContentType = "image/webp";
+        extension = "webp";
+      } catch (sharpError) {
+        console.warn("Sharp image conversion fallback to original buffer:", sharpError);
+      }
+    }
+
+    const objectPath = `${purpose}/${identity.id}/${randomUUID()}.${extension}`;
+    const { error: uploadError } = await getSupabaseAdmin().storage.from(policy.bucket).upload(objectPath, uploadBuffer, {
+      contentType: uploadContentType,
       upsert: false,
     });
     if (uploadError) {

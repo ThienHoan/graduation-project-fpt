@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { apiRequest } from "@/lib/api";
+import { User, ChevronDown, Ruler, Check, BookOpen, Info } from "lucide-react";
 
 type CustomerMeasurement = {
   id: string;
@@ -286,7 +287,7 @@ export default function CustomerMeasurementsPage() {
                 {/* Standard Size */}
                 <div>
                   <h3 className="mb-6 flex items-center gap-2 text-xl font-semibold" style={{ color: "#261816", fontFamily: "EB Garamond, serif" }}>
-                    <span className="material-symbols-outlined" style={{ color: "#C5A059" }}>accessibility_new</span>
+                    <User className="h-5 w-5" style={{ color: "#C5A059" }} />
                     Size tiêu chuẩn
                   </h3>
                   <div className="w-full sm:w-1/2">
@@ -314,8 +315,8 @@ export default function CustomerMeasurementsPage() {
                         ))}
                         <option value={UNKNOWN_SIZE_VALUE}>Không biết / Không chắc</option>
                       </select>
-                      <span className="material-symbols-outlined pointer-events-none absolute right-0 top-2 text-[20px]"
-                        style={{ color: "#8e706b" }}>expand_more</span>
+                      <ChevronDown className="pointer-events-none absolute right-0 top-3 h-4 w-4"
+                        style={{ color: "#8e706b" }} />
                     </div>
                     <p className="mt-2 text-xs italic leading-relaxed" style={{ color: "#8e706b" }}>
                       Nếu không chắc size, bạn có thể bỏ qua. Atelier sẽ dựa trên số đo cơ thể để tư vấn.
@@ -328,7 +329,7 @@ export default function CustomerMeasurementsPage() {
                 {/* Core Measurements */}
                 <div>
                   <h3 className="mb-6 flex items-center gap-2 text-xl font-semibold" style={{ color: "#261816", fontFamily: "EB Garamond, serif" }}>
-                    <span className="material-symbols-outlined" style={{ color: "#C5A059" }}>straighten</span>
+                    <Ruler className="h-5 w-5" style={{ color: "#C5A059" }} />
                     Số đo cơ bản
                   </h3>
                   <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
@@ -373,7 +374,7 @@ export default function CustomerMeasurementsPage() {
                     style={{ backgroundColor: "#8B0000" }}
                   >
                     {saving ? "Đang lưu..." : hasExisting ? "Cập nhật số đo" : "Lưu số đo"}
-                    {!saving && <span className="material-symbols-outlined text-[18px]">check</span>}
+                    {!saving && <Check className="h-4 w-4" />}
                   </button>
                 </div>
               </form>
@@ -384,7 +385,7 @@ export default function CustomerMeasurementsPage() {
         {/* Right: Artisan's Guide (4 cols) */}
         <div className="lg:col-span-4">
           <div className="sticky top-8 rounded-xl border p-8" style={{ backgroundColor: "#ffe9e6", borderColor: "#e3beb8" }}>
-            <span className="material-symbols-outlined text-[32px] mb-3 block" style={{ color: "#8B0000" }}>menu_book</span>
+            <BookOpen className="h-8 w-8 mb-3 block" style={{ color: "#8B0000" }} />
             <h3 className="mb-2 text-2xl font-semibold" style={{ color: "#261816", fontFamily: "EB Garamond, serif" }}>
               Hướng dẫn đo
             </h3>
@@ -459,7 +460,7 @@ export default function CustomerMeasurementsPage() {
 
             <div className="mt-8 border-t pt-5" style={{ borderColor: "#e3beb8" }}>
               <p className="flex items-center gap-2 text-sm italic" style={{ color: "#4F797B" }}>
-                <span className="material-symbols-outlined text-[16px]">info</span>
+                <Info className="h-4 w-4 shrink-0" />
                 Cần hỗ trợ? Đặt lịch với chuyên gia đo lường của chúng tôi.
               </p>
             </div>

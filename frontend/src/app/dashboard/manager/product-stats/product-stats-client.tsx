@@ -10,7 +10,29 @@ import {
   type ProductStatsResponse,
 } from "@/lib/api";
 
-const formatVND = (n: number) => `${Math.round(n).toLocaleString("vi-VN")}đ`;
+import {
+  Shirt,
+  Tag,
+  Megaphone,
+  Archive,
+  ShoppingBag,
+  ClipboardCheck,
+  Banknote,
+  CalendarCheck,
+  CalendarX,
+  Eye,
+  Sparkles,
+  Flame,
+  TrendingDown,
+  ArrowRight,
+  ArrowDown,
+  ArrowUp,
+  AlertCircle,
+  type LucideIcon,
+} from "lucide-react";
+
+const formatVND = (n: number) =>
+  `${new Intl.NumberFormat("vi-VN").format(Math.round(Number(n) || 0))} ₫`;
 const pct = (n: number | null) => (n == null ? "—" : `${(n * 100).toFixed(n < 0.1 && n > 0 ? 1 : 0)}%`);
 
 const CLASS_META: Record<ProductStat["classification"], { label: string; cls: string }> = {
@@ -20,12 +42,12 @@ const CLASS_META: Record<ProductStat["classification"], { label: string; cls: st
   NEW: { label: "Mới", cls: "bg-sky-50 text-sky-700" },
 };
 
-const REC_ICON: Record<string, string> = {
-  discount: "sell",
-  promote: "campaign",
-  discontinue_review: "inventory",
-  reduce_stock: "remove_shopping_cart",
-  quality_check: "fact_check",
+const REC_ICON: Record<string, LucideIcon> = {
+  discount: Tag,
+  promote: Megaphone,
+  discontinue_review: Archive,
+  reduce_stock: ShoppingBag,
+  quality_check: ClipboardCheck,
 };
 
 const inputClass =
@@ -34,13 +56,13 @@ const inputClass =
 type SortKey = "revenue" | "rentCount" | "occupancyRate" | "cancelRate" | "availableDays" | "views" | "tryons" | "avgRating";
 
 const COLUMNS: Array<{ key: SortKey; label: string; render: (s: ProductStat) => string }> = [
-  { key: "rentCount", label: "Lượt thuê", render: (s) => String(s.rentCount) },
+  { key: "rentCount", label: "Lượt thuê", render: (s) => (s.rentCount ?? 0).toLocaleString("vi-VN") },
   { key: "revenue", label: "Doanh thu", render: (s) => formatVND(s.revenue) },
   { key: "occupancyRate", label: "Tỷ lệ được đặt", render: (s) => pct(s.occupancyRate) },
   { key: "cancelRate", label: "Tỷ lệ huỷ", render: (s) => pct(s.cancelRate) },
-  { key: "availableDays", label: "Ngày còn trống", render: (s) => `${s.availableDays}` },
-  { key: "views", label: "Lượt xem", render: (s) => String(s.views) },
-  { key: "tryons", label: "Thử AI", render: (s) => String(s.tryons) },
+  { key: "availableDays", label: "Ngày còn trống", render: (s) => (s.availableDays ?? 0).toLocaleString("vi-VN") },
+  { key: "views", label: "Lượt xem", render: (s) => (s.views ?? 0).toLocaleString("vi-VN") },
+  { key: "tryons", label: "Thử AI", render: (s) => (s.tryons ?? 0).toLocaleString("vi-VN") },
   { key: "avgRating", label: "Đánh giá", render: (s) => (s.avgRating != null ? `${s.avgRating.toFixed(1)}★ (${s.reviewCount})` : "—") },
 ];
 
@@ -55,7 +77,7 @@ function Thumb({ s }: { s: ProductStat }) {
     <img src={s.imageUrl} alt="" className="h-12 w-10 shrink-0 rounded object-cover" />
   ) : (
     <div className="flex h-12 w-10 shrink-0 items-center justify-center rounded bg-lotus/10">
-      <span className="material-symbols-outlined text-antique/60">checkroom</span>
+      <Shirt className="h-5 w-5 text-antique/60" />
     </div>
   );
 }
@@ -156,30 +178,33 @@ export function ProductStatsClient() {
           {/* KPI */}
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { label: "Tổng lượt thuê", value: data.summary.totalRentals.toLocaleString("vi-VN"), icon: "shopping_bag" },
-              { label: "Doanh thu thuê", value: formatVND(data.summary.totalRevenue), icon: "payments" },
-              { label: "Tỷ lệ được đặt TB", value: pct(data.summary.avgOccupancyRate), icon: "event_available" },
-              { label: "Tỷ lệ huỷ", value: pct(data.summary.cancelRate), icon: "event_busy" },
-              { label: "Lượt xem", value: data.summary.totalViews.toLocaleString("vi-VN"), icon: "visibility" },
-              { label: "Lượt thử AI", value: data.summary.totalTryons.toLocaleString("vi-VN"), icon: "auto_awesome" },
-              { label: "Sản phẩm HOT", value: String(data.summary.hotCount), icon: "local_fire_department" },
-              { label: "Ít được thuê", value: String(data.summary.lowDemandCount), icon: "trending_down" },
-            ].map((k) => (
-              <div key={k.label} className="rounded-xl border border-sand bg-white p-4">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
-                  <span className="material-symbols-outlined text-[18px] text-antique">{k.icon}</span>
-                  {k.label}
+              { label: "Tổng lượt thuê", value: (data.summary.totalRentals ?? 0).toLocaleString("vi-VN"), icon: ShoppingBag },
+              { label: "Doanh thu thuê", value: formatVND(data.summary.totalRevenue), icon: Banknote },
+              { label: "Tỷ lệ được đặt TB", value: pct(data.summary.avgOccupancyRate), icon: CalendarCheck },
+              { label: "Tỷ lệ huỷ", value: pct(data.summary.cancelRate), icon: CalendarX },
+              { label: "Lượt xem", value: (data.summary.totalViews ?? 0).toLocaleString("vi-VN"), icon: Eye },
+              { label: "Lượt thử AI", value: (data.summary.totalTryons ?? 0).toLocaleString("vi-VN"), icon: Sparkles },
+              { label: "Sản phẩm HOT", value: (data.summary.hotCount ?? 0).toLocaleString("vi-VN"), icon: Flame },
+              { label: "Ít được thuê", value: (data.summary.lowDemandCount ?? 0).toLocaleString("vi-VN"), icon: TrendingDown },
+            ].map((k) => {
+              const Icon = k.icon;
+              return (
+                <div key={k.label} className="rounded-xl border border-sand bg-white p-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+                    <Icon className="h-4 w-4 text-antique" />
+                    {k.label}
+                  </div>
+                  <p className="mt-2 font-sans font-bold text-2xl sm:text-3xl tracking-tight text-ink tabular-nums">{k.value}</p>
                 </div>
-                <p className="mt-2 font-display text-3xl text-ink">{k.value}</p>
-              </div>
-            ))}
+              );
+            })}
           </section>
 
           <div className="grid gap-6 xl:grid-cols-2">
             {/* HOT */}
             <section className="rounded-xl border border-sand bg-white p-5">
               <h2 className="mb-1 flex items-center gap-2 font-display text-2xl text-ink">
-                <span className="material-symbols-outlined text-lotus">local_fire_department</span>
+                <Flame className="h-6 w-6 text-lotus" />
                 Sản phẩm HOT
               </h2>
               <p className="mb-4 text-xs text-stone-500">
@@ -191,20 +216,20 @@ export function ProductStatsClient() {
                   const value = filters.sortBy === "revenue" ? s.revenue : s.rentCount;
                   return (
                     <li key={s.garmentId} className="flex items-center gap-3">
-                      <span className="w-6 text-right font-display text-lg text-antique">{s.hotRank}</span>
+                      <span className="w-6 text-right font-sans font-bold text-base text-antique tabular-nums">{s.hotRank}</span>
                       <Thumb s={s} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <p className="truncate text-sm font-medium text-ink">{s.name}</p>
-                          <p className="shrink-0 text-sm font-semibold text-lotus">
-                            {filters.sortBy === "revenue" ? formatVND(s.revenue) : `${s.rentCount} lượt`}
+                          <p className="shrink-0 text-sm font-sans font-bold text-lotus tabular-nums">
+                            {filters.sortBy === "revenue" ? formatVND(s.revenue) : `${(s.rentCount ?? 0).toLocaleString("vi-VN")} lượt`}
                           </p>
                         </div>
                         <div className="mt-1 h-1.5 rounded-full bg-sand/60">
                           <div className="h-1.5 rounded-full bg-lotus" style={{ width: `${(value / maxHotValue) * 100}%` }} />
                         </div>
-                        <p className="mt-1 text-xs text-stone-500">
-                          {s.rentCount} lượt · đặt {pct(s.occupancyRate)} · {s.views} xem · {s.tryons} thử AI
+                        <p className="mt-1 text-xs text-stone-500 tabular-nums">
+                          {(s.rentCount ?? 0).toLocaleString("vi-VN")} lượt · đặt {pct(s.occupancyRate)} · {(s.views ?? 0).toLocaleString("vi-VN")} xem · {(s.tryons ?? 0).toLocaleString("vi-VN")} thử AI
                           {s.avgRating != null ? ` · ${s.avgRating.toFixed(1)}★` : ""}
                         </p>
                       </div>
@@ -217,7 +242,7 @@ export function ProductStatsClient() {
             {/* LOW DEMAND */}
             <section className="rounded-xl border border-sand bg-white p-5">
               <h2 className="mb-1 flex items-center gap-2 font-display text-2xl text-ink">
-                <span className="material-symbols-outlined text-amber-600">trending_down</span>
+                <TrendingDown className="h-6 w-6 text-amber-600" />
                 Ít được thuê
               </h2>
               <p className="mb-4 text-xs text-stone-500">
@@ -231,24 +256,27 @@ export function ProductStatsClient() {
                       <Thumb s={s} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-ink">{s.name}</p>
-                        <p className="text-xs text-stone-500">
-                          {s.rentCount} lượt thuê · {s.views} xem · {s.tryons} thử AI · {s.availableDays} ngày-bản trống
+                        <p className="text-xs text-stone-500 tabular-nums">
+                          {(s.rentCount ?? 0).toLocaleString("vi-VN")} lượt thuê · {(s.views ?? 0).toLocaleString("vi-VN")} xem · {(s.tryons ?? 0).toLocaleString("vi-VN")} thử AI · {(s.availableDays ?? 0).toLocaleString("vi-VN")} ngày-bản trống
                           {s.lastRentedAt ? ` · thuê gần nhất ${new Date(s.lastRentedAt).toLocaleDateString("vi-VN")}` : " · chưa từng được thuê trong kỳ"}
                         </p>
                       </div>
                     </div>
                     <ul className="mt-2 space-y-1">
-                      {s.recommendations.map((r) => (
-                        <li key={r.action} className="flex items-start gap-2 text-xs text-stone-700">
-                          <span className="material-symbols-outlined text-[16px] text-amber-700">{REC_ICON[r.action]}</span>
-                          <span>{r.message}</span>
-                        </li>
-                      ))}
+                      {s.recommendations.map((r) => {
+                        const RecIcon = REC_ICON[r.action] ?? AlertCircle;
+                        return (
+                          <li key={r.action} className="flex items-start gap-2 text-xs text-stone-700">
+                            <RecIcon className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                            <span>{r.message}</span>
+                          </li>
+                        );
+                      })}
                     </ul>
                     {s.recommendations.some((r) => r.action === "discount") && (
-                      <Link href="/dashboard/manager/pricing" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-lotus hover:underline">
+                      <Link href="/dashboard/manager/pricing" className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-lotus hover:underline">
                         Tạo luật giảm giá
-                        <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
                       </Link>
                     )}
                   </li>
@@ -289,7 +317,11 @@ export function ProductStatsClient() {
                         >
                           {c.label}
                           {tableSort.key === c.key && (
-                            <span className="material-symbols-outlined text-[14px]">{tableSort.dir === -1 ? "arrow_downward" : "arrow_upward"}</span>
+                            tableSort.dir === -1 ? (
+                              <ArrowDown className="h-3.5 w-3.5 text-lotus" />
+                            ) : (
+                              <ArrowUp className="h-3.5 w-3.5 text-lotus" />
+                            )
                           )}
                         </button>
                       </th>
@@ -311,13 +343,13 @@ export function ProductStatsClient() {
                         </div>
                       </td>
                       <td className="px-4 py-2">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${CLASS_META[s.classification].cls}`}>
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${CLASS_META[s.classification].cls}`}>
                           {CLASS_META[s.classification].label}
                           {s.hotRank ? ` #${s.hotRank}` : ""}
                         </span>
                       </td>
                       {COLUMNS.map((c) => (
-                        <td key={c.key} className="px-3 py-2 text-right tabular-nums text-stone-700">{c.render(s)}</td>
+                        <td key={c.key} className="px-3 py-2 text-right font-sans font-medium tabular-nums text-stone-700">{c.render(s)}</td>
                       ))}
                     </tr>
                   ))}

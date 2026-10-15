@@ -98,6 +98,8 @@ export type GarmentSummary = {
   color: string | null;
   dailyPrice: number;
   depositAmount: number;
+  isActive?: boolean;
+  deletedAt?: string | null;
   images?: GarmentImage[];
 };
 
@@ -154,8 +156,9 @@ export async function getGarmentsGrouped(search?: string, category?: string) {
   return apiRequest<GarmentGrouped[]>(`/garments/grouped${query}`);
 }
 
-export async function getGarments() {
-  return apiRequest<GarmentSummary[]>("/garments");
+export async function getGarments(includeDeleted = false) {
+  const query = includeDeleted ? "?includeDeleted=true" : "";
+  return apiRequest<GarmentSummary[]>(`/garments${query}`);
 }
 
 export async function getGarmentById(id: string) {
@@ -627,8 +630,30 @@ export type InspectionFindingResponse = {
 export type InspectionPhotoResponse = {
   id: string;
   imageUrl: string;
+  photoType?: string;
   note: string | null;
+  aiAnalysis?: any;
   createdAt: string;
+};
+
+export type AiInspectionFindingSuggestion = {
+  findingType: string;
+  severity: "low" | "medium" | "high" | "severe";
+  description: string;
+  suggestedPenalty: number;
+};
+
+export type AiInspectionComparisonResult = {
+  overallCondition: "excellent" | "good" | "minor_damage" | "major_damage" | "severely_damaged";
+  conditionScore: number;
+  summary: string;
+  recommendedAction: "laundry" | "maintenance" | "damaged";
+  actionReason: string;
+  detectedIssues: AiInspectionFindingSuggestion[];
+  totalSuggestedPenalty: number;
+  confidence: number;
+  beforePhotosAnalyzed: number;
+  afterPhotosAnalyzed: number;
 };
 
 export type InspectionSessionResponse = {
@@ -637,6 +662,10 @@ export type InspectionSessionResponse = {
   garmentAssetId: string;
   status: string;
   note: string | null;
+  aiComparisonResult?: AiInspectionComparisonResult | null;
+  aiComparedAt?: string | null;
+  handoverImages?: string[];
+  conditionBeforeRental?: string | null;
   createdAt: string;
   completedAt: string | null;
   inspector: {
@@ -653,6 +682,10 @@ export type InspectionSessionResponse = {
 
 export async function getBookingInspections(bookingId: string) {
   return apiRequest<InspectionSessionResponse[]>(`/inspections/booking/${bookingId}`);
+}
+
+export async function getCustomerBookingInspections(bookingId: string) {
+  return apiRequest<InspectionSessionResponse[]>(`/inspections/customer/booking/${bookingId}`);
 }
 
 export async function createInspectionSession(payload: {
@@ -681,16 +714,63 @@ export async function addInspectionFinding(
   });
 }
 
+export async function deleteInspectionFinding(
+  sessionId: string,
+  findingId: string,
+) {
+  return apiRequest<{ message: string; findingId: string }>(
+    `/inspections/${sessionId}/findings/${findingId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export async function addInspectionPhoto(
   sessionId: string,
   payload: {
     imageUrl: string;
+    photoType?: string;
     note?: string;
   },
 ) {
   return apiRequest<InspectionPhotoResponse>(`/inspections/${sessionId}/photos`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteInspectionPhoto(
+  sessionId: string,
+  photoId: string,
+) {
+  return apiRequest<{ message: string; photoId: string }>(
+    `/inspections/${sessionId}/photos/${photoId}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export async function compareInspectionSessionWithAi(
+  sessionId: string,
+  payload?: { afterImageUrls?: string[] },
+) {
+  return apiRequest<{
+    aiComparisonResult: AiInspectionComparisonResult;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-compare`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function applyAiInspectionFindings(sessionId: string) {
+  return apiRequest<{
+    appliedCount: number;
+    session: InspectionSessionResponse;
+  }>(`/inspections/${sessionId}/ai-apply-findings`, {
+    method: "POST",
   });
 }
 
@@ -1152,6 +1232,18 @@ export async function getAssetsNeedingProcessing() {
   return apiRequest<AssetNeedingProcessing[]>("/inspections/assets/needing-processing");
 }
 
+/**
+ * Hoàn tất kiểm tra đơn thủ công — dùng khi tất cả trang phục + phụ kiện
+ * đã kiểm tra xong nhưng đơn vẫn kẹt ở inspection_pending.
+ */
+export async function finalizeBookingInspection(bookingId: string) {
+  return apiRequest<{ finalized: boolean; status: string }>(
+    `/inspections/booking/${bookingId}/finalize`,
+    { method: "POST" },
+  );
+}
+
+
 // ---------- Asset management types (extended) ----------
 
 export type AssetDetail = {
@@ -1411,6 +1503,12 @@ export async function updateGarment(id: string, payload: {
 export async function deleteGarment(id: string) {
   return apiRequest<{ id: string; deleted: boolean }>(`/garments/${id}`, {
     method: "DELETE",
+  });
+}
+
+export async function restoreGarment(id: string) {
+  return apiRequest<{ id: string; restored: boolean }>(`/garments/${id}/restore`, {
+    method: "PATCH",
   });
 }
 

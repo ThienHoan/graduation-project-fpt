@@ -12,6 +12,8 @@ import {
   type VoucherPayload,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
+import { Plus, PauseCircle, PlayCircle, Pencil, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
+import { Pagination } from "@/components/common/pagination";
 
 const STATUS_META: Record<Voucher["status"], { label: string; cls: string }> = {
   active: { label: "Đang chạy", cls: "bg-jade/10 text-jade" },
@@ -98,6 +100,12 @@ export function VouchersManagerClient() {
   const [saving, setSaving] = useState(false);
   const [toDelete, setToDelete] = useState<Voucher | null>(null);
   const [toast, setToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, status]);
 
   const show = useCallback((kind: "success" | "error", message: string) => {
     setToast({ kind, message });
@@ -162,6 +170,8 @@ export function VouchersManagerClient() {
     load();
   }
 
+  const paginatedItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -193,7 +203,7 @@ export function VouchersManagerClient() {
           onClick={() => { setEditing(null); setForm(emptyForm()); setFormOpen(true); }}
           className="inline-flex items-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-sm font-semibold text-white hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Plus className="h-4 w-4" />
           Tạo voucher
         </button>
       </div>
@@ -214,7 +224,7 @@ export function VouchersManagerClient() {
           <tbody className="divide-y divide-sand">
             {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400">Đang tải...</td></tr>}
             {!loading && items.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-stone-400">Chưa có voucher nào.</td></tr>}
-            {items.map((v) => (
+            {paginatedItems.map((v) => (
               <tr key={v.id}>
                 <td className="px-4 py-3">
                   <p className="font-mono font-semibold text-lotus">{v.code}</p>
@@ -243,20 +253,28 @@ export function VouchersManagerClient() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_META[v.status].cls}`}>{STATUS_META[v.status].label}</span>
                 </td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
-                  <button type="button" onClick={() => quickToggle(v)} className="mr-2 text-stone-500 hover:text-lotus" title={v.isActive ? "Tạm tắt" : "Bật lại"}>
-                    <span className="material-symbols-outlined text-[20px]">{v.isActive ? "pause_circle" : "play_circle"}</span>
+                  <button type="button" onClick={() => quickToggle(v)} className="mr-2 text-stone-500 hover:text-lotus inline-flex items-center" title={v.isActive ? "Tạm tắt" : "Bật lại"}>
+                    {v.isActive ? <PauseCircle className="h-5 w-5" /> : <PlayCircle className="h-5 w-5" />}
                   </button>
-                  <button type="button" onClick={() => { setEditing(v); setForm(fromVoucher(v)); setFormOpen(true); }} className="mr-2 text-stone-500 hover:text-lotus" title="Sửa">
-                    <span className="material-symbols-outlined text-[20px]">edit</span>
+                  <button type="button" onClick={() => { setEditing(v); setForm(fromVoucher(v)); setFormOpen(true); }} className="mr-2 text-stone-500 hover:text-lotus inline-flex items-center" title="Sửa">
+                    <Pencil className="h-5 w-5" />
                   </button>
-                  <button type="button" onClick={() => setToDelete(v)} className="text-stone-500 hover:text-red-600" title="Xoá">
-                    <span className="material-symbols-outlined text-[20px]">delete</span>
+                  <button type="button" onClick={() => setToDelete(v)} className="text-stone-500 hover:text-red-600 inline-flex items-center" title="Xoá">
+                    <Trash2 className="h-5 w-5" />
                   </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+
+        <Pagination
+          currentPage={page}
+          totalItems={items.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          itemLabel="mã voucher"
+        />
       </section>
 
       {formOpen && (
@@ -357,8 +375,8 @@ export function VouchersManagerClient() {
       />
 
       {toast && (
-        <div className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold shadow-lg ${toast.kind === "success" ? "border-jade/30 bg-jade/5 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
-          <span className="material-symbols-outlined text-[20px]">{toast.kind === "success" ? "check_circle" : "error"}</span>
+        <div className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg ${toast.kind === "success" ? "border-jade/30 bg-jade/5 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
+          {toast.kind === "success" ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
           {toast.message}
         </div>
       )}

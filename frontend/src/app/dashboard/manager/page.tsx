@@ -4,6 +4,44 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { uploadFile, deleteUploadedFile } from "@/lib/upload";
 import { useRouter } from "next/navigation";
 import { ManagerPortalShell, ConfirmModal } from "@/components/heritage/ui";
+import { Pagination } from "@/components/common/pagination";
+import {
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  Sparkles,
+  Shirt,
+  Plus,
+  X,
+  Search,
+  Pencil,
+  Trash2,
+  Images,
+  TrendingUp,
+  TrendingDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  ArrowRight,
+  Upload,
+  MessageSquare,
+  Ban,
+  ArrowLeftRight,
+  ClipboardCheck,
+  Waves,
+  Wrench,
+  Banknote,
+  Wallet,
+  RotateCcw,
+  EyeOff,
+  Receipt,
+  Calendar,
+  PieChart,
+  Package,
+  BarChart3,
+  type LucideIcon,
+} from "lucide-react";
+
 import { useAuth } from "@/components/auth/auth-provider";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
@@ -32,6 +70,7 @@ import {
   createGarment,
   updateGarment,
   deleteGarment,
+  restoreGarment,
   addGarmentImage,
   removeGarmentImage,
   getGarmentCategories,
@@ -86,19 +125,59 @@ function formatDate(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+function formatDateTime(iso: string | undefined) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${hours}:${minutes} · ${day}/${month}/${year}`;
+  } catch {
+    return iso;
+  }
+}
+
+function getOrderRecency(iso: string | undefined) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const time = d.getTime();
+  if (isNaN(time)) return null;
+  const now = Date.now();
+  const diffMs = now - time;
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Đơn mới nếu tạo trong vòng 24 giờ
+  const isNew = diffHours >= 0 && diffHours < 24;
+
+  let label = "";
+  if (diffMinutes < 1) label = "Vừa xong";
+  else if (diffMinutes < 60) label = `${diffMinutes} phút trước`;
+  else if (diffHours < 24) label = `${Math.floor(diffHours)} giờ trước`;
+  else {
+    const days = Math.floor(diffHours / 24);
+    label = `${days} ngày trước`;
+  }
+  return { isNew, label, diffHours, diffMinutes };
+}
+
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", {
-    style: "currency",
-    currency: "VND",
-  }).format(amount);
+  const rounded = Math.round(Number(amount) || 0);
+  return `${new Intl.NumberFormat("vi-VN").format(rounded)} ₫`;
 }
 
 function formatCompactVND(amount: number) {
-  if (amount >= 1_000_000) {
-    return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(amount / 1_000_000)}tr`;
+  const val = Number(amount) || 0;
+  if (val >= 1_000_000) {
+    const formatted = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(val / 1_000_000);
+    return `${formatted} tr`;
   }
-  if (amount >= 1_000) return `${Math.round(amount / 1_000)}k`;
-  return String(amount);
+  if (val >= 1_000) return `${Math.round(val / 1_000)} k`;
+  return String(val);
 }
 
 const ASSET_STATUS_META: Record<string, { label: string; color: string }> = {
@@ -232,8 +311,8 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
     subtitle: "Quản lý hàng chờ giặt sấy và điều phối.",
   },
   damaged: {
-    title: "Hư Hỏng & Mất",
-    subtitle: "Báo cáo tài sản hư hỏng, mất và bảo trì.",
+    title: "Hư Hỏng & Bảo Trì",
+    subtitle: "Báo cáo tài sản hư hỏng, mất và điều phối sửa chữa.",
   },
   "rejected-handovers": {
     title: "Từ Chối Bàn Giao",
@@ -430,7 +509,7 @@ export default function ManagerDashboardPage() {
       getStaffCompletedRefundBookings().then((res) => {
         if (res.success && res.data) setCompletedRefundBookings(res.data);
       }),
-      getGarments().then((res) => {
+      getGarments(true).then((res) => {
         if (res.success && res.data) setGarments(res.data);
       }),
       getAllAssets().then((res) => {
@@ -450,7 +529,7 @@ export default function ManagerDashboardPage() {
   }, []);
 
   function refreshGarments() {
-    return getGarments().then((res) => {
+    return getGarments(true).then((res) => {
       if (res.success && res.data) setGarments(res.data);
     });
   }
@@ -562,10 +641,22 @@ export default function ManagerDashboardPage() {
     const res = await deleteGarment(id);
     if (res.success) {
       await refreshGarments();
-      if (selectedGarmentId === id) setSelectedGarmentId(null);
+      showToast("success", "Đã xóa mềm trang phục thành công (trang phục chuyển sang danh mục Đã ẩn).");
       setGarmentToDeleteId(null);
     } else {
       setErrorMsg(res.message ?? "Không thể xoá trang phục.");
+    }
+    setSubmitting(false);
+  }
+
+  async function handleRestoreGarment(id: string) {
+    setSubmitting(true);
+    const res = await restoreGarment(id);
+    if (res.success) {
+      await refreshGarments();
+      showToast("success", "Đã khôi phục trang phục thành công.");
+    } else {
+      setErrorMsg(res.message ?? "Không thể khôi phục trang phục.");
     }
     setSubmitting(false);
   }
@@ -631,7 +722,7 @@ export default function ManagerDashboardPage() {
 
   // ── Load garments ──
   useEffect(() => {
-    getGarments().then((res) => {
+    getGarments(true).then((res) => {
       if (res.success && res.data) {
         setGarments(res.data);
         if (res.data.length > 0 && !selectedGarmentId) {
@@ -1251,6 +1342,7 @@ export default function ManagerDashboardPage() {
           onCloseAssetModal={() => setAssetModalOpen(false)}
           onSubmitAsset={handleCreateAsset}
           onDeleteGarment={setGarmentToDeleteId}
+          onRestoreGarment={handleRestoreGarment}
           onCategoryCreated={(cat) => setCategories((prev) => [...prev, cat])}
           onSizeCreated={(label) =>
             setSizes((prev) =>
@@ -1432,9 +1524,7 @@ export default function ManagerDashboardPage() {
                 : "border-red-200 bg-white text-red-700")
             }
           >
-            <span className="material-symbols-outlined text-xl">
-              {toast.type === "success" ? "check_circle" : "error"}
-            </span>
+            {toast.type === "success" ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
             <p className="flex-1 text-sm font-medium">{toast.message}</p>
             <button
               type="button"
@@ -1442,9 +1532,7 @@ export default function ManagerDashboardPage() {
               className="text-stone-400 transition hover:text-stone-600"
               aria-label="Đóng thông báo"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                close
-              </span>
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -1509,9 +1597,7 @@ function UnassignedAssetRow({
           className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
           onClick={onOpen}
         >
-          <span className="material-symbols-outlined mr-1 align-middle text-[16px]">
-            add
-          </span>
+          <Plus className="mr-1 inline h-4 w-4 align-middle" />
           Gán tài sản
         </button>
       ) : state.loading ? (
@@ -1571,7 +1657,7 @@ function UnassignedAssetRow({
       </div>
       {error && (
         <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium leading-5 text-red-700">
-          <span className="material-symbols-outlined text-[15px]">error</span>
+          <AlertCircle className="h-4 w-4 shrink-0" />
           {error}
         </p>
       )}
@@ -1620,194 +1706,426 @@ function AssetsAssignTab({
     itemKey: string,
   ) => void;
 }) {
+  // Sắp xếp đơn mới nhất lên đầu tiên theo createdAt
+  const sortedBookings = useMemo(() => {
+    return [...bookingsNeedingAssets].sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [bookingsNeedingAssets]);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [onlyNewFilter, setOnlyNewFilter] = useState(false);
+
+  const newOrdersCount = useMemo(() => {
+    return sortedBookings.filter((b) => getOrderRecency(b.createdAt)?.isNew).length;
+  }, [sortedBookings]);
+
+  const filteredBookings = useMemo(() => {
+    return sortedBookings.filter((b) => {
+      if (onlyNewFilter) {
+        const rec = getOrderRecency(b.createdAt);
+        if (!rec?.isNew) return false;
+      }
+      if (!searchTerm.trim()) return true;
+      const q = searchTerm.trim().toLowerCase();
+      const code = b.id.toLowerCase();
+      const name = (b.customerName ?? "").toLowerCase();
+      const phone = (b.customerPhone ?? "").toLowerCase();
+      return code.includes(q) || name.includes(q) || phone.includes(q);
+    });
+  }, [sortedBookings, onlyNewFilter, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBookings.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const pagedBookings = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredBookings.slice(start, start + pageSize);
+  }, [filteredBookings, safePage, pageSize]);
+
   return (
     <div className="space-y-6">
       {bookingsNeedingAssets.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined mb-4 block text-5xl text-stone-200">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Tất cả đơn đều đã được gán tài sản. Không có gì cần xử lý.
         </div>
       ) : (
-        bookingsNeedingAssets.map((booking) => {
-          const s = STATUS_LABELS[booking.status] ?? {
-            label: booking.status,
-            color: "bg-stone-100 text-stone-600",
-          };
-          const unassignedItems = booking.items.filter(
-            (item) => !item.garmentAssetId,
-          );
-          const unassignedAccessories = (booking.accessories ?? []).filter(
-            (acc) => !acc.accessoryAssetId,
-          );
-          const totalUnassigned =
-            unassignedItems.length + unassignedAccessories.length;
-          return (
-            <div key={booking.id}>
-              {successAssignId === booking.id && (
-                <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
-                  <span className="material-symbols-outlined text-[18px]">
-                    check_circle
+        <>
+          {/* Thanh công cụ: Tìm kiếm, lọc đơn mới & Chọn kích thước trang */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white p-4 shadow-2xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-ink text-sm">
+                {filteredBookings.length} đơn cần gán tài sản
+              </span>
+              {newOrdersCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnlyNewFilter((prev) => !prev);
+                    setPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition ${
+                    onlyNewFilter
+                      ? "bg-emerald-600 text-white shadow-2xs"
+                      : "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                  }`}
+                  title={onlyNewFilter ? "Bấm để xem tất cả đơn" : "Bấm để chỉ lọc đơn mới trong 24h"}
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
                   </span>
-                  <span>{successAssignMsg}</span>
-                </div>
+                  {newOrdersCount} đơn mới (24h)
+                  {onlyNewFilter && " ✕"}
+                </button>
               )}
-              <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand bg-mist px-6 py-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-ink">
-                      #{booking.id.slice(0, 8).toUpperCase()}
-                    </span>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}
-                    >
-                      {s.label}
-                    </span>
-                  </div>
-                  <span className="text-xs text-stone-400">
-                    {booking.customerName ?? "—"} ·{" "}
-                    {formatDate(booking.rentalStartDate)} –{" "}
-                    {formatDate(booking.rentalEndDate)}
-                  </span>
-                </div>
-                <div className="space-y-3 px-6 py-4">
-                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                    <span className="material-symbols-outlined text-[16px]">
-                      warning
-                    </span>
-                    {totalUnassigned} món chưa gán tài sản
-                    {unassignedAccessories.length > 0 && (
-                      <span className="normal-case tracking-normal">
-                        ({unassignedItems.length} trang phục ·{" "}
-                        {unassignedAccessories.length} phụ kiện)
-                      </span>
-                    )}
-                  </p>
-                  {unassignedItems.map((item) => {
-                    const itemKey = `${booking.id}-${item.id}`;
-                    const state = assetAssignState[itemKey];
-                    return (
-                      <UnassignedAssetRow
-                        key={itemKey}
-                        title={
-                          <>
-                            {item.garmentName ?? "Trang phục"}
-                            {item.sizeLabel && (
-                              <span className="ml-1 text-stone-500">
-                                ({item.sizeLabel})
-                              </span>
-                            )}
-                          </>
-                        }
-                        subtitle={
-                          <>
-                            <span>
-                              {formatVND(item.dailyPrice)}/ngày
-                            </span>
-                            <span>
-                              Cọc: {formatVND(item.depositAmount)}
-                            </span>
-                          </>
-                        }
-                        itemKey={itemKey}
-                        state={state}
-                        actioning={assigningKey === itemKey}
-                        error={assignError[itemKey]}
-                        onOpen={() =>
-                          item.garmentSizeId &&
-                          onOpenPicker(
-                            itemKey,
-                            booking.id,
-                            item.garmentId,
-                            item.garmentSizeId,
-                          )
-                        }
-                        onAssign={() =>
-                          onAssign(booking.id, item.id, itemKey)
-                        }
-                        onClose={onClosePicker}
-                        onSelectChange={onSelectChange}
-                      />
-                    );
-                  })}
-                  {unassignedAccessories.length > 0 && (
-                    <div className="pt-1">
-                      <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                        <span className="material-symbols-outlined text-[16px]">
-                          diamond
-                        </span>
-                        Phụ kiện chưa gán tài sản
-                      </p>
-                      <p className="mt-1 text-[11px] leading-5 text-stone-500">
-                        Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
-                        khác trong đơn sẽ không hiện trong danh sách chọn —
-                        nếu hết asset trống, dòng đó sẽ báo "Hết tài sản khả
-                        dụng", cần nhập kho thêm.
-                      </p>
-                    </div>
-                  )}
-                  {unassignedAccessories.map((acc) => {
-                    const itemKey = `${booking.id}-acc-${acc.id}`;
-                    const state = assetAssignState[itemKey];
-                    const assignedInBooking = (booking.accessories ?? [])
-                      .map((a) => a.accessoryAssetId)
-                      .filter((id): id is string => Boolean(id));
-                    return (
-                      <UnassignedAssetRow
-                        key={itemKey}
-                        title={
-                          <>
-                            <span className="material-symbols-outlined mr-1 align-middle text-[16px] text-amber-600">
-                              diamond
-                            </span>
-                            {acc.accessoryName ?? "Phụ kiện"}
-                            {acc.quantity > 1 && (
-                              <span className="ml-1 text-stone-500">
-                                × {acc.quantity}
-                              </span>
-                            )}
-                          </>
-                        }
-                        subtitle={
-                          <>
-                            {acc.assetCode ? (
-                              <span>Mã: {acc.assetCode}</span>
-                            ) : (
-                              <span>Chưa gán asset</span>
-                            )}
-                            <span>
-                              {acc.isIncluded
-                                ? "Đi kèm miễn phí"
-                                : `Thuê kèm ${formatVND(acc.unitPrice)}/ngày`}
-                            </span>
-                          </>
-                        }
-                        itemKey={itemKey}
-                        state={state}
-                        actioning={assigningKey === itemKey}
-                        error={assignError[itemKey]}
-                        onOpen={() =>
-                          onOpenAccessoryPicker(
-                            itemKey,
-                            booking.id,
-                            acc.accessoryId,
-                            assignedInBooking,
-                          )
-                        }
-                        onAssign={() =>
-                          onAssignAccessory(booking.id, acc.id, itemKey)
-                        }
-                        onClose={onClosePicker}
-                        onSelectChange={onSelectChange}
-                      />
-                    );
-                  })}
-                </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Tìm kiếm */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã đơn, tên KH..."
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-sand pl-8 pr-3 text-xs outline-none focus:border-antique focus:ring-1 focus:ring-antique"
+                />
+              </div>
+
+              {/* Chọn số đơn mỗi trang */}
+              <div className="flex items-center gap-1.5 text-xs text-stone-500">
+                <span>Hiển thị:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-sand bg-white px-2 text-xs font-medium outline-none focus:border-antique"
+                >
+                  <option value={5}>5 đơn / trang</option>
+                  <option value={10}>10 đơn / trang</option>
+                  <option value={20}>20 đơn / trang</option>
+                </select>
               </div>
             </div>
-          );
-        })
+          </div>
+
+          {filteredBookings.length === 0 ? (
+            <div className="rounded-xl border border-sand bg-white p-12 text-center text-stone-400">
+              Không tìm thấy đơn nào phù hợp với bộ lọc.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pagedBookings.map((booking) => {
+                const s = STATUS_LABELS[booking.status] ?? {
+                  label: booking.status,
+                  color: "bg-stone-100 text-stone-600",
+                };
+                const unassignedItems = booking.items.filter(
+                  (item) => !item.garmentAssetId,
+                );
+                const unassignedAccessories = (booking.accessories ?? []).filter(
+                  (acc) => !acc.accessoryAssetId,
+                );
+                const totalUnassigned =
+                  unassignedItems.length + unassignedAccessories.length;
+                const recency = getOrderRecency(booking.createdAt);
+                const isNew = recency?.isNew;
+
+                return (
+                  <div key={booking.id}>
+                    {successAssignId === booking.id && (
+                      <div className="mb-2 flex items-center gap-2 rounded-lg border border-jade/30 bg-jade/5 p-4 text-sm text-jade">
+                        <CheckCircle2 className="h-4 w-4 text-jade" />
+                        <span>{successAssignMsg}</span>
+                      </div>
+                    )}
+                    <div
+                      className={`overflow-hidden rounded-xl border bg-white shadow-xs transition ${
+                        isNew
+                          ? "border-l-4 border-l-emerald-500 border-emerald-300 ring-1 ring-emerald-200/50"
+                          : "border-sand"
+                      }`}
+                    >
+                      <div
+                        className={`flex flex-wrap items-center justify-between gap-3 border-b px-6 py-3 ${
+                          isNew
+                            ? "border-emerald-200/70 bg-emerald-50/40"
+                            : "border-sand bg-mist"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <span className="font-sans font-bold tracking-tight text-ink">
+                            #{booking.id.slice(0, 8).toUpperCase()}
+                          </span>
+                          {isNew ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-100/90 px-2.5 py-0.5 text-xs font-bold text-emerald-800 shadow-2xs">
+                              <span className="relative flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                              </span>
+                              ĐƠN MỚI · {recency.label}
+                            </span>
+                          ) : recency ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-sand bg-stone-100 px-2.5 py-0.5 text-[11px] font-medium text-stone-600">
+                              <Clock className="h-3 w-3 text-stone-400" />
+                              {recency.label}
+                            </span>
+                          ) : null}
+                          <span
+                            className={`rounded-full px-3 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${s.color}`}
+                          >
+                            {s.label}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
+                          <span className="font-medium text-ink">
+                            {booking.customerName ?? "—"}
+                            {booking.customerPhone && (
+                              <span className="ml-1 text-stone-400 font-normal">
+                                ({booking.customerPhone})
+                              </span>
+                            )}
+                          </span>
+                          <span>·</span>
+                          <span>
+                            {formatDate(booking.rentalStartDate)} –{" "}
+                            {formatDate(booking.rentalEndDate)}
+                          </span>
+                          {booking.createdAt && (
+                            <>
+                              <span>·</span>
+                              <span className="text-stone-400" title={booking.createdAt}>
+                                Đặt lúc: {formatDateTime(booking.createdAt)}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-3 px-6 py-4">
+                        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                          <AlertTriangle className="h-4 w-4 text-amber-600" />
+                          {totalUnassigned} món chưa gán tài sản
+                          {unassignedAccessories.length > 0 && (
+                            <span className="normal-case tracking-normal">
+                              ({unassignedItems.length} trang phục ·{" "}
+                              {unassignedAccessories.length} phụ kiện)
+                            </span>
+                          )}
+                        </p>
+                        {unassignedItems.map((item) => {
+                          const itemKey = `${booking.id}-${item.id}`;
+                          const state = assetAssignState[itemKey];
+                          return (
+                            <UnassignedAssetRow
+                              key={itemKey}
+                              title={
+                                <>
+                                  {item.garmentName ?? "Trang phục"}
+                                  {item.sizeLabel && (
+                                    <span className="ml-1 text-stone-500">
+                                      ({item.sizeLabel})
+                                    </span>
+                                  )}
+                                </>
+                              }
+                              subtitle={
+                                <>
+                                  <span>
+                                    {formatVND(item.dailyPrice)}/ngày
+                                  </span>
+                                  <span>
+                                    Cọc: {formatVND(item.depositAmount)}
+                                  </span>
+                                </>
+                              }
+                              itemKey={itemKey}
+                              state={state}
+                              actioning={assigningKey === itemKey}
+                              error={assignError[itemKey]}
+                              onOpen={() =>
+                                item.garmentSizeId &&
+                                onOpenPicker(
+                                  itemKey,
+                                  booking.id,
+                                  item.garmentId,
+                                  item.garmentSizeId,
+                                )
+                              }
+                              onAssign={() =>
+                                onAssign(booking.id, item.id, itemKey)
+                              }
+                              onClose={onClosePicker}
+                              onSelectChange={onSelectChange}
+                            />
+                          );
+                        })}
+                        {unassignedAccessories.length > 0 && (
+                          <div className="pt-1">
+                            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                              <Sparkles className="h-4 w-4 text-antique" />
+                              Phụ kiện chưa gán tài sản
+                            </p>
+                            <p className="mt-1 text-[11px] leading-5 text-stone-500">
+                              Mỗi đơn vị cần 1 asset riêng. Asset đã gán cho dòng
+                              khác trong đơn sẽ không hiện trong danh sách chọn —
+                              nếu hết asset trống, dòng đó sẽ báo &quot;Hết tài sản khả
+                              dụng&quot;, cần nhập kho thêm.
+                            </p>
+                          </div>
+                        )}
+                        {unassignedAccessories.map((acc) => {
+                          const itemKey = `${booking.id}-acc-${acc.id}`;
+                          const state = assetAssignState[itemKey];
+                          const assignedInBooking = (booking.accessories ?? [])
+                            .map((a) => a.accessoryAssetId)
+                            .filter((id): id is string => Boolean(id));
+                          return (
+                            <UnassignedAssetRow
+                              key={itemKey}
+                              title={
+                                <>
+                                  <Sparkles className="mr-1 inline h-4 w-4 align-middle text-amber-600" />
+                                  {acc.accessoryName ?? "Phụ kiện"}
+                                  {acc.quantity > 1 && (
+                                    <span className="ml-1 text-stone-500">
+                                      × {acc.quantity}
+                                    </span>
+                                  )}
+                                </>
+                              }
+                              subtitle={
+                                <>
+                                  {acc.assetCode ? (
+                                    <span>Mã: {acc.assetCode}</span>
+                                  ) : (
+                                    <span>Chưa gán asset</span>
+                                  )}
+                                  <span>
+                                    {acc.isIncluded
+                                      ? "Đi kèm miễn phí"
+                                      : `Thuê kèm ${formatVND(acc.unitPrice)}/ngày`}
+                                  </span>
+                                </>
+                              }
+                              itemKey={itemKey}
+                              state={state}
+                              actioning={assigningKey === itemKey}
+                              error={assignError[itemKey]}
+                              onOpen={() =>
+                                onOpenAccessoryPicker(
+                                  itemKey,
+                                  booking.id,
+                                  acc.accessoryId,
+                                  assignedInBooking,
+                                )
+                              }
+                              onAssign={() =>
+                                onAssignAccessory(booking.id, acc.id, itemKey)
+                              }
+                              onClose={onClosePicker}
+                              onSelectChange={onSelectChange}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Phân trang dưới cùng */}
+          {totalPages > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white px-4 py-3 text-sm text-stone-600 shadow-2xs">
+              <span className="text-xs text-stone-500">
+                Hiển thị{" "}
+                <strong className="text-ink font-semibold">
+                  {(safePage - 1) * pageSize + 1}
+                </strong>{" "}
+                –{" "}
+                <strong className="text-ink font-semibold">
+                  {Math.min(safePage * pageSize, filteredBookings.length)}
+                </strong>{" "}
+                trong tổng số{" "}
+                <strong className="text-ink font-semibold">
+                  {filteredBookings.length}
+                </strong>{" "}
+                đơn
+              </span>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold hover:border-antique hover:text-lotus disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Trước
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                  if (
+                    totalPages > 7 &&
+                    p !== 1 &&
+                    p !== totalPages &&
+                    Math.abs(p - safePage) > 1
+                  ) {
+                    if (p === 2 || p === totalPages - 1) {
+                      return (
+                        <span key={p} className="px-1 text-stone-400 text-xs">
+                          ...
+                        </span>
+                      );
+                    }
+                    return null;
+                  }
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setPage(p)}
+                      className={`h-8 min-w-[32px] rounded-lg px-2 text-xs font-semibold transition ${
+                        safePage === p
+                          ? "bg-lotus text-white shadow-2xs"
+                          : "border border-sand hover:border-antique hover:text-lotus"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold hover:border-antique hover:text-lotus disabled:opacity-40"
+                >
+                  Sau
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1884,28 +2202,28 @@ function OverviewTab({
           label="Doanh thu (đang phát sinh)"
           value={formatVND(totalRentalRevenue)}
           hint="Từ đơn completed + đang thuê"
-          icon="payments"
+          icon={Banknote}
           tone="lotus"
         />
         <SnapshotCard
           label="Tiền cọc đang giữ"
           value={formatVND(totalDepositHeld)}
           hint={`${depositHoldingCount} đơn đang giữ cọc — trừ khi duyệt hoàn`}
-          icon="account_balance_wallet"
+          icon={Wallet}
           tone="antique"
         />
         <SnapshotCard
           label="Đơn đặt chỗ hiện tại"
           value={String(activeBookings.length)}
           hint="Đang trong luồng vận hành"
-          icon="calendar_month"
+          icon={Calendar}
           tone="jade"
         />
         <SnapshotCard
           label="Hiệu suất lấp đầy"
           value={garments.length === 0 ? "—" : `${utilizationPct}%`}
           hint={`${rentedItemCount} đang thuê / ${utilizationDenominator} khả dụng`}
-          icon="pie_chart"
+          icon={PieChart}
           tone="bronze"
           progress={garments.length === 0 ? null : utilizationPct}
         />
@@ -1924,34 +2242,32 @@ function OverviewTab({
                 Ưu tiên vận hành trong ngày
               </p>
             </div>
-            <span className="material-symbols-outlined text-lotus">
-              task_alt
-            </span>
+            <CheckCircle2 className="h-5 w-5 text-lotus" />
           </div>
           <div className="flex flex-1 flex-col justify-between gap-3">
             <QuickWorkItem
-              icon="cancel"
+              icon={Ban}
               label="Từ chối bàn giao"
               value={rejectedHandoversCount}
               tone="red"
               onClick={() => onGoToTab("rejected-handovers")}
             />
             <QuickWorkItem
-              icon="swap_horiz"
+              icon={ArrowLeftRight}
               label="Cần gán tài sản"
               value={bookingsNeedingAssets.length}
               tone="amber"
               onClick={() => onGoToTab("assets")}
             />
             <QuickWorkItem
-              icon="search_check"
+              icon={ClipboardCheck}
               label="Chờ kiểm tra"
               value={returnedWaiting}
               tone="orange"
               onClick={() => onGoToTab("inspection-log")}
             />
             <QuickWorkItem
-              icon="dry_cleaning"
+              icon={Waves}
               label="Đang giặt sấy"
               value={Math.max(
                 laundryTickets.length,
@@ -1961,7 +2277,7 @@ function OverviewTab({
               onClick={() => onGoToTab("laundry")}
             />
             <QuickWorkItem
-              icon="build"
+              icon={Wrench}
               label="Cần bảo trì"
               value={Math.max(
                 maintenanceJobs.filter(
@@ -2042,7 +2358,7 @@ function OverviewTab({
                     {meta.label}
                   </span>
                   <span
-                    className={`block font-display text-2xl ${count > 0 ? "text-ink" : "text-stone-300"}`}
+                    className={`block font-sans font-bold text-2xl tracking-tight tabular-nums ${count > 0 ? "text-ink" : "text-stone-300"}`}
                   >
                     {count}
                   </span>
@@ -2060,9 +2376,7 @@ function OverviewTab({
           </h2>
           <BookingPipelineChart countBy={countBy} />
           <div className="mt-5 flex items-start gap-4 rounded-r-lg border-l-4 border-lotus bg-parchment p-4">
-            <span className="material-symbols-outlined mt-0.5 text-lotus">
-              warning
-            </span>
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-lotus" />
             <div>
               <h3 className="text-sm font-semibold text-ink">
                 Cảnh Báo Vận Hành
@@ -2099,20 +2413,20 @@ function OverviewTab({
             </h2>
             <div className="flex flex-1 flex-col gap-3">
               <ShortcutButton
-                icon="inventory_2"
+                icon={Package}
                 label="Kho trang phục"
                 badge={bookingsNeedingAssets.length}
                 tone="bronze"
                 onClick={() => onGoToTab("assets")}
               />
               <ShortcutButton
-                icon="fact_check"
+                icon={ClipboardCheck}
                 label="Nhật ký kiểm tra"
                 tone="jade"
                 onClick={() => onGoToTab("inspection-log")}
               />
               <ShortcutButton
-                icon="bar_chart"
+                icon={BarChart3}
                 label="Báo cáo tài chính"
                 tone="antique"
                 onClick={() => onGoToTab("finance")}
@@ -2155,6 +2469,7 @@ function InventoryTab({
   onCloseAssetModal,
   onSubmitAsset,
   onDeleteGarment,
+  onRestoreGarment,
   onCategoryCreated,
   onSizeCreated,
 }: {
@@ -2188,23 +2503,33 @@ function InventoryTab({
   onCloseAssetModal: () => void;
   onSubmitAsset: (payload: Parameters<typeof createAsset>[0]) => Promise<void>;
   onDeleteGarment: (id: string) => void;
+  onRestoreGarment: (id: string) => void;
   onCategoryCreated: (cat: GarmentCategory) => void;
   onSizeCreated: (label: string) => void;
 }) {
   const [garmentSearch, setGarmentSearch] = useState("");
+  const [garmentFilter, setGarmentFilter] = useState<"all" | "active" | "deleted">("all");
   const [assetSearch, setAssetSearch] = useState("");
   const [assetStatusFilter, setAssetStatusFilter] = useState("all");
 
+  const activeCount = useMemo(() => garments.filter((g) => !g.deletedAt).length, [garments]);
+  const deletedCount = useMemo(() => garments.filter((g) => Boolean(g.deletedAt)).length, [garments]);
+
   const filteredGarments = useMemo(() => {
     const q = garmentSearch.trim().toLowerCase();
-    return q
-      ? garments.filter((g) =>
-          [g.name, g.categoryName, g.sizeLabel].some((v) =>
-            v?.toLowerCase().includes(q),
-          ),
-        )
-      : garments;
-  }, [garments, garmentSearch]);
+    return garments.filter((g) => {
+      const isDeleted = Boolean(g.deletedAt);
+      if (garmentFilter === "active" && isDeleted) return false;
+      if (garmentFilter === "deleted" && !isDeleted) return false;
+
+      if (q) {
+        return [g.name, g.categoryName, g.sizeLabel].some((v) =>
+          v?.toLowerCase().includes(q),
+        );
+      }
+      return true;
+    });
+  }, [garments, garmentSearch, garmentFilter]);
 
   const filteredAssets = useMemo(() => {
     const q = assetSearch.trim().toLowerCase();
@@ -2241,21 +2566,55 @@ function InventoryTab({
             onClick={onCreateGarment}
             className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[16px]">add</span>
+            <Plus className="h-4 w-4" />
             Thêm trang phục
           </button>
         </div>
-        <div className="border-b border-sand bg-white px-4 py-3">
+        <div className="border-b border-sand bg-white px-4 py-3 space-y-2.5">
           <div className="relative">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-              search
-            </span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
             <input
               value={garmentSearch}
               onChange={(e) => setGarmentSearch(e.target.value)}
               className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
               placeholder="Tìm trang phục, danh mục, size..."
             />
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("all")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                garmentFilter === "all"
+                  ? "bg-stone-800 text-white font-semibold"
+                  : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+              }`}
+            >
+              Tất cả ({garments.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("active")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                garmentFilter === "active"
+                  ? "bg-lotus text-white font-semibold"
+                  : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+              }`}
+            >
+              Đang hoạt động ({activeCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("deleted")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition flex items-center gap-1 ${
+                garmentFilter === "deleted"
+                  ? "bg-amber-600 text-white font-semibold"
+                  : "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
+              }`}
+            >
+              <EyeOff className="h-3 w-3" />
+              <span>Đã xóa mềm ({deletedCount})</span>
+            </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -2267,11 +2626,14 @@ function InventoryTab({
             <div className="grid grid-cols-2 gap-4">
               {filteredGarments.map((g) => {
                 const isSelected = g.id === selectedGarmentId;
+                const isDeleted = Boolean(g.deletedAt);
                 return (
                   <div
                     key={g.id}
                     className={`group rounded-lg border overflow-hidden text-left transition relative ${
-                      isSelected
+                      isDeleted
+                        ? "opacity-75 grayscale-[0.35] border-dashed border-amber-300 bg-amber-50/20"
+                        : isSelected
                         ? "border-lotus ring-2 ring-lotus/20"
                         : "border-outline-variant hover:shadow-md"
                     }`}
@@ -2291,14 +2653,19 @@ function InventoryTab({
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                            <span className="material-symbols-outlined text-[48px] text-antique/30">
-                              checkroom
-                            </span>
+                            <Shirt className="h-12 w-12 text-antique/30" />
                           </div>
                         )}
-                        <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
-                          {g.categoryName ?? "Trang phục"}
-                        </div>
+                        {isDeleted ? (
+                          <div className="absolute top-2 left-2 rounded bg-amber-700/90 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm flex items-center gap-1 shadow-2xs">
+                            <EyeOff className="h-3 w-3" />
+                            <span>Đã xóa mềm (Ẩn)</span>
+                          </div>
+                        ) : (
+                          <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
+                            {g.categoryName ?? "Trang phục"}
+                          </div>
+                        )}
                       </div>
                       <div className="p-3">
                         <h3 className="font-display text-base text-ink line-clamp-1">
@@ -2318,26 +2685,39 @@ function InventoryTab({
                       </div>
                     </button>
                     <div className="absolute top-2 right-2 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onEditGarment(g)}
-                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
-                        aria-label="Chỉnh sửa"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          edit
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteGarment(g.id)}
-                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
-                        aria-label="Xoá"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">
-                          delete
-                        </span>
-                      </button>
+                      {isDeleted ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRestoreGarment(g.id);
+                          }}
+                          className="rounded-md bg-emerald-600 px-2 py-1 text-white text-xs font-semibold shadow-xs hover:bg-emerald-700 transition flex items-center gap-1"
+                          title="Khôi phục lại trang phục kinh doanh"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span>Khôi phục</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onEditGarment(g)}
+                            className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
+                            aria-label="Chỉnh sửa"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteGarment(g.id)}
+                            className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
+                            aria-label="Xoá"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -2362,7 +2742,7 @@ function InventoryTab({
               onClick={onCreateAsset}
               className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
             >
-              <span className="material-symbols-outlined text-[16px]">add</span>
+              <Plus className="h-4 w-4" />
               Thêm tài sản
             </button>
           )}
@@ -2370,9 +2750,7 @@ function InventoryTab({
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-                search
-              </span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
               <input
                 value={assetSearch}
                 onChange={(e) => setAssetSearch(e.target.value)}
@@ -2476,7 +2854,7 @@ function InventoryTab({
                     onClick={() => onSelectAsset(null)}
                     className="text-stone-500 hover:text-lotus"
                   >
-                    <span className="material-symbols-outlined">close</span>
+                    <X className="h-5 w-5" />
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
@@ -2493,9 +2871,7 @@ function InventoryTab({
                         />
                       ) : (
                         <div className="flex h-full items-center justify-center bg-surface-container-highest">
-                          <span className="material-symbols-outlined text-[48px] text-antique/30">
-                            checkroom
-                          </span>
+                          <Shirt className="h-12 w-12 text-antique/30" />
                         </div>
                       )}
                     </div>
@@ -2967,7 +3343,7 @@ function GarmentFormModal({
             onClick={handleClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
 
@@ -2997,10 +3373,7 @@ function GarmentFormModal({
                   onClick={() => setAddingCategory(true)}
                   className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
                 >
-                  <span className="material-symbols-outlined text-[14px]">
-                    add
-                  </span>{" "}
-                  Thêm mới
+                  <Plus className="h-3.5 w-3.5" /> Thêm mới
                 </button>
               )}
             </div>
@@ -3076,10 +3449,7 @@ function GarmentFormModal({
                     onClick={() => setAddingSize(true)}
                     className="flex items-center gap-0.5 text-xs font-semibold text-lotus hover:text-oxblood"
                   >
-                    <span className="material-symbols-outlined text-[14px]">
-                      add
-                    </span>{" "}
-                    Thêm mới
+                    <Plus className="h-3.5 w-3.5" /> Thêm mới
                   </button>
                 )}
               </div>
@@ -3377,9 +3747,7 @@ function GarmentFormModal({
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh"
                     >
-                      <span className="material-symbols-outlined text-[14px]">
-                        close
-                      </span>
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -3410,9 +3778,7 @@ function GarmentFormModal({
                       className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                       aria-label="Xóa ảnh mới"
                     >
-                      <span className="material-symbols-outlined text-[14px]">
-                        close
-                      </span>
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -3557,7 +3923,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
           }}
           className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[16px]">add</span>
+          <Plus className="h-4 w-4" />
           Gắn phụ kiện
         </button>
       </div>
@@ -3588,9 +3954,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   />
                 ) : (
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-white">
-                    <span className="material-symbols-outlined text-lg text-stone-300">
-                      diamond
-                    </span>
+                    <Sparkles className="h-5 w-5 text-stone-300" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
@@ -3619,9 +3983,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-lotus"
                   aria-label="Sửa"
                 >
-                  <span className="material-symbols-outlined text-[16px]">
-                    edit
-                  </span>
+                  <Pencil className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
@@ -3629,9 +3991,7 @@ function GarmentAccessoriesSection({ garmentId }: { garmentId: string }) {
                   className="rounded-md p-1.5 text-stone-500 transition hover:text-red-500"
                   aria-label="Gỡ"
                 >
-                  <span className="material-symbols-outlined text-[16px]">
-                    delete
-                  </span>
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </li>
             ))}
@@ -3737,7 +4097,7 @@ function GarmentAccessoryLinkModal({
             onClick={onClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4">
@@ -3864,7 +4224,7 @@ function DeleteGarmentConfirmModal({
           <h3 className="font-display text-xl text-ink">Xóa trang phục</h3>
           <p className="mt-2 text-sm text-stone-500">
             Bạn có chắc chắn muốn xóa trang phục này không? Trang phục sẽ được
-            xóa mềm và có thể khôi phục sau.
+            xóa mềm (ẩn khỏi danh mục công khai) và chuyển vào tab &ldquo;Đã xóa mềm&rdquo;. Bạn có thể khôi phục lại bất kỳ lúc nào.
           </p>
         </div>
         <div className="flex justify-end gap-3 mt-6">
@@ -3950,7 +4310,7 @@ function AssetFormModal({
             onClick={onClose}
             className="text-stone-500 hover:text-lotus"
           >
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <p className="mb-4 text-sm text-stone-500">
@@ -4084,6 +4444,17 @@ function InspectionLogTab({
   const [accStatusFilter, setAccStatusFilter] = useState("all");
   const [subTab, setSubTab] = useState<"garments" | "accessories">("garments");
   const [viewingImages, setViewingImages] = useState<{ title: string; images: string[] } | null>(null);
+  const [garmentsPage, setGarmentsPage] = useState(1);
+  const [accessoriesPage, setAccessoriesPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  useEffect(() => {
+    setGarmentsPage(1);
+  }, [search, statusFilter, penaltyFilter]);
+
+  useEffect(() => {
+    setAccessoriesPage(1);
+  }, [search, accStatusFilter, penaltyFilter]);
 
   const filteredLog = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -4131,6 +4502,16 @@ function InspectionLogTab({
       return byText && byStatus && byPenalty;
     });
   }, [accLog, search, accStatusFilter, penaltyFilter]);
+ 
+  const paginatedLog = useMemo(() => {
+    const start = (garmentsPage - 1) * PAGE_SIZE;
+    return filteredLog.slice(start, start + PAGE_SIZE);
+  }, [filteredLog, garmentsPage]);
+
+  const paginatedAccLog = useMemo(() => {
+    const start = (accessoriesPage - 1) * PAGE_SIZE;
+    return filteredAccLog.slice(start, start + PAGE_SIZE);
+  }, [filteredAccLog, accessoriesPage]);
 
   return (
     <div className="space-y-4">
@@ -4141,8 +4522,8 @@ function InspectionLogTab({
           <div className="flex gap-2 rounded-xl border border-sand bg-white p-1.5 shadow-sm">
             {(
               [
-                { key: "garments", label: `Trang phục (${log.length})`, icon: "checkroom" },
-                { key: "accessories", label: `Phụ kiện (${accLog.length})`, icon: "diamond" },
+                { key: "garments", label: `Trang phục (${log.length})`, icon: Shirt },
+                { key: "accessories", label: `Phụ kiện (${accLog.length})`, icon: Sparkles },
               ] as const
             ).map((t) => (
               <button
@@ -4155,7 +4536,7 @@ function InspectionLogTab({
                     : "text-stone-500 hover:bg-mist"
                 }`}
               >
-                <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
+                {(() => { const TabIcon = t.icon; return <TabIcon className="h-4 w-4" />; })()}
                 {t.label}
               </button>
             ))}
@@ -4163,9 +4544,7 @@ function InspectionLogTab({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-64">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">
-                search
-              </span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -4241,7 +4620,7 @@ function InspectionLogTab({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand">
-                  {filteredLog.map((entry) => {
+                  {paginatedLog.map((entry) => {
                     const sm = INSPECTION_STATUS_META[entry.status] ?? {
                       label: entry.status,
                       color: "bg-stone-100 text-stone-600",
@@ -4267,7 +4646,7 @@ function InspectionLogTab({
                         <td className="px-6 py-4 text-stone-600">
                           {entry.findingsCount}
                         </td>
-                        <td className="px-6 py-4 text-red-700">
+                        <td className="px-6 py-4 text-red-700 font-medium tabular-nums">
                           {entry.totalPenalty > 0
                             ? formatVND(entry.totalPenalty)
                             : "—"}
@@ -4280,6 +4659,14 @@ function InspectionLogTab({
                   })}
                 </tbody>
               </table>
+
+              <Pagination
+                currentPage={garmentsPage}
+                totalItems={filteredLog.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setGarmentsPage}
+                itemLabel="phiên kiểm tra"
+              />
             </div>
           )}
           </>
@@ -4308,7 +4695,7 @@ function InspectionLogTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-sand">
-                    {filteredAccLog.map((entry) => {
+                    {paginatedAccLog.map((entry) => {
                       const meta = accConditionMeta[entry.conditionStatus ?? ""] ?? {
                         label: entry.conditionStatus ?? "—",
                         color: "bg-stone-100 text-stone-600",
@@ -4333,7 +4720,7 @@ function InspectionLogTab({
                           <td className="max-w-[220px] truncate px-6 py-4 text-stone-600" title={entry.conditionNote ?? ""}>
                             {entry.conditionNote ?? "—"}
                           </td>
-                          <td className="px-6 py-4 text-red-700">
+                          <td className="px-6 py-4 text-red-700 font-medium tabular-nums">
                             {entry.penaltyAmount > 0 ? formatVND(entry.penaltyAmount) : "—"}
                           </td>
                           <td className="px-6 py-4">
@@ -4348,7 +4735,7 @@ function InspectionLogTab({
                                 }
                                 className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-parchment"
                               >
-                                <span className="material-symbols-outlined text-[15px]">imagesmode</span>
+                                <Images className="h-4 w-4" />
                                 Xem ảnh ({(entry.imageUrls ?? []).length})
                               </button>
                             ) : (
@@ -4366,6 +4753,14 @@ function InspectionLogTab({
                     })}
                   </tbody>
                 </table>
+
+                <Pagination
+                  currentPage={accessoriesPage}
+                  totalItems={filteredAccLog.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setAccessoriesPage}
+                  itemLabel="lượt kiểm tra phụ kiện"
+                />
               </div>
             )}
           </div>
@@ -4393,7 +4788,7 @@ function InspectionLogTab({
                 className="rounded-full p-1.5 text-stone-400 transition hover:bg-mist hover:text-ink"
                 aria-label="Đóng"
               >
-                <span className="material-symbols-outlined">close</span>
+                <X className="h-5 w-5" />
               </button>
             </div>
             <div className="grid max-h-[70vh] gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
@@ -4465,7 +4860,16 @@ function LaundryTab({
                 </span>
               </div>
               {t.note && (
-                <p className="mt-2 text-xs text-stone-500">{t.note}</p>
+                <p className="mt-2 text-xs text-stone-500">
+                  {t.note.startsWith("Tạo từ inspection")
+                    ? "Giặt sấy sau khi trả đồ"
+                    : t.note}
+                </p>
+              )}
+              {t.bookingId && (
+                <p className="mt-1 text-xs text-stone-400">
+                  Đơn #{t.bookingId.slice(0, 8).toUpperCase()}
+                </p>
               )}
               <div className="mt-4 flex justify-end">
                 <button
@@ -4487,7 +4891,7 @@ function LaundryTab({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="flex items-center gap-1.5 font-semibold text-ink">
-                    <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                    <Sparkles className="h-4 w-4 text-antique" />
                     {a.assetCode}
                   </p>
                   <p className="mt-0.5 text-sm text-stone-500">
@@ -4599,7 +5003,11 @@ function DamagedTab({
                 </span>
               </div>
               {j.note && (
-                <p className="mt-2 text-xs text-stone-500">{j.note}</p>
+                <p className="mt-2 text-xs text-stone-500">
+                  {j.note.startsWith("Tạo từ inspection")
+                    ? "Cần bảo trì sau khi trả đồ"
+                    : j.note}
+                </p>
               )}
               <div className="mt-4 flex gap-2 justify-end">
                 {j.status !== "completed" && j.status !== "cannot_repair" && (
@@ -4684,7 +5092,7 @@ function DamagedTab({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="flex items-center gap-1.5 font-semibold text-ink">
-                      <span className="material-symbols-outlined text-[16px] text-antique">diamond</span>
+                      <Sparkles className="h-4 w-4 text-antique" />
                       {a.assetCode}
                     </p>
                     <p className="mt-0.5 text-sm text-stone-500">
@@ -4699,8 +5107,8 @@ function DamagedTab({
                   <p className="mt-2 text-xs text-stone-500">{a.conditionNote}</p>
                 )}
                 {a.status === "lost" && (
-                  <p className="mt-2 text-xs font-semibold text-red-700">
-                    Đền {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(a.replacementValue)} — đã trừ vào cọc
+                  <p className="mt-2 text-xs font-semibold text-red-700 tabular-nums">
+                    Đền {formatVND(a.replacementValue)} — đã trừ vào cọc
                   </p>
                 )}
                 {a.bookingId && (
@@ -4989,39 +5397,39 @@ function FinanceTab({
             <KPICard
               label="Doanh thu cho thuê"
               value={formatVND(summary.rentalRevenue)}
-              icon="payments"
+              icon={Banknote}
               tone="jade"
               hint="Không bao gồm tiền cọc"
             />
             <KPICard
               label="Tiền cọc đang giữ"
               value={formatVND(summary.depositHeld)}
-              icon="account_balance_wallet"
+              icon={Wallet}
               tone="amber"
               hint={`${summary.depositHeldCount} đơn`}
             />
             <KPICard
               label="Đã hoàn cọc"
               value={formatVND(summary.refundedDeposit)}
-              icon="currency_exchange"
+              icon={RotateCcw}
               tone="blue"
             />
             <KPICard
               label="Khấu trừ hư hỏng"
               value={formatVND(summary.damageDeduction)}
-              icon="warning"
+              icon={AlertTriangle}
               tone="red"
             />
             <KPICard
               label="Cọc bị giữ"
               value={formatVND(summary.forfeitedDeposit)}
-              icon="block"
+              icon={Ban}
               tone="stone"
             />
             <KPICard
               label="Số giao dịch"
               value={String(summary.totalTransactions)}
-              icon="receipt_long"
+              icon={Receipt}
               tone="purple"
             />
           </div>
@@ -5139,7 +5547,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Tổng đơn
               </p>
-              <p className="mt-2 font-display text-2xl text-ink">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-ink tabular-nums">
                 {summary.totalBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5150,7 +5558,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Đã thanh toán
               </p>
-              <p className="mt-2 font-display text-2xl text-jade">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-jade tabular-nums">
                 {summary.paidBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5161,7 +5569,7 @@ function FinanceTab({
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                 Chưa thanh toán
               </p>
-              <p className="mt-2 font-display text-2xl text-amber-700">
+              <p className="mt-2 font-sans font-bold text-2xl tracking-tight text-amber-700 tabular-nums">
                 {summary.unpaidBookings}
               </p>
               <p className="mt-1 text-[10px] text-stone-400">
@@ -5259,7 +5667,7 @@ function FinanceTab({
                             {typeMeta.label}
                           </span>
                         </td>
-                        <td className="px-6 py-3 text-ink font-semibold">
+                        <td className="px-6 py-3 text-ink font-semibold tabular-nums">
                           {formatVND(tx.amount)}
                         </td>
                         <td className="px-6 py-3 text-stone-500 text-xs uppercase">
@@ -5385,13 +5793,13 @@ function FinanceTab({
 function KPICard({
   label,
   value,
-  icon,
+  icon: Icon,
   tone,
   hint,
 }: {
   label: string;
   value: string;
-  icon: string;
+  icon: LucideIcon;
   tone: string;
   hint?: string;
 }) {
@@ -5416,16 +5824,12 @@ function KPICard({
       className={`rounded-xl border p-4 shadow-sm ${toneMap[tone] ?? "border-sand bg-white"}`}
     >
       <div className="flex items-center gap-2 mb-2">
-        <span
-          className={`material-symbols-outlined text-[18px] ${textMap[tone] ?? "text-stone-500"}`}
-        >
-          {icon}
-        </span>
+        <Icon className={`h-4 w-4 ${textMap[tone] ?? "text-stone-500"}`} />
         <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500 leading-tight">
           {label}
         </p>
       </div>
-      <p className={`font-display text-xl ${textMap[tone] ?? "text-ink"}`}>
+      <p className={`font-sans font-bold text-lg sm:text-xl tracking-tight tabular-nums ${textMap[tone] ?? "text-ink"}`}>
         {value}
       </p>
       {hint && <p className="mt-1 text-[10px] text-stone-400">{hint}</p>}
@@ -5451,7 +5855,7 @@ function ReconCard({
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-500">
         {label}
       </p>
-      <p className={`mt-1 font-display text-xl ${color}`}>{value}</p>
+      <p className={`mt-1 font-sans font-bold text-lg sm:text-xl tracking-tight tabular-nums ${color}`}>{value}</p>
     </div>
   );
 }
@@ -5534,17 +5938,13 @@ function MonthlyFinanceChart({
           <span
             className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${delta >= 0 ? "bg-jade/10 text-jade" : "bg-red-50 text-red-600"}`}
           >
-            <span className="material-symbols-outlined text-[16px]">
-              {delta >= 0 ? "trending_up" : "trending_down"}
-            </span>
+            {delta >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
             {delta >= 0 ? "+" : ""}
             {delta}% so với tháng trước
           </span>
         ) : current.revenue > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-jade/10 px-3 py-1 text-xs font-semibold text-jade">
-            <span className="material-symbols-outlined text-[16px]">
-              trending_up
-            </span>
+            <TrendingUp className="h-4 w-4" />
             Tháng trước chưa có doanh thu
           </span>
         ) : null}
@@ -5775,13 +6175,13 @@ function AssetDonutChart({
 }
 
 function QuickWorkItem({
-  icon,
+  icon: Icon,
   label,
   value,
   tone,
   onClick,
 }: {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   value: number;
   tone: "amber" | "orange" | "laundry" | "red";
@@ -5802,14 +6202,14 @@ function QuickWorkItem({
       <span
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${chip}`}
       >
-        <span className="material-symbols-outlined text-[22px]">{icon}</span>
+        <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
           {label}
         </span>
         <span
-          className={`mt-0.5 block font-display text-2xl ${value > 0 ? "text-ink" : "text-stone-300"}`}
+          className={`mt-0.5 block font-sans font-bold text-2xl tracking-tight tabular-nums ${value > 0 ? "text-ink" : "text-stone-300"}`}
         >
           {value}
         </span>
@@ -5819,9 +6219,7 @@ function QuickWorkItem({
           Cần xử lý
         </span>
       )}
-      <span className="material-symbols-outlined text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus">
-        chevron_right
-      </span>
+      <ChevronRight className="h-4 w-4 text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-lotus" />
     </button>
   );
 }
@@ -5830,14 +6228,14 @@ function SnapshotCard({
   label,
   value,
   hint,
-  icon,
+  icon: Icon,
   tone,
   progress,
 }: {
   label: string;
   value: string;
   hint: string;
-  icon: string;
+  icon: LucideIcon;
   tone: "lotus" | "antique" | "jade" | "bronze";
   progress?: number | null;
 }) {
@@ -5846,13 +6244,9 @@ function SnapshotCard({
     <div className="relative overflow-hidden rounded-xl border border-sand bg-white p-6 shadow-xs">
       <div className="mb-4 flex items-start justify-between">
         <span className="text-sm font-semibold text-stone-500">{label}</span>
-        <span
-          className={`material-symbols-outlined rounded-lg p-2 ${t.text} ${t.bg}`}
-        >
-          {icon}
-        </span>
+        <span className={`rounded-lg p-2 ${t.text} ${t.bg}`}><Icon className="h-5 w-5" /></span>
       </div>
-      <div className="mb-2 font-display text-3xl text-ink">{value}</div>
+      <div className="mb-2 font-sans font-bold text-2xl sm:text-3xl tracking-tight text-ink tabular-nums">{value}</div>
       {typeof progress === "number" ? (
         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-lotus/20">
           <div
@@ -5905,7 +6299,7 @@ function StatusCell({
     <div
       className={`flex flex-col items-center justify-center rounded-lg border p-4 ${t.bg} ${t.border}`}
     >
-      <span className={`font-display text-2xl ${t.num}`}>{value}</span>
+      <span className={`font-sans font-bold text-2xl tracking-tight tabular-nums ${t.num}`}>{value}</span>
       <span
         className={`mt-1 text-center text-xs font-semibold uppercase ${t.num}`}
       >
@@ -5916,13 +6310,13 @@ function StatusCell({
 }
 
 function ShortcutButton({
-  icon,
+  icon: Icon,
   label,
   badge,
   tone,
   onClick,
 }: {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   badge?: number;
   tone: "bronze" | "jade" | "antique";
@@ -5943,7 +6337,7 @@ function ShortcutButton({
         <div
           className={`rounded-md bg-bronze/10 p-2 ${TONE_CLASSES[tone].text} transition group-hover:bg-current`}
         >
-          <span className="material-symbols-outlined text-[20px]">{icon}</span>
+          <Icon className="h-5 w-5" />
         </div>
         <span className="text-sm font-semibold text-ink">{label}</span>
       </div>
@@ -5953,9 +6347,7 @@ function ShortcutButton({
             {badge}
           </span>
         )}
-        <span className="material-symbols-outlined text-stone-400 group-hover:text-current">
-          arrow_forward
-        </span>
+        <ArrowRight className="h-4 w-4 text-stone-400 group-hover:text-current" />
       </div>
     </button>
   );
@@ -5990,13 +6382,6 @@ function RefundCard({
     !isBankTransfer || Boolean(refund.bankDetailsComplete);
   const canApprove =
     !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
-
-  function formatVND(amount: number) {
-    return new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-    }).format(amount);
-  }
 
   return (
     <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
@@ -6037,10 +6422,10 @@ function RefundCard({
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">
             Số tiền hoàn
           </p>
-          <p className="mt-1 font-display text-2xl text-jade">
+          <p className="mt-1 font-sans font-bold text-2xl tracking-tight text-jade tabular-nums">
             {formatVND(refund.amount)}
           </p>
-          <p className="text-sm text-stone-500">
+          <p className="text-sm text-stone-500 tabular-nums">
             Cọc: {formatVND(refund.booking.depositTotal)} — Phạt:{" "}
             {formatVND(refund.booking.penaltyTotal)}
           </p>
@@ -6066,7 +6451,7 @@ function RefundCard({
                   />
                 ) : (
                   <div className="flex h-14 w-14 items-center justify-center rounded-md bg-stone-100 text-stone-400">
-                    <span className="material-symbols-outlined">checkroom</span>
+                    <Shirt className="h-6 w-6 text-stone-400" />
                   </div>
                 )}
                 <div>
@@ -6137,9 +6522,7 @@ function RefundCard({
               <label
                 className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-antique hover:text-antique ${uploadingProof || !bankDetailsComplete ? "pointer-events-none opacity-50" : ""}`}
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  upload
-                </span>
+                <Upload className="h-4 w-4" />
                 {uploadingProof
                   ? "Đang tải ảnh..."
                   : proofImageUrl
@@ -6208,9 +6591,7 @@ function RefundCard({
               }
               className="inline-flex items-center gap-2 rounded-lg border border-sand px-5 py-3 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                chat
-              </span>
+              <MessageSquare className="h-4 w-4" />
               Nhắn khách xin thông tin chuyển khoản
             </a>
           )}
@@ -6288,6 +6669,13 @@ function RefundsTab({
   approvingId: string | null;
 }) {
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 5;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
   const query = search.trim().replace(/^#/, "").toLowerCase();
   const filteredRefunds = query
     ? pendingRefunds.filter(
@@ -6297,23 +6685,28 @@ function RefundsTab({
       )
     : pendingRefunds;
 
+  const paginatedRefunds = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredRefunds.slice(start, start + PAGE_SIZE);
+  }, [filteredRefunds, page]);
+
   return (
     <div className="space-y-6">
       {!loadingRefunds && pendingRefunds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white p-4 shadow-sm">
           <div className="relative flex-1 min-w-[240px] max-w-md">
-            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-stone-400">
-              search
-            </span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-stone-400" />
             <input
-              className="w-full rounded-lg border border-sand bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique"
+              className="w-full rounded-lg border border-sand bg-mist/60 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-antique focus:bg-white"
               placeholder="Tìm theo mã đơn hoặc tên khách..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="text-sm text-stone-500">
-            {filteredRefunds.length}/{pendingRefunds.length} yêu cầu chờ duyệt
+          <span className="text-xs sm:text-sm font-medium text-stone-600 bg-sand/30 px-3 py-1.5 rounded-lg">
+            Hiển thị {filteredRefunds.length > 0 ? (page - 1) * PAGE_SIZE + 1 : 0} -{" "}
+            {Math.min(page * PAGE_SIZE, filteredRefunds.length)} trong{" "}
+            <span className="font-semibold text-lotus">{filteredRefunds.length}</span> yêu cầu chờ duyệt
           </span>
         </div>
       )}
@@ -6323,9 +6716,7 @@ function RefundsTab({
         </div>
       ) : pendingRefunds.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Không có yêu cầu hoàn cọc nào đang chờ duyệt.
         </div>
       ) : filteredRefunds.length === 0 ? (
@@ -6334,15 +6725,28 @@ function RefundsTab({
           &rdquo;.
         </div>
       ) : (
-        filteredRefunds.map((refund) => (
-          <RefundCard
-            key={refund.id}
-            refund={refund}
-            approvingId={approvingId}
-            handleApproveRefund={handleApproveRefund}
-            handleRejectRefund={handleRejectRefund}
+        <>
+          <div className="space-y-6">
+            {paginatedRefunds.map((refund) => (
+              <RefundCard
+                key={refund.id}
+                refund={refund}
+                approvingId={approvingId}
+                handleApproveRefund={handleApproveRefund}
+                handleRejectRefund={handleRejectRefund}
+              />
+            ))}
+          </div>
+
+          <Pagination
+            currentPage={page}
+            totalItems={filteredRefunds.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            itemLabel="yêu cầu hoàn cọc"
+            className="rounded-xl border border-sand bg-white shadow-sm"
           />
-        ))
+        </>
       )}
     </div>
   );
@@ -6364,6 +6768,13 @@ function RejectedHandoversTab({
   const [reason, setReason] = useState("");
   const [replacements, setReplacements] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 6;
+
+  const paginatedBookings = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return bookings.slice(start, start + PAGE_SIZE);
+  }, [bookings, page]);
 
   const availableAssets = useMemo(
     () => allAssets.filter((a) => a.status === "available"),
@@ -6404,55 +6815,66 @@ function RejectedHandoversTab({
     <div className="space-y-6">
       {bookings.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
-          <span className="material-symbols-outlined text-5xl text-stone-200 mb-4 block">
-            check_circle
-          </span>
+          <CheckCircle2 className="mb-4 block mx-auto h-12 w-12 text-stone-200" />
           Không có biên bản bàn giao nào bị từ chối.
         </div>
       ) : (
-        bookings.map((booking) => (
-          <div
-            key={booking.id}
-            className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-display text-lg text-ink">
-                  Đơn {booking.id.split("-")[0].toUpperCase()}
-                </h3>
-                <p className="text-sm text-stone-500">
-                  Khách hàng: {booking.customerName}
-                </p>
-                <p className="text-sm text-red-600 mt-2 font-medium">
-                  Lý do từ chối: {booking.handover?.note || "Không rõ"}
-                </p>
-                <div className="mt-2 flex gap-2">
-                  {booking.handover?.images?.map(
-                    (url: string, i: number) => (
-                      <img
-                        key={i}
-                        src={url}
-                        alt="Từ chối"
-                        className="h-20 w-20 rounded border border-sand object-cover"
-                      />
-                    ),
-                  )}
+        <>
+          <div className="space-y-4">
+            {paginatedBookings.map((booking) => (
+              <div
+                key={booking.id}
+                className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-display text-lg text-ink">
+                      Đơn {booking.id.split("-")[0].toUpperCase()}
+                    </h3>
+                    <p className="text-sm text-stone-500">
+                      Khách hàng: {booking.customerName}
+                    </p>
+                    <p className="text-sm text-red-600 mt-2 font-medium">
+                      Lý do từ chối: {booking.handover?.note || "Không rõ"}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      {booking.handover?.images?.map(
+                        (url: string, i: number) => (
+                          <img
+                            key={i}
+                            src={url}
+                            alt="Từ chối"
+                            className="h-20 w-20 rounded border border-sand object-cover"
+                          />
+                        ),
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedBooking(booking);
+                      setAction("replace");
+                      setReason("");
+                      setReplacements({});
+                    }}
+                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                  >
+                    Xử lý
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedBooking(booking);
-                  setAction("replace");
-                  setReason("");
-                  setReplacements({});
-                }}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-              >
-                Xử lý
-              </button>
-            </div>
+            ))}
           </div>
-        ))
+
+          <Pagination
+            currentPage={page}
+            totalItems={bookings.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            itemLabel="biên bản từ chối"
+            className="rounded-xl border border-sand bg-white shadow-sm"
+          />
+        </>
       )}
 
       {selectedBooking && (
@@ -6467,7 +6889,7 @@ function RejectedHandoversTab({
                 onClick={() => setSelectedBooking(null)}
                 className="text-stone-400 hover:text-ink"
               >
-                <span className="material-symbols-outlined">close</span>
+                <X className="h-5 w-5" />
               </button>
             </div>
 

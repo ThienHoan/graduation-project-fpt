@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, type RefObject } from "react";
 import type { ChatConversation, ChatMessage, ConversationLockStatus } from "@/lib/chat";
 import { getBookingCardData, getProductCardData, uploadChatFile, getProductAdvisor, sendProductCardMessage, getChatConversationCounts, type AIAdvisorTopic } from "@/lib/chat";
-import { Paperclip } from "lucide-react";
+import { Paperclip, Sparkles, Send, Loader2, CheckCircle2, Bot, X, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
 import { ProductCard } from "@/components/chat/product-card";
@@ -585,7 +585,9 @@ export function StaffChatWorkspace({
                             })()
                           ) : message.sender_type === "ai" ? (
                             <div className="rounded-xl border border-sand/70 bg-stone-50 px-4 py-3 shadow-sm">
-                              <p className="text-xs font-semibold text-stone-500 mb-1">🤖 Trợ lý AI</p>
+                              <p className="flex items-center gap-1.5 text-xs font-semibold text-stone-600 mb-1">
+                                <Bot className="h-3.5 w-3.5 text-lotus" /> Trợ lý AI
+                              </p>
                               <p className="text-sm leading-6 text-stone-800">{message.content}</p>
                             </div>
                           ) : (
@@ -597,10 +599,10 @@ export function StaffChatWorkspace({
                           <button
                             type="button"
                             onClick={() => onDeleteMessage(message.id)}
-                            className="absolute -top-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-500 text-white text-xs shadow-sm hover:bg-red-600 transition"
+                            className="absolute -top-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white shadow-sm hover:bg-red-700 transition"
                             title="Xoá tin nhắn"
                           >
-                            ✕
+                            <X className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {/* Retry button for failed messages */}
@@ -608,10 +610,10 @@ export function StaffChatWorkspace({
                           <button
                             type="button"
                             onClick={() => onRetryMessage?.(message.content)}
-                            className="absolute -bottom-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-500 text-white text-xs shadow-sm hover:bg-amber-600 transition"
+                            className="absolute -bottom-2 -right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600 text-white shadow-sm hover:bg-amber-700 transition"
                             title="Gửi lại"
                           >
-                            ↻
+                            <RotateCcw className="h-3.5 w-3.5" />
                           </button>
                         )}
                       </div>
@@ -638,7 +640,8 @@ export function StaffChatWorkspace({
                   className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-ink transition hover:bg-parchment"
                 >
                   <span className="flex items-center gap-2">
-                    🤖 Gợi ý AI
+                    <Sparkles className="h-4 w-4 text-lotus" />
+                    Gợi ý AI
                     {aiSuggestion.loading && (
                       <span className="inline-flex items-center gap-1 text-xs font-normal text-stone-500">
                         <span className="inline-block w-3 h-3 border-2 border-stone-400 border-t-transparent rounded-full animate-spin" />
@@ -646,7 +649,7 @@ export function StaffChatWorkspace({
                       </span>
                     )}
                   </span>
-                  <span className="text-stone-400 text-xs">{aiPanelOpen ? "▲" : "▼"}</span>
+                  {aiPanelOpen ? <ChevronUp className="h-4 w-4 text-stone-400" /> : <ChevronDown className="h-4 w-4 text-stone-400" />}
                 </button>
 
                 {aiPanelOpen && (
@@ -731,7 +734,7 @@ export function StaffChatWorkspace({
                                 onClick={() => handleInsertReply(topic.assistantReply)}
                                 className="inline-flex items-center gap-1.5 rounded-full bg-lotus/10 px-4 py-2 text-xs font-semibold text-lotus transition hover:bg-lotus/20"
                               >
-                                ⚙️ Chèn tin nhắn này
+                                <Sparkles className="h-3.5 w-3.5" /> Chèn câu trả lời này
                               </button>
                             </div>
                           </div>
@@ -773,7 +776,7 @@ export function StaffChatWorkspace({
                     }
                   }}
                   disabled={isUnassignedPreview || !staffCanReply}
-                  className="min-h-[140px] w-full rounded-lg border border-sand bg-white px-4 py-3 pb-10 text-sm outline-none focus:border-lotus disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed"
+                  className="min-h-[140px] w-full rounded-xl border border-sand bg-white px-4 py-3 pb-10 text-sm outline-none focus:border-lotus disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed"
                   placeholder={isUnassignedPreview ? "Tiếp nhận cuộc trò chuyện để trả lời..." : "Nhập tin nhắn..."}
                 />
                 <div className="absolute bottom-2 left-3 flex items-center gap-1">
@@ -788,10 +791,10 @@ export function StaffChatWorkspace({
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading || isUnassignedPreview || !staffCanReply}
-                    className="inline-flex items-center justify-center rounded-full w-8 h-8 border border-sand bg-white text-stone-400 transition hover:bg-sand/50 hover:text-stone-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center justify-center rounded-xl w-8 h-8 border border-sand bg-white text-stone-400 transition hover:bg-sand/50 hover:text-stone-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label="Đính kèm file"
                   >
-                    {uploading ? <span className="text-xs">⏳</span> : <Paperclip className="w-4 h-4" />}
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin text-lotus" /> : <Paperclip className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -800,11 +803,11 @@ export function StaffChatWorkspace({
                   type="button"
                   onClick={onSendMessage}
                   disabled={isUnassignedPreview || !staffCanReply}
-                  className={`inline-flex items-center justify-center rounded-lg px-5 py-3 text-sm font-semibold text-white transition ${
-                    isUnassignedPreview || !staffCanReply ? "bg-sand/70 cursor-not-allowed" : "bg-oxblood hover:bg-red-950"
+                  className={`inline-flex items-center gap-2 justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition ${
+                    isUnassignedPreview || !staffCanReply ? "bg-sand/70 cursor-not-allowed" : "bg-lotus hover:bg-oxblood shadow-sm"
                   }`}
                 >
-                  Gửi tin nhắn
+                  <Send className="h-4 w-4" /> Gửi tin nhắn
                 </button>
                 {!isUnassignedPreview && !isResolved && (
                   <button

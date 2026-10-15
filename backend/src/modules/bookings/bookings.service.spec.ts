@@ -377,6 +377,25 @@ describe("BookingsService handover", () => {
     expect(realtime.assetChanged).not.toHaveBeenCalled();
   });
 
+  it("allows rejecting handover even if asset status is available or not reserved", async () => {
+    const bookingWithAvailableAsset = makeHandoverBooking();
+    bookingWithAvailableAsset.items[0].garmentAsset!.status = "available";
+    const { service, tx } = createHandoverService(bookingWithAvailableAsset);
+
+    const result = await service.confirmHandover(
+      BOOKING_ID,
+      handoverDto({ handoverStatus: HandoverStatus.REJECTED, note: "Khách từ chối nhận đồ" }),
+      { id: STAFF_ID, role: "staff" },
+    );
+
+    expect(result.data).toBeDefined();
+    expect(result.data!.handover.status).toBe("REJECTED");
+    expect(result.data!.handover.note).toBe("Khách từ chối nhận đồ");
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ handoverStatus: "REJECTED" }),
+    }));
+  });
+
   it("requires the confirmation checklist before confirming handover", async () => {
     const { service, tx } = createHandoverService();
 

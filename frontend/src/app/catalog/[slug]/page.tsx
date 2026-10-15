@@ -6,11 +6,36 @@ import { use, useEffect, useMemo, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { useAuth } from "@/components/auth/auth-provider";
-import { getGarmentsGrouped, getGarmentReviews, getSizeAvailabilityCalendar, trackGarmentView, type GarmentGrouped, type GroupedGarmentAccessory, type ReviewResponse } from "@/lib/api";
+import {
+  getGarmentsGrouped,
+  getGarmentReviews,
+  getSizeAvailabilityCalendar,
+  trackGarmentView,
+  type GarmentGrouped,
+  type GroupedGarmentAccessory,
+  type ReviewResponse,
+} from "@/lib/api";
 import { RentalDateCalendar } from "@/components/customer/rental-date-calendar";
 import { addToCart, cartCount } from "@/lib/cart";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
+import { OptimizedImage } from "@/components/common/optimized-image";
+import {
+  ChevronRight,
+  ChevronLeft,
+  ShoppingBag,
+  Sparkles,
+  Camera,
+  Calendar,
+  ShieldCheck,
+  Headphones,
+  Star,
+  CheckCircle2,
+  Check,
+  Plus,
+  ArrowRight,
+  Loader2,
+} from "lucide-react";
 
 function formatVND(amount: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
@@ -37,7 +62,12 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [consultMsg, setConsultMsg] = useState<string | null>(null);
-  const [reviewsData, setReviewsData] = useState<{ reviews: ReviewResponse[]; averageRating: number; total: number } | null>(null);
+  const [isConsulting, setIsConsulting] = useState(false);
+  const [reviewsData, setReviewsData] = useState<{
+    reviews: ReviewResponse[];
+    averageRating: number;
+    total: number;
+  } | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
 
   const today = todayIso();
@@ -47,11 +77,12 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
   const [fullyBookedDates, setFullyBookedDates] = useState<Set<string>>(new Set());
   const [calLoading, setCalLoading] = useState(false);
   const { user } = useAuth();
-  
-  const hasPublicReview = Boolean(user && reviewsData?.reviews.some((r) => r.customerId === user.id));
+
+  const hasPublicReview = Boolean(
+    user && reviewsData?.reviews.some((r) => r.customerId === user.id),
+  );
 
   useEffect(() => {
-    // Tìm garment trong danh sách grouped
     getGarmentsGrouped().then((res) => {
       if (res.success && res.data) {
         for (const g of res.data) {
@@ -60,8 +91,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
             setGroup(g);
             setSelectedGarmentId(garmentId);
             setLoading(false);
-            
-            // Lấy reviews
+
             if (g.garmentId) {
               trackGarmentView(g.garmentId);
               getGarmentReviews(g.garmentId).then((revRes) => {
@@ -81,7 +111,6 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     });
   }, [garmentId]);
 
-  // Tải lịch còn hàng của size đang chọn (12 tháng tới) để disable ngày hết hàng
   useEffect(() => {
     if (!selectedGarmentId) return;
     let cancelled = false;
@@ -90,7 +119,9 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
       if (cancelled) return;
       setCalLoading(false);
       if (res.success && res.data) {
-        setFullyBookedDates(new Set(res.data.days.filter((d) => !d.available).map((d) => d.date)));
+        setFullyBookedDates(
+          new Set(res.data.days.filter((d) => !d.available).map((d) => d.date)),
+        );
       }
     });
     return () => {
@@ -98,8 +129,6 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     };
   }, [selectedGarmentId]);
 
-  // Nếu ngày bắt đầu đang chọn rơi vào ngày disable (mặc định ban đầu hoặc
-  // sau khi đổi size), tự dời về ngày trống gần nhất và thu khoảng còn 1 ngày.
   useEffect(() => {
     if (fullyBookedDates.size === 0) return;
     if (startDate >= today && !fullyBookedDates.has(startDate)) return;
@@ -111,10 +140,8 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
       setStartDate(d);
       setEndDate(d);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullyBookedDates]);
 
-  // Các ngày hết hàng nằm gọn trong khoảng đang chọn
   const blockedInRange = useMemo(() => {
     if (!startDate || !endDate || endDate < startDate) return [];
     const out: string[] = [];
@@ -133,69 +160,63 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
 
   if (notFoundFlag) notFound();
 
-  const selectedSize = group?.sizes.find((s) => s.garmentSizeId === selectedGarmentId) ?? group?.sizes[0];
+  const selectedSize =
+    group?.sizes.find((s) => s.garmentSizeId === selectedGarmentId) ?? group?.sizes[0];
 
-async function handleConsult() {
-  if (!group || !selectedSize) return;
-    console.log("group:", group);
-  console.log("group.garmentId:", group.garmentId);
-  console.log("selectedSize:", selectedSize);
-  const result = await getMyChatConversation();
-  if (!result.success || !result.data) {
-    setConsultMsg("Vui lòng đăng nhập để sử dụng tính năng tư vấn.");
-    setTimeout(() => setConsultMsg(null), 3000);
-    return;
+  async function handleConsult() {
+    if (!group || !selectedSize || isConsulting) return;
+    setIsConsulting(true);
+    try {
+      const convRes = await getMyChatConversation();
+      if (!convRes.success || !convRes.data) {
+        setConsultMsg("Vui lòng đăng nhập tài khoản khách hàng để kết nối tư vấn trực tuyến.");
+        setTimeout(() => setConsultMsg(null), 3500);
+        return;
+      }
+      const sendRes = await sendProductCardMessage({
+        conversationId: convRes.data.id,
+        productId: group.garmentId,
+      });
+      if (sendRes.success) {
+        setConsultMsg("Đã gửi thông tin trang phục vào khung chat tư vấn!");
+        // Mở khung chat nổi của khách hàng ngay trên trang chi tiết sản phẩm
+        window.dispatchEvent(new CustomEvent("chat:open"));
+      } else {
+        setConsultMsg(sendRes.message ?? "Không thể gửi tin nhắn tư vấn. Vui lòng thử lại.");
+      }
+      setTimeout(() => setConsultMsg(null), 3500);
+    } catch {
+      setConsultMsg("Lỗi khi kết nối tới hệ thống tư vấn.");
+      setTimeout(() => setConsultMsg(null), 3500);
+    } finally {
+      setIsConsulting(false);
+    }
   }
-
-  const conversation = result.data;
-
-  if (!group.garmentId) {
-    setConsultMsg("Không tìm thấy thông tin sản phẩm.");
-    setTimeout(() => setConsultMsg(null), 3000);
-    return;
-  }
-
-  const sendResult = await sendProductCardMessage({
-    conversationId: conversation.id,
-    productId: group.garmentId,
-  });
-
-  if (!sendResult.success) {
-    setConsultMsg("Không thể gửi sản phẩm. Vui lòng thử lại.");
-    setTimeout(() => setConsultMsg(null), 3000);
-    return;
-  }
-
-  setConsultMsg("Đã gửi thông tin sản phẩm đến tư vấn viên!");
-  setTimeout(() => setConsultMsg(null), 3000);
-}
 
   function handleAddToCart() {
     if (!group || !selectedSize) return;
-    const s = selectedSize;
     addToCart({
-      garmentSizeId: s.garmentSizeId,
+      garmentSizeId: selectedSize.garmentSizeId,
       garmentId: group.garmentId,
-      name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
-      sizeLabel: s.sizeLabel,
-      dailyPrice: s.dailyPrice,
-      depositAmount: s.depositAmount,
+      name: group.name + (selectedSize.sizeLabel ? ` (Size ${selectedSize.sizeLabel})` : ""),
+      sizeLabel: selectedSize.sizeLabel,
+      dailyPrice: selectedSize.dailyPrice,
+      depositAmount: selectedSize.depositAmount,
       imageUrl: group.imageUrl,
     });
-    setAddedMsg("Đã thêm vào giỏ!");
-    setTimeout(() => setAddedMsg(null), 2000);
+    setAddedMsg(`Đã thêm "${group.name}" vào giỏ`);
+    setTimeout(() => setAddedMsg(null), 2500);
   }
 
   function handleBookNow() {
-    if (!group || !selectedSize || blockedInRange.length > 0) return;
-    const s = selectedSize;
+    if (!group || !selectedSize) return;
     addToCart({
-      garmentSizeId: s.garmentSizeId,
+      garmentSizeId: selectedSize.garmentSizeId,
       garmentId: group.garmentId,
-      name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
-      sizeLabel: s.sizeLabel,
-      dailyPrice: s.dailyPrice,
-      depositAmount: s.depositAmount,
+      name: group.name + (selectedSize.sizeLabel ? ` (Size ${selectedSize.sizeLabel})` : ""),
+      sizeLabel: selectedSize.sizeLabel,
+      dailyPrice: selectedSize.dailyPrice,
+      depositAmount: selectedSize.depositAmount,
       imageUrl: group.imageUrl,
     });
     const p = new URLSearchParams({ startDate, endDate });
@@ -203,223 +224,320 @@ async function handleConsult() {
   }
 
   return (
-    <div className="min-h-screen bg-mist text-ink">
+    <div className="min-h-screen bg-mist text-ink antialiased">
       <CustomerNavbar active="collection" cartHref="/booking/date-selection" />
 
-      <main className="mx-auto max-w-7xl px-4 pb-24 pt-24 sm:px-6 lg:px-8 lg:pt-28">
-        <nav className="mb-8 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">
-          <Link href="/catalog" className="transition hover:text-lotus">Bộ sưu tập</Link>
-          <span className="material-symbols-outlined text-[14px]">chevron_right</span>
-          <span>{group?.categoryName ?? "—"}</span>
-          <span className="material-symbols-outlined text-[14px]">chevron_right</span>
-          <span className="text-ink">{loading ? "..." : group?.name}</span>
+      {/* Toast thông báo */}
+      {addedMsg && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border border-emerald-300 bg-emerald-800 px-6 py-3 text-xs font-semibold text-white shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+            <span>{addedMsg}</span>
+          </div>
+        </div>
+      )}
+
+      <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 lg:px-8">
+        {/* Breadcrumb di sản */}
+        <nav className="mb-8 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-stone-500">
+          <Link href="/" className="transition hover:text-lotus">
+            Trang chủ
+          </Link>
+          <ChevronRight className="h-3.5 w-3.5 text-stone-400" />
+          <Link href="/catalog" className="transition hover:text-lotus">
+            Bộ sưu tập
+          </Link>
+          <ChevronRight className="h-3.5 w-3.5 text-stone-400" />
+          <span className="text-bronze font-semibold">{group?.categoryName ?? "Cổ phục"}</span>
+          <ChevronRight className="h-3.5 w-3.5 text-stone-400" />
+          <span className="truncate font-bold text-ink">{loading ? "Đang tải..." : group?.name}</span>
         </nav>
 
         {loading ? (
-          <div className="flex h-64 items-center justify-center text-stone-400">Đang tải...</div>
+          <div className="flex h-96 items-center justify-center text-sm text-stone-400">
+            Đang tải dữ liệu y phục...
+          </div>
         ) : group ? (
-          <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20">
-            {/* Gallery */}
-            <div className="space-y-4 lg:sticky lg:top-28 lg:self-start">
-              {/* Main viewer */}
-              <div className="relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-lg border border-sand bg-lotus/10">
-                {group.images && group.images.length > 0 ? (
-                  <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={group.images[activeImageIdx]?.imageUrl ?? group.imageUrl ?? ""}
+          <div className="grid gap-12 lg:grid-cols-[1.1fr_0.9fr] lg:gap-16">
+            {/* Gallery ảnh y phục */}
+            <div className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+              {/* Ảnh chính */}
+              <div className="relative aspect-[3/4] overflow-hidden rounded-2xl border border-sand bg-white p-2 shadow-sm">
+                <div className="relative h-full w-full overflow-hidden rounded-xl bg-stone-100">
+                  {group.images && group.images.length > 0 ? (
+                    <>
+                      <OptimizedImage
+                        src={group.images[activeImageIdx]?.imageUrl ?? group.imageUrl ?? ""}
+                        alt={group.name}
+                        fill
+                        priority
+                        sizes="(max-width: 1024px) 100vw, 55vw"
+                        className="object-cover transition-opacity duration-300"
+                      />
+                      {group.images.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveImageIdx(
+                                (i) => (i - 1 + group.images.length) % group.images.length,
+                              )
+                            }
+                            className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
+                            aria-label="Ảnh trước"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveImageIdx((i) => (i + 1) % group.images.length)
+                            }
+                            className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-sand bg-white/90 p-2 text-ink shadow-md backdrop-blur-xs transition hover:bg-white"
+                            aria-label="Ảnh tiếp"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                          <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
+                            {group.images.map((_, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setActiveImageIdx(idx)}
+                                className={`h-1.5 rounded-full transition-all ${
+                                  idx === activeImageIdx ? "w-5 bg-white" : "w-1.5 bg-white/60"
+                                }`}
+                                aria-label={`Ảnh ${idx + 1}`}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  ) : group.imageUrl ? (
+                    <OptimizedImage
+                      src={group.imageUrl}
                       alt={group.name}
-                      className="h-full w-full object-cover transition-opacity duration-300"
+                      fill
+                      priority
+                      sizes="(max-width: 1024px) 100vw, 55vw"
+                      className="object-cover"
                     />
-                    {/* Prev / Next arrows — only if more than 1 image */}
-                    {group.images.length > 1 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setActiveImageIdx((i) => (i - 1 + group.images.length) % group.images.length)}
-                          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/80 p-1.5 text-ink shadow backdrop-blur-sm transition hover:bg-white"
-                          aria-label="Ảnh trước"
-                        >
-                          <span className="material-symbols-outlined text-[20px]">chevron_left</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveImageIdx((i) => (i + 1) % group.images.length)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-white/80 p-1.5 text-ink shadow backdrop-blur-sm transition hover:bg-white"
-                          aria-label="Ảnh tiếp"
-                        >
-                          <span className="material-symbols-outlined text-[20px]">chevron_right</span>
-                        </button>
-                        {/* Dot indicators */}
-                        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
-                          {group.images.map((_, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => setActiveImageIdx(idx)}
-                              className={`h-1.5 rounded-full transition-all ${idx === activeImageIdx ? "w-5 bg-white" : "w-1.5 bg-white/50"}`}
-                              aria-label={`Ảnh ${idx + 1}`}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </>
-                ) : group.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={group.imageUrl} alt={group.name} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="material-symbols-outlined text-[80px] text-antique/30">checkroom</span>
-                )}
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-stone-300">
+                      Cổ phục hoàng cung
+                    </div>
+                  )}
+
+                  <span className="shadow-xs absolute left-3 top-3 z-10 rounded bg-white/95 px-3 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+                    {group.categoryName ?? "Triều Nguyễn"}
+                  </span>
+                </div>
               </div>
 
-              {/* Thumbnail strip — only if more than 1 image */}
+              {/* Dải ảnh thu nhỏ (Thumbnails) */}
               {group.images && group.images.length > 1 && (
-                <div className="flex gap-2 overflow-x-auto pb-1">
+                <div className="flex gap-2.5 overflow-x-auto pb-1">
                   {group.images.map((img, idx) => (
                     <button
                       key={img.id}
                       type="button"
                       onClick={() => setActiveImageIdx(idx)}
-                      className={`relative flex-none h-20 w-16 overflow-hidden rounded border-2 transition ${idx === activeImageIdx ? "border-lotus" : "border-sand hover:border-antique"
-                        }`}
+                      className={`relative h-20 w-16 flex-none overflow-hidden rounded-lg border-2 transition ${
+                        idx === activeImageIdx
+                          ? "border-lotus shadow-xs"
+                          : "border-sand hover:border-antique"
+                      }`}
                       aria-label={`Xem ảnh ${idx + 1}`}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.imageUrl} alt={img.altText ?? group.name} className="h-full w-full object-cover" />
+                      <OptimizedImage
+                        src={img.imageUrl}
+                        alt={img.altText ?? group.name}
+                        fill
+                        sizes="64px"
+                        className="object-cover"
+                      />
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="pt-2 lg:pt-6">
-              <div className="relative mb-8 border-b border-sand/80 pb-8">
-                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-antique">{group.categoryName} · Bộ sưu tập</p>
-                <h1 className="mt-3 font-display text-5xl text-ink sm:text-6xl">{group.name}</h1>
-                <div className="mt-6 flex flex-wrap items-end gap-4">
-                  <p className="text-3xl font-semibold text-lotus">
-                    {selectedSize ? formatVND(selectedSize.dailyPrice) + " / ngày" : "—"}
-                  </p>
-                  <p className="pb-1 text-sm text-stone-500">
-                    Tiền cọc: <span className="font-semibold text-ink">{selectedSize ? formatVND(selectedSize.depositAmount) : "—"}</span>
-                  </p>
+            {/* Chi tiết & Đặt thuê */}
+            <div className="space-y-8">
+              {/* Tiêu đề & Đơn giá */}
+              <div className="border-b border-sand pb-6">
+                <span className="text-xs font-bold uppercase tracking-widest text-bronze">
+                  {group.categoryName ?? "Lưu Trữ Di Sản"} · Triều Đình
+                </span>
+                <h1 className="mt-2 font-display text-3xl font-bold tracking-tight text-oxblood sm:text-5xl">
+                  {group.name}
+                </h1>
+
+                {/* Rating review tóm tắt */}
+                {reviewsData && reviewsData.total > 0 && (
+                  <div className="mt-3 flex items-center gap-2 text-xs">
+                    <div className="flex text-amber-500">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star
+                          key={i}
+                          className={`h-3.5 w-3.5 ${
+                            i < Math.round(reviewsData.averageRating)
+                              ? "fill-amber-400 text-amber-400"
+                              : "text-stone-300"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <span className="font-bold text-ink">
+                      {reviewsData.averageRating.toFixed(1)}
+                    </span>
+                    <span className="text-stone-500">({reviewsData.total} đánh giá)</span>
+                  </div>
+                )}
+
+                {/* Khung Giá & Cọc Nổi Bật */}
+                <div className="mt-6 rounded-2xl border border-sand bg-parchment/60 p-5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-4">
+                    <div>
+                      <span className="block text-xs font-medium text-stone-600">
+                        Giá thuê theo ngày
+                      </span>
+                      <div className="mt-1 font-display text-3xl font-bold text-lotus sm:text-4xl">
+                        {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
+                        <span className="text-xs font-normal text-stone-600">/ngày</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-xs font-medium text-stone-600">
+                        Tiền cọc minh bạch
+                      </span>
+                      <div className="mt-1 text-base font-bold text-ink">
+                        {selectedSize ? formatVND(selectedSize.depositAmount) : "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-2 border-t border-sand/70 pt-3 text-xs text-stone-700">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    <span>Miễn phí giặt ủi sinh học &amp; đóng hộp bảo quản tiêu chuẩn bảo tàng.</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="mb-8">
-                <h2 className="mb-4 font-display text-3xl text-ink">Thông số chi tiết</h2>
+              {/* Thông số chất liệu & Dịp mặc */}
+              <div className="border-b border-sand pb-6">
+                <h2 className="font-display text-2xl font-bold text-oxblood">Quy Cách &amp; Chất Liệu</h2>
                 {(() => {
                   const specs: Array<{ label: string; value: string }> = [];
-                  if (group?.description) specs.push({ label: "Mô tả", value: group.description });
-                  if (group?.color) specs.push({ label: "Màu sắc", value: group.color });
-                  if ((group?.material ?? []).length > 0) specs.push({ label: "Chất liệu", value: (group?.material ?? []).join(", ") });
-                  if ((group?.occasion ?? []).length > 0) specs.push({ label: "Dịp sử dụng", value: (group?.occasion ?? []).join(", ") });
+                  if (group.description) specs.push({ label: "Mô tả phục dựng", value: group.description });
+                  if (group.color) specs.push({ label: "Màu sắc sắc độ", value: group.color });
+                  if ((group.material ?? []).length > 0)
+                    specs.push({ label: "Chất liệu gấm / tơ", value: group.material.join(", ") });
+                  if ((group.occasion ?? []).length > 0)
+                    specs.push({ label: "Dịp nghi lễ phù hợp", value: group.occasion.join(", ") });
+
                   return specs.length > 0 ? (
-                    <ul className="space-y-4">
-                      {specs.map((spec) => (
-                        <li key={spec.label} className="flex items-center justify-between gap-4 border-b border-sand/70 pb-3 text-sm">
-                          <span className="text-stone-500">{spec.label}</span>
-                          <span className="text-right font-medium text-ink">{spec.value}</span>
-                        </li>
+                    <dl className="mt-4 space-y-3 text-xs sm:text-sm">
+                      {specs.map((item) => (
+                        <div
+                          key={item.label}
+                          className="flex items-start justify-between gap-4 border-b border-sand/50 pb-2.5"
+                        >
+                          <dt className="font-medium text-stone-500">{item.label}</dt>
+                          <dd className="max-w-xs text-right font-semibold text-ink">{item.value}</dd>
+                        </div>
                       ))}
-                    </ul>
+                    </dl>
                   ) : (
-                    <p className="text-sm text-stone-500">Shop đang cập nhật thông số chi tiết cho mẫu này.</p>
+                    <p className="mt-3 text-xs text-stone-500">
+                      Xưởng may đang hoàn thiện tài liệu lưu trữ số hóa cho mẫu này.
+                    </p>
                   );
                 })()}
               </div>
 
-              <div className="space-y-8">
-                {/* Date range picker */}
-                <div>
-                  <label className="mb-3 block text-sm font-semibold uppercase tracking-[0.18em] text-ink">Khoảng thời gian thuê</label>
-                  <div className="rounded-xl border border-sand bg-white p-4 sm:p-5">
-                    <RentalDateCalendar
-                      startDate={startDate}
-                      endDate={endDate}
-                      minDate={today}
-                      maxDate={maxDate}
-                      fullyBookedDates={fullyBookedDates}
-                      loading={calLoading}
-                      onChange={(s, e) => {
-                        setStartDate(s);
-                        setEndDate(e);
-                      }}
-                    />
-                    <p className="mt-3 text-center text-sm text-stone-600">
-                      Nhận: <span className="font-semibold text-ink">{formatShortDate(startDate)}</span>
-                      {" → "}
-                      Trả: <span className="font-semibold text-ink">{formatShortDate(endDate)}</span>
-                    </p>
-                    {blockedInRange.length > 0 && (
-                      <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-center text-xs font-medium text-red-600">
-                        Khoảng ngày chứa ngày hết hàng ({blockedInRange.map(formatShortDate).join(", ")}). Vui lòng chọn lại ngày.
-                      </p>
-                    )}
-                  </div>
+              {/* Lựa chọn Kích Thước (Size Selector) */}
+              <div className="border-b border-sand pb-6">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-stone-800">
+                    Chọn Kích Cỡ:
+                  </label>
+                  <Link
+                    href="/dashboard/customer/measurements"
+                    className="text-xs font-semibold text-lotus hover:underline"
+                  >
+                    Xem số đo cơ thể của tôi
+                  </Link>
                 </div>
 
-                {/* Size - interactive */}
-                <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <label className="text-sm font-semibold uppercase tracking-[0.18em] text-ink">Kích thước</label>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    {group.sizes.map((s) => {
-                      const active = s.garmentSizeId === selectedGarmentId;
-                      return (
-                        <button
-                          key={s.garmentSizeId}
-                          type="button"
-                          onClick={() => setSelectedGarmentId(s.garmentSizeId)}
-                          className={
-                            active
-                              ? "flex h-12 min-w-[3rem] items-center justify-center rounded border border-lotus bg-parchment px-3 text-sm font-semibold text-lotus"
-                              : "flex h-12 min-w-[3rem] items-center justify-center rounded border border-sand bg-white px-3 text-sm text-ink transition hover:border-antique"
-                          }
-                        >
-                          {s.sizeLabel ?? "—"}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="mt-3 flex flex-wrap gap-2.5">
+                  {group.sizes.map((s) => {
+                    const active = s.garmentSizeId === selectedGarmentId;
+                    return (
+                      <button
+                        key={s.garmentSizeId}
+                        type="button"
+                        onClick={() => setSelectedGarmentId(s.garmentSizeId)}
+                        className={`flex min-h-[42px] min-w-[56px] items-center justify-center rounded-xl px-4 text-xs font-bold uppercase tracking-wider transition ${
+                          active
+                            ? "bg-lotus text-white shadow-xs"
+                            : "border border-sand bg-white text-stone-700 hover:border-lotus"
+                        }`}
+                      >
+                        Size {s.sizeLabel ?? "Chuẩn"}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {/* Size measurements */}
-                <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <label className="text-sm font-semibold uppercase tracking-[0.18em] text-ink">Số đo trang phục (cm)</label>
+                {/* Bảng số đo chi tiết thực tế của áo */}
+                <div className="mt-6">
+                  <div className="mb-2 text-xs font-bold text-stone-700">
+                    Bảng số đo chi tiết trang phục (cm):
                   </div>
                   {(() => {
-                    const rows: Array<{ key: string; label: string; get: (m: NonNullable<typeof selectedSize>["measurements"]) => number | null }> = [
-                      { key: "shoulder", label: "Vai", get: (m) => m?.shoulderCm ?? null },
-                      { key: "bust", label: "Ngực", get: (m) => m?.bustCm ?? null },
-                      { key: "waist", label: "Eo", get: (m) => m?.waistCm ?? null },
-                      { key: "hip", label: "Hông", get: (m) => m?.hipCm ?? null },
-                      { key: "length", label: "Dài áo", get: (m) => m?.lengthCm ?? null },
-                      { key: "sleeve", label: "Dài tay", get: (m) => m?.sleeveLengthCm ?? null },
+                    const rows: Array<{
+                      key: string;
+                      label: string;
+                      get: (m: NonNullable<typeof selectedSize>["measurements"]) => number | null;
+                    }> = [
+                      { key: "shoulder", label: "Rộng vai", get: (m) => m?.shoulderCm ?? null },
+                      { key: "bust", label: "Vòng ngực", get: (m) => m?.bustCm ?? null },
+                      { key: "waist", label: "Vòng eo", get: (m) => m?.waistCm ?? null },
+                      { key: "hip", label: "Vòng hông", get: (m) => m?.hipCm ?? null },
+                      { key: "length", label: "Chiều dài áo", get: (m) => m?.lengthCm ?? null },
+                      { key: "sleeve", label: "Dài tay áo", get: (m) => m?.sleeveLengthCm ?? null },
                     ];
                     const visibleRows = rows.filter((r) =>
-                      (group?.sizes ?? []).some((s) => r.get(s.measurements) !== null),
+                      (group.sizes ?? []).some((s) => r.get(s.measurements) !== null),
                     );
+
                     if (visibleRows.length === 0) {
                       return (
-                        <p className="rounded-lg border border-dashed border-sand bg-white px-4 py-3 text-sm text-stone-500">
-                          Shop chưa cập nhật số đo chi tiết cho mẫu này. Bạn có thể dùng tính năng thử đồ AI hoặc liên hệ tư vấn để chọn size.
+                        <p className="rounded-xl border border-dashed border-sand bg-white p-4 text-xs text-stone-500">
+                          Shop đang hoàn thiện số đo từng milimet cho mẫu này. Bạn có thể ướm thử AI
+                          để kiểm tra độ vừa vặn phom dáng.
                         </p>
                       );
                     }
+
                     return (
-                      <div className="overflow-x-auto rounded-lg border border-sand bg-white">
-                        <table className="w-full text-sm">
+                      <div className="overflow-x-auto rounded-xl border border-sand bg-white shadow-2xs">
+                        <table className="w-full text-xs">
                           <thead>
                             <tr className="border-b border-sand bg-parchment/60">
-                              <th className="px-4 py-2.5 text-left font-semibold text-stone-500">Số đo</th>
-                              {(group?.sizes ?? []).map((s) => (
+                              <th className="px-3.5 py-2.5 text-left font-bold text-stone-600">
+                                Vị trí đo
+                              </th>
+                              {(group.sizes ?? []).map((s) => (
                                 <th
                                   key={s.garmentSizeId}
-                                  className={`px-4 py-2.5 text-center font-semibold ${s.garmentSizeId === selectedGarmentId ? "text-lotus" : "text-ink"}`}
+                                  className={`px-3.5 py-2.5 text-center font-bold ${
+                                    s.garmentSizeId === selectedGarmentId
+                                      ? "bg-lotus text-white"
+                                      : "text-stone-700"
+                                  }`}
                                 >
                                   {s.sizeLabel ?? "—"}
                                 </th>
@@ -428,14 +546,22 @@ async function handleConsult() {
                           </thead>
                           <tbody>
                             {visibleRows.map((r) => (
-                              <tr key={r.key} className="border-b border-sand/60 last:border-0">
-                                <td className="px-4 py-2.5 text-stone-500">{r.label}</td>
-                                {(group?.sizes ?? []).map((s) => {
+                              <tr
+                                key={r.key}
+                                className="border-b border-sand/50 last:border-0 hover:bg-mist"
+                              >
+                                <td className="px-3.5 py-2 font-medium text-stone-600">{r.label}</td>
+                                {(group.sizes ?? []).map((s) => {
                                   const v = r.get(s.measurements);
-                                  const active = s.garmentSizeId === selectedGarmentId;
+                                  const isSel = s.garmentSizeId === selectedGarmentId;
                                   return (
-                                    <td key={s.garmentSizeId} className={`px-4 py-2.5 text-center font-medium ${active ? "bg-parchment/50 text-lotus" : "text-ink"}`}>
-                                      {v !== null ? v : "—"}
+                                    <td
+                                      key={s.garmentSizeId}
+                                      className={`px-3.5 py-2 text-center font-semibold ${
+                                        isSel ? "bg-parchment text-lotus" : "text-ink"
+                                      }`}
+                                    >
+                                      {v !== null ? `${v} cm` : "—"}
                                     </td>
                                   );
                                 })}
@@ -446,66 +572,114 @@ async function handleConsult() {
                       </div>
                     );
                   })()}
-                  <p className="mt-2 text-xs leading-5 text-stone-500">
-                    Đây là số đo thực tế của áo. Hãy đối chiếu với số đo cơ thể của bạn tại{" "}
-                    <Link href="/dashboard/customer/measurements" className="font-semibold text-lotus hover:underline">
-                      Số đo của tôi
-                    </Link>{" "}
-                    để chọn size vừa vặn — không dùng số đo áo làm số đo cơ thể.
-                  </p>
                 </div>
-
-                <Link href={`/try-on?garmentSizeId=${selectedGarmentId}`} className="group relative block overflow-hidden rounded-xl border border-antique/30 bg-gradient-to-r from-[#f9f5f0] to-white p-6 transition hover:border-antique/60">
-                  <div className="flex items-start gap-3">
-                    <span className="material-symbols-outlined text-lotus">magic_button</span>
-                    <div>
-                      <h2 className="font-display text-3xl text-ink">Thử đồ AI <span className="font-sans text-base font-normal text-stone-500">(mô phỏng thử trên ảnh)</span></h2>
-                      <p className="mt-2 max-w-xl text-sm leading-7 text-stone-600">Tải ảnh chân dung để xem thử cách bộ trang phục ôm dáng trước khi đặt thuê.</p>
-                      <span className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-lotus">Khám phá ngay<span className="material-symbols-outlined text-[16px]">arrow_forward</span></span>
-                    </div>
-                  </div>
-                </Link>
               </div>
 
-              <div className="mt-8 space-y-3">
+              {/* Khối Banner Trải Nghiệm Thử Đồ AI Virtual Try-On */}
+              <Link
+                href={`/try-on?garmentSizeId=${selectedGarmentId}`}
+                className="group relative flex items-center justify-between overflow-hidden rounded-2xl border border-emerald-300 bg-gradient-to-r from-emerald-50 via-mist to-white p-5 shadow-xs transition hover:border-emerald-500 hover:shadow-md"
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs">
+                    <Camera className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display text-xl font-bold text-oxblood">
+                      Ướm Thử Y Phục Với AI
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-stone-600">
+                      Tải ảnh chân dung để kiểm tra phom dáng và sự hòa hợp màu sắc chỉ trong 3 giây.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 transition group-hover:bg-emerald-600 group-hover:text-white">
+                  <ArrowRight className="h-4 w-4" />
+                </div>
+              </Link>
+
+              {/* Lựa Chọn Khoảng Thời Gian Thuê (Date Range Picker) */}
+              <div className="border-b border-sand pb-6">
+                <label className="text-xs font-bold uppercase tracking-wider text-stone-800">
+                  Lịch Thuê Dự Kiến:
+                </label>
+                <div className="mt-3 rounded-2xl border border-sand bg-white p-4 sm:p-5 shadow-xs">
+                  <RentalDateCalendar
+                    startDate={startDate}
+                    endDate={endDate}
+                    minDate={today}
+                    maxDate={maxDate}
+                    fullyBookedDates={fullyBookedDates}
+                    loading={calLoading}
+                    onChange={(s, e) => {
+                      setStartDate(s);
+                      setEndDate(e);
+                    }}
+                  />
+                  <div className="mt-4 flex items-center justify-between border-t border-sand/70 pt-3 text-xs">
+                    <span className="text-stone-600">
+                      Ngày nhận: <b className="text-ink">{formatShortDate(startDate)}</b>
+                    </span>
+                    <span className="text-stone-400">→</span>
+                    <span className="text-stone-600">
+                      Ngày trả: <b className="text-ink">{formatShortDate(endDate)}</b>
+                    </span>
+                  </div>
+                  {blockedInRange.length > 0 && (
+                    <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-center text-xs font-semibold text-red-600">
+                      Khoảng ngày đã chọn chứa ngày kín lịch (
+                      {blockedInRange.map(formatShortDate).join(", ")}). Vui lòng chọn khoảng khác.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Nhóm Nút Hành Động (CTA Buttons) */}
+              <div className="space-y-3 pt-2">
                 <button
                   type="button"
                   onClick={handleBookNow}
                   disabled={blockedInRange.length > 0}
-                  title={blockedInRange.length > 0 ? "Khoảng ngày chứa ngày hết hàng, vui lòng chọn lại" : undefined}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-3.5 text-xs font-bold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
                 >
-                  Đặt thuê ngay
-                  <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
+                  <ShoppingBag className="h-4 w-4" />
+                  <span>Đặt Thuê Ngay</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={handleAddToCart}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-lotus transition hover:bg-parchment"
-                >
-                  Thêm vào giỏ
-                  <span className="material-symbols-outlined text-[18px]">shopping_bag</span>
-                </button>
-                {(!user || user.role === "customer") && (
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleAddToCart}
+                    className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-lotus bg-white px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-lotus transition hover:bg-parchment active:scale-[0.98]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Thêm Vào Giỏ</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleConsult}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-lotus px-6 py-4 text-sm font-semibold uppercase tracking-[0.18em] text-jade transition hover:bg-jade/5"
+                    disabled={isConsulting}
+                    className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-sand bg-mist px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-stone-700 transition hover:border-lotus hover:text-lotus disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98]"
                   >
-                    Tư vấn
-                    <span className="material-symbols-outlined text-[18px]">support_agent</span>
+                    {isConsulting ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-lotus" />
+                    ) : (
+                      <Headphones className="h-4 w-4 text-lotus" />
+                    )}
+                    <span>{isConsulting ? "Đang gửi..." : "Tư Vấn Size"}</span>
                   </button>
-                )}
-                {addedMsg && <p className="text-center text-sm font-medium text-jade">{addedMsg}</p>}
-                {consultMsg && <p className="text-center text-sm font-medium text-jade">{consultMsg}</p>}
-                <p className="text-center text-sm text-stone-500">Đã bao gồm công là ủi, làm sạch và hỗ trợ chỉnh sửa cơ bản.</p>
-              </div>
+                </div>
 
+                {consultMsg && (
+                  <p className="text-center text-xs font-semibold text-lotus">{consultMsg}</p>
+                )}
               </div>
+            </div>
           </div>
         ) : null}
 
-        {/* Pairing accessories of the selected size */}
+        {/* Phụ Kiện Phối Kèm (Pairing Accessories) */}
         {group && (selectedSize?.accessories ?? []).length > 0 && (
           <AccessoriesShowcase
             key={selectedSize?.garmentSizeId ?? "nosize"}
@@ -513,121 +687,127 @@ async function handleConsult() {
           />
         )}
 
-        {/* Care & usage terms */}
-        {group && ((group?.careInstructions ?? []).length > 0 || (group?.usageConditions ?? []).length > 0) && (
-          <section className="mt-24 grid gap-6 md:grid-cols-2">
-            {(group?.careInstructions ?? []).length > 0 && (
-              <div className="rounded-xl border border-sand bg-white p-6 sm:p-8">
-                <h2 className="flex items-center gap-2 font-display text-3xl text-ink">
-                  <span className="material-symbols-outlined text-lotus">dry_cleaning</span>
-                  Hướng dẫn bảo quản
-                </h2>
-                <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-stone-600">
-                  {(group?.careInstructions ?? []).map((c, i) => (
-                    <li key={i}>{c}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {(group?.usageConditions ?? []).length > 0 && (
-              <div className="rounded-xl border border-sand bg-white p-6 sm:p-8">
-                <h2 className="flex items-center gap-2 font-display text-3xl text-ink">
-                  <span className="material-symbols-outlined text-lotus">contract</span>
-                  Điều kiện sử dụng
-                </h2>
-                <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-7 text-stone-600">
-                  {(group?.usageConditions ?? []).map((c, i) => (
-                    <li key={i}>{c}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
-        )}
+        {/* Hướng Dẫn Bảo Quản & Điều Kiện Thuê */}
+        {group &&
+          ((group.careInstructions ?? []).length > 0 ||
+            (group.usageConditions ?? []).length > 0) && (
+            <section className="mt-20 grid grid-cols-1 gap-8 md:grid-cols-2">
+              {(group.careInstructions ?? []).length > 0 && (
+                <div className="rounded-2xl border border-sand bg-white p-6 sm:p-8 shadow-xs">
+                  <div className="flex items-center gap-2.5 font-display text-2xl font-bold text-oxblood">
+                    <ShieldCheck className="h-5 w-5 text-lotus" />
+                    <span>Hướng Dẫn Bảo Quản Tiêu Chuẩn Bảo Tàng</span>
+                  </div>
+                  <ul className="mt-4 list-disc space-y-2 pl-5 text-xs leading-relaxed text-stone-600 sm:text-sm">
+                    {group.careInstructions.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
-        {/* Reviews Section */}
+              {(group.usageConditions ?? []).length > 0 && (
+                <div className="rounded-2xl border border-sand bg-white p-6 sm:p-8 shadow-xs">
+                  <div className="flex items-center gap-2.5 font-display text-2xl font-bold text-oxblood">
+                    <CheckCircle2 className="h-5 w-5 text-lotus" />
+                    <span>Điều Kiện Bàn Giao &amp; Hoàn Cọc</span>
+                  </div>
+                  <ul className="mt-4 list-disc space-y-2 pl-5 text-xs leading-relaxed text-stone-600 sm:text-sm">
+                    {group.usageConditions.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          )}
+
+        {/* Đánh Giá Của Khách Hàng (Reviews) */}
         {group && (
-          <section className="mt-24">
-            <div className="mb-10 flex items-end justify-between border-b border-sand pb-4">
+          <section className="mt-20 border-t border-sand pt-12">
+            <div className="flex flex-wrap items-end justify-between gap-4 border-b border-sand pb-4">
               <div>
-                <h2 className="font-display text-4xl text-ink">Đánh giá từ khách hàng</h2>
+                <h2 className="font-display text-3xl font-bold text-oxblood sm:text-4xl">
+                  Đánh Giá Từ Khách Hàng
+                </h2>
                 {reviewsData && reviewsData.total > 0 ? (
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="text-xl font-bold text-yellow-500">{reviewsData.averageRating.toFixed(1)}</span>
-                    <span className="material-symbols-outlined text-yellow-500" style={{ fontVariationSettings: '"FILL" 1' }}>star</span>
-                    <span className="text-stone-500">({reviewsData.total} đánh giá)</span>
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <span className="text-lg font-bold text-amber-500">
+                      {reviewsData.averageRating.toFixed(1)} / 5.0
+                    </span>
+                    <div className="flex text-amber-400">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star
+                          key={i}
+                          className={`h-4 w-4 ${
+                            i < Math.round(reviewsData.averageRating)
+                              ? "fill-amber-400 text-amber-400"
+                              : "text-stone-300"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-stone-500">({reviewsData.total} nhận xét)</span>
                   </div>
                 ) : (
-                  <p className="mt-2 text-stone-500">Chưa có đánh giá nào cho sản phẩm này.</p>
+                  <p className="mt-2 text-xs text-stone-500">
+                    Chưa có đánh giá nào cho mẫu cổ phục này.
+                  </p>
                 )}
               </div>
+
               {user && (
                 <button
+                  type="button"
                   onClick={() => setShowReviewModal(true)}
-                  className="rounded-xl border border-lotus text-lotus px-6 py-2.5 font-semibold transition hover:bg-lotus hover:text-white"
+                  className="rounded-xl border border-lotus px-5 py-2 text-xs font-semibold uppercase tracking-wider text-lotus transition hover:bg-lotus hover:text-white"
                 >
-                  {hasPublicReview ? "Chỉnh sửa đánh giá" : "Viết đánh giá"}
+                  {hasPublicReview ? "Chỉnh Sửa Đánh Giá" : "Viết Đánh Giá"}
                 </button>
               )}
             </div>
 
             {reviewsData && reviewsData.reviews.length > 0 && (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {reviewsData.reviews.map((review) => (
-                  <div key={review.id} className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-                    <div className="mb-4 flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-lotus/10 text-lotus font-semibold">
-                        {review.customer?.profile?.fullName?.[0]?.toUpperCase() || "K"}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-ink">{review.customer?.profile?.fullName || "Khách hàng"}</p>
-                        <p className="text-xs text-stone-400">{new Date(review.createdAt).toLocaleDateString("vi-VN")}</p>
-                      </div>
-                    </div>
-                    <div className="mb-3 flex">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <span 
-                          key={i} 
-                          className={`material-symbols-outlined text-[18px] ${
-                            i < review.rating ? "text-yellow-500 [font-variation-settings:'FILL'1]" : "text-stone-300"
-                          }`}
-                        >
-                          star
-                        </span>
-                      ))}
-                    </div>
-                    {review.comment && (
-                      <p className="text-sm leading-relaxed text-stone-600 mb-3">{review.comment}</p>
-                    )}
-                    
-                    {/* Media */}
-                    {(review.images?.length > 0 || review.video) && (
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        {review.images?.map((img, idx) => (
-                          <div key={idx} className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-lg border border-sand">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={img} alt="Review image" className="h-full w-full object-cover" />
-                          </div>
-                        ))}
-                        {review.video && (
-                          <div className="h-20 w-32 flex-shrink-0 overflow-hidden rounded-lg border border-sand bg-black">
-                            <video src={review.video} controls className="h-full w-full object-contain" />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {review.staffReply && (
-                      <div className="mt-4 rounded-lg bg-stone-50 p-4 border border-sand">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="material-symbols-outlined text-[16px] text-lotus">storefront</span>
-                          <span className="text-xs font-semibold uppercase tracking-wider text-lotus">
-                            Shop phản hồi
-                          </span>
+              <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {reviewsData.reviews.map((rev) => (
+                  <div
+                    key={rev.id}
+                    className="flex flex-col justify-between rounded-xl border border-sand bg-white p-5 shadow-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-lotus text-xs font-bold text-white">
+                          {rev.customer?.profile?.fullName?.[0]?.toUpperCase() || "K"}
                         </div>
-                        <p className="text-sm text-stone-600">{review.staffReply}</p>
+                        <div>
+                          <p className="text-xs font-bold text-ink">
+                            {rev.customer?.profile?.fullName || "Khách hàng"}
+                          </p>
+                          <p className="text-[11px] text-stone-400">
+                            {new Date(rev.createdAt).toLocaleDateString("vi-VN")}
+                          </p>
+                        </div>
                       </div>
-                    )}
+
+                      <div className="mt-3 flex text-amber-400">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`h-3 w-3 ${
+                              i < rev.rating
+                                ? "fill-amber-400 text-amber-400"
+                                : "text-stone-300"
+                            }`}
+                          />
+                        ))}
+                      </div>
+
+                      {rev.comment && (
+                        <p className="mt-2.5 text-xs leading-relaxed text-stone-600">
+                          {rev.comment}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -635,23 +815,25 @@ async function handleConsult() {
           </section>
         )}
 
-        {showReviewModal && group?.garmentId && (
+        {/* Modal đánh giá */}
+        {showReviewModal && group && group.garmentId && (
           <ReviewModal
             garmentId={group.garmentId}
             garmentName={group.name}
             onClose={() => setShowReviewModal(false)}
             onSuccess={() => {
-              setShowReviewModal(false);
-              // Refresh reviews
-              getGarmentReviews(group.garmentId!).then((revRes) => {
-                if (revRes.success && revRes.data) {
-                  setReviewsData(revRes.data);
-                }
-              });
+              if (group.garmentId) {
+                getGarmentReviews(group.garmentId).then((revRes) => {
+                  if (revRes.success && revRes.data) {
+                    setReviewsData(revRes.data);
+                  }
+                });
+              }
             }}
           />
         )}
       </main>
+
       <CustomerFooter />
     </div>
   );
@@ -667,12 +849,20 @@ function AccessoriesShowcase({
   const selected = accessories[safeIdx];
 
   return (
-    <section className="mt-24 rounded-lg border border-sand bg-mist px-6 py-12 lg:px-12">
-      <div className="grid items-center gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-        <div>
-          <h2 className="font-display text-5xl text-ink">Phối hợp phụ kiện</h2>
-          <p className="mt-4 text-base leading-8 text-stone-600">Nhấn vào từng phụ kiện để xem ảnh chi tiết.</p>
-          <div className="mt-8 space-y-4">
+    <section className="mt-20 rounded-2xl border border-sand bg-white p-6 sm:p-10 shadow-xs">
+      <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <span className="text-xs font-bold uppercase tracking-widest text-bronze">
+            Trang Sức &amp; Phụ Kiện Cung Đình
+          </span>
+          <h2 className="mt-1 font-display text-3xl font-bold text-oxblood sm:text-4xl">
+            Phối Hợp Phụ Kiện Chuẩn Bộ
+          </h2>
+          <p className="mt-2 text-xs leading-relaxed text-stone-600 sm:text-sm">
+            Mũ mão, hài thêu, quạt lụa và thẻ bài được thiết kế đồng bộ theo từng phẩm cấp trang phục.
+          </p>
+
+          <div className="mt-6 space-y-3">
             {accessories.map((item, i) => {
               const active = i === safeIdx;
               return (
@@ -680,52 +870,77 @@ function AccessoriesShowcase({
                   key={item.accessoryId}
                   type="button"
                   onClick={() => setSelectedIdx(i)}
-                  className={`flex w-full items-center gap-4 rounded-lg border bg-white p-4 text-left transition ${
-                    active ? "border-lotus ring-2 ring-lotus/20" : "border-sand hover:border-antique"
+                  className={`flex w-full items-center gap-4 rounded-xl border p-3.5 text-left transition ${
+                    active
+                      ? "border-lotus bg-parchment/60 ring-2 ring-lotus/20"
+                      : "border-sand bg-mist hover:border-lotus"
                   }`}
                 >
-                  {item.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img alt={item.name} className="h-16 w-16 rounded object-cover" src={item.imageUrl} />
-                  ) : (
-                    <div className="flex h-16 w-16 items-center justify-center rounded bg-mist">
-                      <span className="material-symbols-outlined text-2xl text-stone-300">diamond</span>
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-ink">{item.name}</h3>
-                    <p className="text-sm text-antique">Số lượng: {item.quantity}</p>
-                    <p className="text-xs text-stone-500">
-                      {item.isIncluded ? "Đi kèm miễn phí" : `+ ${formatVND(item.extraPrice)} / ngày`}
-                      {item.replacementValue > 0 && ` · Đền ${formatVND(item.replacementValue)} nếu mất/hỏng`}
+                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-stone-100">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
+                        Phụ kiện
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-xs font-bold text-ink sm:text-sm">{item.name}</h3>
+                    <p className="text-xs text-bronze font-medium">Số lượng: {item.quantity}</p>
+                    <p className="mt-0.5 text-[11px] text-stone-500">
+                      {item.isIncluded
+                        ? "Đi kèm miễn phí trong bộ"
+                        : `+ ${formatVND(item.extraPrice)} / ngày`}
+                      {item.replacementValue > 0 &&
+                        ` · Đền ${formatVND(item.replacementValue)} nếu mất/hỏng`}
                     </p>
                   </div>
-                  <span className={`material-symbols-outlined ${active ? "text-lotus" : "text-stone-500"}`}>
-                    {active ? "check_circle" : "add_circle"}
-                  </span>
+
+                  <div
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                      active ? "bg-lotus text-white" : "border border-sand bg-white text-stone-400"
+                    }`}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </div>
                 </button>
               );
             })}
           </div>
         </div>
-        <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg border border-sand bg-lotus/5">
-          {selected?.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={selected.accessoryId}
-              alt={selected.name}
-              src={selected.imageUrl}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <span className="material-symbols-outlined text-[60px] text-antique/30">diamond</span>
-          )}
-          {selected && (
-            <div className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-2.5 backdrop-blur-sm">
-              <p className="truncate text-sm font-semibold text-white">{selected.name}</p>
-              <p className="text-xs text-white/80">Số lượng: {selected.quantity}</p>
-            </div>
-          )}
+
+        {/* Preview ảnh phụ kiện */}
+        <div className="lg:col-span-5">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-sand bg-stone-100 shadow-sm">
+            {selected?.imageUrl ? (
+              <img
+                key={selected.accessoryId}
+                src={selected.imageUrl}
+                alt={selected.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs text-stone-400">
+                Phụ kiện di sản
+              </div>
+            )}
+            {selected && (
+              <div className="absolute inset-x-0 bottom-0 bg-black/70 p-4 backdrop-blur-xs text-white">
+                <p className="truncate text-xs font-bold sm:text-sm">{selected.name}</p>
+                <p className="text-[11px] text-stone-300">
+                  {selected.isIncluded
+                    ? "Đã bao gồm trong bộ trang phục"
+                    : `Thuê thêm: ${formatVND(selected.extraPrice)}/ngày`}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>

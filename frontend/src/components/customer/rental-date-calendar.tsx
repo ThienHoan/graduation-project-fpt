@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 
@@ -87,7 +88,7 @@ export function RentalDateCalendar({
           className="rounded-full p-1.5 text-stone-500 transition hover:bg-white hover:text-lotus disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-stone-500"
           aria-label="Tháng trước"
         >
-          <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+          <ChevronLeft className="h-5 w-5" />
         </button>
         <div className="flex items-center gap-2">
           <select
@@ -128,7 +129,7 @@ export function RentalDateCalendar({
           className="rounded-full p-1.5 text-stone-500 transition hover:bg-white hover:text-lotus disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-stone-500"
           aria-label="Tháng sau"
         >
-          <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+          <ChevronRight className="h-5 w-5" />
         </button>
       </div>
 

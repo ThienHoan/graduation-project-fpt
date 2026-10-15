@@ -12,11 +12,24 @@ import {
   markBookingReturned,
   markBookingPaid,
   createRefund,
+  getDeliveryTrack,
   type BookingResponse,
   type StaffBookingResponse,
+  type DeliveryTrackData,
 } from "@/lib/api";
+import { DeliveryTracker } from "@/components/location/delivery-tracker";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  Shirt,
+  Banknote,
+  QrCode,
+  Truck,
+  type LucideIcon,
+} from "lucide-react";
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -29,7 +42,8 @@ function formatDateTime(iso: string) {
 }
 
 function formatVND(amount: number) {
-  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+  const rounded = Math.round(Number(amount) || 0);
+  return `${new Intl.NumberFormat("vi-VN").format(rounded)} ₫`;
 }
 
 const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; style: string }[]>> = {
@@ -60,9 +74,9 @@ const NEXT_ACTIONS: Partial<Record<string, { status: string; label: string; styl
   overdue: [],
 };
 
-const PAYMENT_METHODS: { key: string; label: string; icon: string }[] = [
-  { key: "cash", label: "Tiền mặt", icon: "payments" },
-  { key: "qr_code", label: "QR Code", icon: "qr_code" },
+const PAYMENT_METHODS: { key: string; label: string; icon: LucideIcon }[] = [
+  { key: "cash", label: "Tiền mặt", icon: Banknote },
+  { key: "qr_code", label: "QR Code", icon: QrCode },
 ];
 
 export default function StaffBookingDetailPage() {
@@ -96,6 +110,7 @@ export default function StaffBookingDetailPage() {
   const [refundBankName, setRefundBankName] = useState("");
   const [refundBankAccount, setRefundBankAccount] = useState("");
   const [refundBankHolder, setRefundBankHolder] = useState("");
+  const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -113,6 +128,15 @@ export default function StaffBookingDetailPage() {
     const res = await getStaffBooking(bookingId);
     if (res.success && res.data) setBooking(res.data);
   }, [bookingId]);
+
+  useEffect(() => {
+    if (!bookingId || booking?.pickupMethod !== "delivery") return;
+    getDeliveryTrack(bookingId).then((res) => {
+      if (res.success && res.data) {
+        setDeliveryTrack(res.data);
+      }
+    });
+  }, [bookingId, booking?.pickupMethod, booking?.status]);
 
   useRealtimeInvalidation({ bookings: refreshBooking }, Boolean(bookingId));
 
@@ -259,9 +283,9 @@ export default function StaffBookingDetailPage() {
       {/* Back link */}
       <Link
         href="/dashboard/staff"
-        className="mb-6 inline-flex items-center gap-1 text-sm font-semibold text-lotus hover:underline"
+        className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-lotus transition hover:text-oxblood"
       >
-        <span className="material-symbols-outlined text-base">arrow_back</span>
+        <ArrowLeft className="h-4 w-4" />
         Quay lại danh sách
       </Link>
 
@@ -273,7 +297,11 @@ export default function StaffBookingDetailPage() {
 
       {toast && (
         <div className={`mb-4 flex items-center gap-2 rounded-lg border p-4 text-sm ${toast.type === "success" ? "border-jade/30 bg-jade/5 text-jade" : "border-red-200 bg-red-50 text-red-700"}`}>
-          <span className="material-symbols-outlined text-[18px]">{toast.type === "success" ? "check_circle" : "error"}</span>
+          {toast.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4 text-jade shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+          )}
           <span>{toast.message}</span>
         </div>
       )}
@@ -355,7 +383,7 @@ export default function StaffBookingDetailPage() {
                         />
                       ) : (
                         <div className="flex h-14 w-11 shrink-0 items-center justify-center rounded-md border border-sand bg-parchment text-stone-300">
-                          <span className="material-symbols-outlined text-[20px]">apparel</span>
+                          <Shirt className="h-5 w-5 text-stone-400" />
                         </div>
                       )}
                       <span>{item.garmentName ?? "—"}</span>
@@ -460,20 +488,41 @@ export default function StaffBookingDetailPage() {
         </div>
       </div>
 
-      {/* Delivery address */}
+      {/* Delivery address & Live Delivery Tracker */}
       {(booking.deliverySnapshot ?? booking.deliveryAddress) && (() => {
         const address = booking.deliverySnapshot ?? booking.deliveryAddress!;
         return (
-          <div className="mb-6 overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-            <div className="border-b border-sand bg-stone-50 px-6 py-3">
-              <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600">Địa chỉ giao nhận</h3>
+          <div className="mb-6 space-y-4">
+            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+              <div className="border-b border-sand bg-stone-50 px-6 py-3 flex items-center justify-between">
+                <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600 flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-antique" />
+                  Địa chỉ giao nhận tận nơi
+                </h3>
+                {booking.status === "delivering" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Đang trên đường giao hàng
+                  </span>
+                )}
+              </div>
+              <div className="p-6">
+                <p className="font-medium text-ink">{address.receiverName} - {address.phone}</p>
+                <p className="mt-1 text-sm text-stone-600">
+                  {[address.line1, address.ward, address.district, address.city].filter(Boolean).join(", ")}
+                </p>
+              </div>
             </div>
-            <div className="p-6">
-              <p className="font-medium text-ink">{address.receiverName} - {address.phone}</p>
-              <p className="mt-1 text-sm text-stone-600">
-                {[address.line1, address.ward, address.district, address.city].filter(Boolean).join(", ")}
-              </p>
-            </div>
+
+            {deliveryTrack && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-stone-600 flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-antique" />
+                  Tiến trình di chuyển của Shipper (Bản đồ thực tế OSRM)
+                </h3>
+                <DeliveryTracker data={deliveryTrack} />
+              </div>
+            )}
           </div>
         );
       })()}
@@ -600,21 +649,24 @@ export default function StaffBookingDetailPage() {
                 Phương thức thanh toán
               </label>
               <div className="grid grid-cols-2 gap-3">
-                {PAYMENT_METHODS.map((pm) => (
-                  <button
-                    key={pm.key}
-                    type="button"
-                    onClick={() => setSelectedPaymentMethod(pm.key)}
-                    className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition ${
-                      selectedPaymentMethod === pm.key
-                        ? "border-lotus bg-parchment text-lotus"
-                        : "border-sand bg-white text-stone-600 hover:bg-mist"
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-xl">{pm.icon}</span>
-                    {pm.label}
-                  </button>
-                ))}
+                {PAYMENT_METHODS.map((pm) => {
+                  const PmIcon = pm.icon;
+                  return (
+                    <button
+                      key={pm.key}
+                      type="button"
+                      onClick={() => setSelectedPaymentMethod(pm.key)}
+                      className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition ${
+                        selectedPaymentMethod === pm.key
+                          ? "border-lotus bg-parchment text-lotus"
+                          : "border-sand bg-white text-stone-600 hover:bg-mist"
+                      }`}
+                    >
+                      <PmIcon className="h-5 w-5" />
+                      {pm.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="mt-8 flex justify-end gap-3">

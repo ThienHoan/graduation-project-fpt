@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { apiRequest } from "@/lib/api";
 import { normalizeNullableText } from "@/lib/auth";
 import { ConfirmModal } from "@/components/heritage/ui";
+import { MapPinOff } from "lucide-react";
 
 /** (new) typed helpers for local use, but backend now returns via apiRequest */
 declare global {
@@ -274,7 +275,7 @@ export default function CustomerAddressesPage() {
 
           {!loading && addresses.length === 0 && (
             <div className="rounded-xl border border-dashed p-8 text-center" style={{ borderColor: "#e3beb8" }}>
-              <span className="material-symbols-outlined text-[36px] opacity-30" style={{ color: "#8B0000" }}>location_off</span>
+              <MapPinOff className="mx-auto h-9 w-9 opacity-40 mb-2" style={{ color: "#8B0000" }} />
               <p className="mt-2 text-sm" style={{ color: "#5a403c" }}>Chưa có địa chỉ nào được lưu.</p>
             </div>
           )}

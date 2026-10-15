@@ -1099,9 +1099,10 @@ export class BookingsService {
     return ok(points);
   }
 
-  async getDeliveryTrack(customerId: string, id: string) {
+  async getDeliveryTrack(customerId: string, id: string, role?: string) {
+    const isStaffOrHigher = ["staff", "manager_owner", "admin"].includes(role ?? "");
     const booking = await this.prisma.booking.findFirst({
-      where: { id, customerId },
+      where: isStaffOrHigher ? { id } : { id, customerId },
       include: { deliveryAddress: true, deliveryRecords: { orderBy: { createdAt: "desc" } } },
     });
 
@@ -1736,11 +1737,13 @@ export class BookingsService {
           `Chỉ có thể xác nhận bàn giao khi booking ở trạng thái 'ready_for_pickup', 'delivering' hoặc 'renting' (hiện tại: '${booking.status}').`,
         );
       }
-      if (booking.items.length === 0 || booking.items.some((item) => !item.garmentAsset)) {
+      const requestedStatus = dto.handoverStatus;
+      const isConfirmed = requestedStatus === "CONFIRMED";
+
+      if (isConfirmed && (booking.items.length === 0 || booking.items.some((item) => !item.garmentAsset))) {
         throw new BadRequestException("Tất cả booking item phải được gán asset trước khi bàn giao.");
       }
 
-      const requestedStatus = dto.handoverStatus;
       const currentHandoverStatus = booking.handoverStatus;
       if (currentHandoverStatus === "CONFIRMED" || currentHandoverStatus === "REJECTED") {
         if (currentHandoverStatus !== requestedStatus) {
@@ -1759,7 +1762,7 @@ export class BookingsService {
       if (requestedStatus === "PENDING") {
         return booking;
       }
-      if (requestedStatus === "CONFIRMED") {
+      if (isConfirmed) {
         if (dto.correctProductConfirmed !== true || dto.customerAgreed !== true) {
           throw new BadRequestException("Cần xác nhận đúng sản phẩm và người nhận đồng ý trước khi bàn giao.");
         }
@@ -1782,18 +1785,21 @@ export class BookingsService {
       const evidenceImages = dto.conditionImages?.length
         ? assertOwnedEvidenceUrls(dto.conditionImages, { purpose: "handover", ownerId: actor.id })
         : [];
-      const expectedAssetStatus = booking.status === BookingStatus.renting
-        ? AssetStatus.rented
-        : AssetStatus.reserved;
-      for (const item of booking.items) {
-        const asset = item.garmentAsset!;
-        if (asset.garmentId !== item.garmentId || asset.garment_size_id !== item.garment_size_id) {
-          throw new BadRequestException("Asset được gán không khớp với booking item.");
-        }
-        if (asset.status !== expectedAssetStatus) {
-          throw new BadRequestException(
-            `Asset '${asset.assetCode}' không ở trạng thái hợp lệ cho bàn giao (current: ${asset.status}).`,
-          );
+
+      if (isConfirmed) {
+        const expectedAssetStatus = booking.status === BookingStatus.renting
+          ? AssetStatus.rented
+          : AssetStatus.reserved;
+        for (const item of booking.items) {
+          const asset = item.garmentAsset!;
+          if (asset.garmentId !== item.garmentId || asset.garment_size_id !== item.garment_size_id) {
+            throw new BadRequestException("Asset được gán không khớp với booking item.");
+          }
+          if (asset.status !== expectedAssetStatus) {
+            throw new BadRequestException(
+              `Asset '${asset.assetCode}' không ở trạng thái hợp lệ cho bàn giao (current: ${asset.status}).`,
+            );
+          }
         }
       }
 
@@ -1811,7 +1817,6 @@ export class BookingsService {
         receiverPhone: dto.receiverPhone?.trim() || null,
         note: dto.note?.trim() || null,
       };
-      const isConfirmed = requestedStatus === "CONFIRMED";
       const nextBookingStatus = isConfirmed && booking.status !== BookingStatus.renting
         ? BookingStatus.renting
         : booking.status;

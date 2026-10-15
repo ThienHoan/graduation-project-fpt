@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createReview, updateReview, getMyReviews, ReviewResponse } from "@/lib/api";
 import { uploadFile } from "@/lib/upload";
+import { X, Star, Play, Loader2, ImagePlus } from "lucide-react";
 
 type ReviewModalProps = {
   bookingId?: string;
@@ -190,7 +191,7 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-stone-100 transition"
           >
-            <span className="material-symbols-outlined text-[20px] text-stone-500">close</span>
+            <X className="h-5 w-5 text-stone-500" />
           </button>
         </div>
 
@@ -225,15 +226,13 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
                   key={star}
                   type="button"
                   onClick={() => setRating(star)}
-                  className="transition-transform hover:scale-110 focus:outline-none"
+                  className="rounded-lg p-1 transition hover:bg-sand/30 focus:outline-none"
                 >
-                  <span
-                    className={`material-symbols-outlined text-4xl ${
-                      star <= rating ? "text-yellow-400 [font-variation-settings:'FILL'1]" : "text-stone-300"
+                  <Star
+                    className={`h-8 w-8 transition ${
+                      star <= rating ? "text-amber-400 fill-amber-400" : "text-stone-300 fill-transparent"
                     }`}
-                  >
-                    star
-                  </span>
+                  />
                 </button>
               ))}
             </div>
@@ -269,9 +268,9 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
                   <button
                     type="button"
                     onClick={() => handleRemoveImage(idx)}
-                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 hover:bg-black"
+                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 hover:bg-black transition"
                   >
-                    <span className="material-symbols-outlined text-[14px] block">close</span>
+                    <X className="h-3.5 w-3.5 block" />
                   </button>
                 </div>
               ))}
@@ -279,13 +278,13 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
               {/* Video preview */}
               {video && (
                 <div className="relative h-20 w-20 rounded-lg border border-sand overflow-hidden bg-black flex items-center justify-center">
-                  <span className="material-symbols-outlined text-white text-[24px]">play_circle</span>
+                  <Play className="h-6 w-6 text-white" />
                   <button
                     type="button"
                     onClick={handleRemoveVideo}
-                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 hover:bg-black"
+                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5 hover:bg-black transition"
                   >
-                    <span className="material-symbols-outlined text-[14px] block">close</span>
+                    <X className="h-3.5 w-3.5 block" />
                   </button>
                 </div>
               )}
@@ -299,10 +298,10 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
                   className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 bg-stone-50 text-stone-500 hover:bg-stone-100 hover:text-lotus transition disabled:opacity-50"
                 >
                   {isUploading ? (
-                    <span className="material-symbols-outlined text-[24px] animate-spin">sync</span>
+                    <Loader2 className="h-6 w-6 animate-spin text-lotus" />
                   ) : (
                     <>
-                      <span className="material-symbols-outlined text-[24px]">add_photo_alternate</span>
+                      <ImagePlus className="h-6 w-6" />
                       <span className="text-[10px] mt-1 font-semibold uppercase">Thêm</span>
                     </>
                   )}
@@ -335,7 +334,7 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
               >
                 {isSubmitting ? (
                   <>
-                    <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                    <Loader2 className="h-5 w-5 animate-spin" />
                     Đang lưu...
                   </>
                 ) : (

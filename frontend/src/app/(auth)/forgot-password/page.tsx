@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { forgotPassword, resetPassword } from "@/lib/api";
 import { PasswordVisibilityToggle } from "@/components/auth/password-visibility-toggle";
+import { KeyRound } from "lucide-react";
 
 const OTP_LENGTH = 6;
 
@@ -105,16 +106,16 @@ function ForgotPasswordContent() {
       className="flex min-h-screen items-center justify-center bg-cover bg-center bg-no-repeat p-4"
       style={{ backgroundImage: "url('/images/bg-ao-dai.png')" }}
     >
-      <div className="w-full max-w-md overflow-hidden rounded-lg border border-sand bg-white p-8 shadow-xl">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-sand bg-white p-8 shadow-xl">
         <div className="mb-6 flex justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lotus/10 text-3xl">
-            🔒
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-lotus/10 text-lotus ring-1 ring-lotus/20">
+            <KeyRound className="h-8 w-8" />
           </div>
         </div>
 
         <div className="mb-8 text-center">
-          <h1 className="font-serif text-3xl font-bold text-ink">Quên mật khẩu</h1>
-          <p className="mt-2 text-sm text-slate-700">
+          <h1 className="font-display text-4xl text-ink">Quên mật khẩu</h1>
+          <p className="mt-2 text-sm text-stone-600">
             {step === 1 ? "Nhập email của bạn để nhận mã OTP đặt lại mật khẩu." : "Nhập mã OTP và mật khẩu mới của bạn."}
           </p>
         </div>

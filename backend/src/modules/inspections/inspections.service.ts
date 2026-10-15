@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { AssetStatus, BookingStatus, InspectionStatus, MaintenanceStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { AiService } from "../ai/ai.service";
 import type { CompleteInspectionDto } from "./dto/complete-inspection.dto";
 import type { CreateFindingDto } from "./dto/create-finding.dto";
 import type { CreateInspectionDto } from "./dto/create-inspection.dto";
@@ -44,6 +45,7 @@ export class InspectionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    @Optional() private readonly aiService?: AiService,
   ) {}
 
   async createOrGet(dto: CreateInspectionDto, staffId: string) {
@@ -149,6 +151,18 @@ export class InspectionsService {
     return ok(sessions.map((s) => this.serialize(s)));
   }
 
+  async findByCustomerBooking(customerId: string, bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { customerId: true },
+    });
+    if (!booking) throw new NotFoundException("Booking not found.");
+    if (booking.customerId !== customerId) {
+      throw new ForbiddenException("Bạn không có quyền xem biên bản kiểm tra của đơn hàng này.");
+    }
+    return this.findByBooking(bookingId);
+  }
+
   async findOne(id: string) {
     const session = await this.prisma.inspectionSession.findUnique({
       where: { id },
@@ -186,6 +200,29 @@ export class InspectionsService {
     });
   }
 
+  async deleteFinding(sessionId: string, findingId: string) {
+    const session = await this.prisma.inspectionSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new NotFoundException("Inspection session not found.");
+    if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+      throw new BadRequestException("Không thể xoá ghi nhận lỗi trên phiên kiểm tra đã hoàn thành.");
+    }
+
+    const finding = await this.prisma.inspectionFinding.findFirst({
+      where: { id: findingId, inspectionSessionId: sessionId },
+    });
+    if (!finding) {
+      throw new NotFoundException("Không tìm thấy ghi nhận lỗi này trong phiên kiểm tra.");
+    }
+
+    await this.prisma.inspectionFinding.delete({
+      where: { id: findingId },
+    });
+
+    return ok({ message: "Đã xoá ghi nhận lỗi thành công", findingId });
+  }
+
   async addPhoto(sessionId: string, dto: CreatePhotoDto) {
     const photo = await this.prisma.runSerializable(async (tx) => {
       const session = await tx.inspectionSession.findUnique({ where: { id: sessionId } });
@@ -201,21 +238,261 @@ export class InspectionsService {
     return ok({ id: photo.id, imageUrl: photo.imageUrl, note: photo.note, createdAt: photo.createdAt.toISOString() });
   }
 
-  async complete(id: string, dto: CompleteInspectionDto, staffId: string) {
-    const updated = await this.prisma.runSerializable(async (tx) => {
-      const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
-      if (!FINAL_ASSET_STATUSES.includes(finalAssetStatus)) {
-        throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
-      }
+  async deletePhoto(sessionId: string, photoId: string) {
+    const session = await this.prisma.inspectionSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new NotFoundException("Inspection session not found.");
+    if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+      throw new BadRequestException("Không thể xoá ảnh trên phiên kiểm tra đã hoàn thành.");
+    }
 
-      const session = await tx.inspectionSession.findUnique({
-        where: { id },
-        include: { booking: { include: { items: true } } },
-      });
-      if (!session) throw new NotFoundException("Inspection session not found.");
-      if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
-        throw new BadRequestException("Inspection has already been completed.");
+    const photo = await this.prisma.inspectionPhoto.findFirst({
+      where: { id: photoId, inspectionSessionId: sessionId },
+    });
+    if (!photo) {
+      throw new NotFoundException("Không tìm thấy ảnh này trong phiên kiểm tra.");
+    }
+
+    await this.prisma.inspectionPhoto.delete({
+      where: { id: photoId },
+    });
+
+    return ok({ message: "Đã xoá ảnh thành công", photoId });
+  }
+
+  async runAiComparison(sessionId: string, dto?: { afterImageUrls?: string[] }, staffId?: string) {
+    const session = await this.prisma.inspectionSession.findUnique({
+      where: { id: sessionId },
+      include: this.sessionInclude(),
+    });
+    if (!session) throw new NotFoundException("Inspection session not found.");
+    if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+      throw new BadRequestException("Không thể so sánh AI trên phiên kiểm tra đã hoàn thành.");
+    }
+
+    // Nếu staff truyền thêm các ảnh mới chụp sau khi thuê, thêm vào session photos
+    if (dto?.afterImageUrls && dto.afterImageUrls.length > 0) {
+      for (const url of dto.afterImageUrls) {
+        if (!session.photos.some((p) => p.imageUrl === url)) {
+          const photo = await this.prisma.inspectionPhoto.create({
+            data: {
+              inspectionSessionId: sessionId,
+              imageUrl: url,
+              photoType: "after",
+            },
+          });
+          session.photos.push(photo as any);
+        }
       }
+    }
+
+    // Lấy ảnh trước thuê (Handover condition images từ object { images: [...] } hoặc array)
+    const beforeImages = [
+      ...new Set([
+        ...this.extractHandoverImages((session.booking as any)?.conditionImages),
+        ...session.photos.filter((p: any) => p.photoType === "before").map((p) => p.imageUrl),
+      ]),
+    ];
+
+    // Lấy ảnh sau khi thuê (Trả đồ)
+    const afterImages = session.photos
+      .filter((p: any) => p.photoType !== "before")
+      .map((p) => p.imageUrl);
+
+    if (afterImages.length === 0) {
+      throw new BadRequestException("Cần có ít nhất một ảnh sau khi nhận lại đồ để AI kiểm tra.");
+    }
+
+    const matchedItem = (session.booking as any)?.items?.find(
+      (i: any) => i.garmentAssetId === session.garmentAssetId,
+    );
+
+    const garmentName =
+      (session.garmentAsset as any)?.garment_sizes?.garments?.name ??
+      matchedItem?.garment_sizes?.garments?.name ??
+      "Trang phục";
+
+    const purchaseCost = Number(session.garmentAsset?.purchaseCost ?? 0);
+    const depositAmount = Number(
+      matchedItem?.depositAmount ??
+      (session.garmentAsset as any)?.garment_sizes?.deposit_amount ??
+      0,
+    );
+    const dailyPrice = Number(matchedItem?.dailyPrice ?? matchedItem?.basePrice ?? 0);
+
+    const garmentValue =
+      purchaseCost > 0
+        ? purchaseCost
+        : depositAmount > 0
+        ? depositAmount
+        : dailyPrice > 0
+        ? dailyPrice * 4
+        : 400000;
+
+    if (!this.aiService) {
+      throw new BadRequestException("AI service is not configured.");
+    }
+
+    const aiResult = await this.aiService.compareInspectionPhotos({
+      productTitle: garmentName,
+      conditionBeforeRental: (session.booking as any)?.conditionBeforeRental ?? null,
+      beforeImages,
+      afterImages,
+      notes: session.note,
+      garmentValue,
+      depositAmount,
+      rentalPrice: dailyPrice,
+    });
+
+    // Cập nhật kết quả vào database
+    const updated = await this.prisma.inspectionSession.update({
+      where: { id: sessionId },
+      data: {
+        aiComparisonResult: aiResult as any,
+        aiComparedAt: new Date(),
+      },
+      include: this.sessionInclude(),
+    });
+
+    this.realtime.inspectionChanged({ id: sessionId });
+
+    return ok({
+      aiComparisonResult: aiResult,
+      session: this.serialize(updated),
+    });
+  }
+
+  async applyAiFindings(sessionId: string) {
+    const session = await this.prisma.inspectionSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        garmentAsset: { include: { garment: true, garment_sizes: true } },
+        booking: { include: { items: true } },
+      },
+    });
+    if (!session) throw new NotFoundException("Inspection session not found.");
+    if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+      throw new BadRequestException("Không thể áp dụng lỗi AI trên phiên kiểm tra đã hoàn thành.");
+    }
+
+    const aiResult = session.aiComparisonResult as any;
+    if (!aiResult || !Array.isArray(aiResult.detectedIssues) || aiResult.detectedIssues.length === 0) {
+      throw new BadRequestException("Không có lỗi nào từ kết quả AI để áp dụng.");
+    }
+
+    // ── Tính giá trị định giá của trang phục để bảo vệ trần tối đa ──
+    const purchaseCost = Number(session.garmentAsset?.purchaseCost ?? 0);
+    const matchedItem = session.booking?.items?.find((it: any) => it.garmentAssetId === session.garmentAssetId);
+    const depositAmount = Number(
+      matchedItem?.depositAmount ??
+      (session.garmentAsset as any)?.garment_sizes?.deposit_amount ??
+      0,
+    );
+    const dailyPrice = Number(matchedItem?.dailyPrice ?? (session.garmentAsset as any)?.garment?.rentalPrice ?? 0);
+    const garmentValue =
+      purchaseCost > 0
+        ? purchaseCost
+        : depositAmount > 0
+        ? depositAmount
+        : dailyPrice > 0
+        ? dailyPrice * 4
+        : 400000;
+
+    const rawIssues = aiResult.detectedIssues.map((issue: any) => ({
+      findingType: String(issue.findingType || "Lỗi kiểm tra"),
+      severity: issue.severity ?? "low",
+      description: String(issue.description || ""),
+      suggestedPenalty: Math.max(0, Math.round(Number(issue.suggestedPenalty) || 0)),
+    }));
+
+    const rawSum = rawIssues.reduce((sum: number, it: any) => sum + it.suggestedPenalty, 0);
+    let issuesToApply = rawIssues;
+
+    if (rawSum > garmentValue && rawIssues.length > 0) {
+      const allSevere = rawIssues.every(
+        (it: any) => it.suggestedPenalty >= garmentValue * 0.7 || it.severity === "severe",
+      );
+      if (allSevere && rawIssues.length > 1) {
+        const combinedDesc = rawIssues
+          .map((it: any, i: number) => `[Ảnh ${i + 1} - ${it.findingType}]: ${it.description}`)
+          .join("\n\n");
+        issuesToApply = [
+          {
+            findingType: "Hư hỏng toàn diện không thể phục hồi",
+            severity: "severe",
+            description: combinedDesc,
+            suggestedPenalty: garmentValue,
+          },
+        ];
+      } else {
+        let runningSum = 0;
+        issuesToApply = rawIssues.map((issue: any, idx: number) => {
+          if (idx === rawIssues.length - 1) {
+            const remaining = Math.max(0, garmentValue - runningSum);
+            return { ...issue, suggestedPenalty: remaining };
+          }
+          const scaled = Math.round(((issue.suggestedPenalty / rawSum) * garmentValue) / 1000) * 1000;
+          runningSum += scaled;
+          return { ...issue, suggestedPenalty: scaled };
+        });
+      }
+    }
+
+    const createdFindings = await this.prisma.runSerializable(async (tx) => {
+      const results = [];
+      for (const issue of issuesToApply) {
+        const finding = await tx.inspectionFinding.create({
+          data: {
+            inspectionSessionId: sessionId,
+            findingType: issue.findingType,
+            severity: issue.severity ?? "low",
+            description: issue.description,
+            penaltyAmount: issue.suggestedPenalty ?? 0,
+          },
+        });
+        results.push(finding);
+      }
+      return results;
+    });
+
+    const refreshed = await this.prisma.inspectionSession.findUniqueOrThrow({
+      where: { id: sessionId },
+      include: this.sessionInclude(),
+    });
+
+    this.realtime.inspectionChanged({ id: sessionId });
+
+    return ok({
+      appliedCount: createdFindings.length,
+      session: this.serialize(refreshed),
+    });
+  }
+
+  async complete(id: string, dto: CompleteInspectionDto, staffId: string) {
+    let updated: any;
+    try {
+      updated = await this.prisma.runSerializable(async (tx) => {
+        const finalAssetStatus = dto.finalAssetStatus as AssetStatus;
+        if (!FINAL_ASSET_STATUSES.includes(finalAssetStatus)) {
+          throw new BadRequestException("Inspection must send the asset to laundry, maintenance, or damaged.");
+        }
+
+        const session = await tx.inspectionSession.findUnique({
+          where: { id },
+          include: {
+            booking: { include: { items: true } },
+            garmentAsset: { include: { garment: true, garment_sizes: true } },
+          },
+        });
+        if (!session) throw new NotFoundException("Inspection session not found.");
+        if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
+          // Idempotent guard: Phiên đã hoàn tất (ví dụ do click đúp hoặc race condition), trả về kết quả
+          return tx.inspectionSession.findUniqueOrThrow({
+            where: { id },
+            include: this.sessionInclude(),
+          });
+        }
 
       const claimedSession = await tx.inspectionSession.updateMany({
         where: { id, status: { in: MUTABLE_INSPECTION_STATUSES } },
@@ -241,12 +518,21 @@ export class InspectionsService {
 
       if (finalAssetStatus === AssetStatus.laundry) {
         await tx.laundryTicket.create({
-          data: { garmentAssetId: session.garmentAssetId, bookingId: session.bookingId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+          data: {
+            garmentAssetId: session.garmentAssetId,
+            bookingId: session.bookingId,
+            status: MaintenanceStatus.open,
+            note: dto.note ?? `Giặt sấy sau khi trả đơn #${session.bookingId.slice(0, 8).toUpperCase()}`,
+          },
         });
       }
       if (finalAssetStatus === AssetStatus.maintenance) {
         await tx.maintenanceJob.create({
-          data: { garmentAssetId: session.garmentAssetId, status: MaintenanceStatus.open, note: dto.note ?? `Tạo từ inspection ${id}` },
+          data: {
+            garmentAssetId: session.garmentAssetId,
+            status: MaintenanceStatus.open,
+            note: dto.note ?? `Bảo trì sau khi trả đơn #${session.bookingId.slice(0, 8).toUpperCase()}`,
+          },
         });
       }
 
@@ -254,7 +540,27 @@ export class InspectionsService {
         where: { inspectionSessionId: id },
         _sum: { penaltyAmount: true },
       });
-      const totalPenalty = Number(penaltyAggregate._sum.penaltyAmount ?? 0);
+      const rawPenalty = Number(penaltyAggregate._sum.penaltyAmount ?? 0);
+
+      // ── BẢO VỆ TRẦN PHẠT: KHÔNG VƯỢT QUÁ 100% GIÁ TRỊ TRANG PHỤC TRONG PHIÊN NÀY ──
+      const purchaseCost = Number(session.garmentAsset?.purchaseCost ?? 0);
+      const matchedItem = session.booking?.items?.find((it: any) => it.garmentAssetId === session.garmentAssetId);
+      const depositAmount = Number(
+        matchedItem?.depositAmount ??
+        (session.garmentAsset as any)?.garment_sizes?.deposit_amount ??
+        0,
+      );
+      const dailyPrice = Number(matchedItem?.dailyPrice ?? matchedItem?.basePrice ?? (session.garmentAsset as any)?.garment?.rentalPrice ?? 0);
+      const garmentValue =
+        purchaseCost > 0
+          ? purchaseCost
+          : depositAmount > 0
+          ? depositAmount
+          : dailyPrice > 0
+          ? dailyPrice * 4
+          : 0;
+
+      const totalPenalty = garmentValue > 0 ? Math.min(garmentValue, rawPenalty) : rawPenalty;
 
       const bookingAfterPenalty = await tx.booking.update({
         where: { id: session.bookingId },
@@ -263,10 +569,21 @@ export class InspectionsService {
       });
 
       if (totalPenalty > 0) {
+        const sessionFindings = await tx.inspectionFinding.findMany({
+          where: { inspectionSessionId: id },
+        });
+        const findingsList = sessionFindings
+          .map((f) => `${f.findingType}${Number(f.penaltyAmount) > 0 ? ` (-${Number(f.penaltyAmount).toLocaleString("vi-VN")}đ)` : ""}`)
+          .join(", ");
+
+        const detailedReason = dto.note?.trim()
+          ? `${dto.note.trim()} [Khấu trừ: ${findingsList}]`
+          : `Khấu trừ hư tổn trang phục: ${findingsList}`;
+
         const createdPenalty = await tx.penalty.create({
           data: {
             bookingId: session.bookingId,
-            reason: dto.note ?? `Inspection findings for session ${id}`,
+            reason: detailedReason,
             amount: totalPenalty,
             createdBy: staffId,
           },
@@ -277,9 +594,24 @@ export class InspectionsService {
             penaltyId: createdPenalty.id,
             transactionType: "penalty",
             amount: totalPenalty,
-            note: dto.note ?? `Khấu trừ hư hỏng sau kiểm tra.`,
+            note: detailedReason,
           },
         });
+
+        // ── Nếu tiền phạt vượt quá tiền cọc → Ghi nhận khoản đền bù bổ sung cần thu thêm ──
+        const depositTotal = Number(bookingAfterPenalty.depositTotal);
+        const excessAmount = totalPenalty > depositTotal ? totalPenalty - depositTotal : 0;
+        if (excessAmount > 0) {
+          const excessReason = `Đền bù hư hại vượt tiền cọc: Phí phạt thực tế ${totalPenalty.toLocaleString("vi-VN")}đ — Tiền cọc chỉ cover ${depositTotal.toLocaleString("vi-VN")}đ — Cần thu thêm ${excessAmount.toLocaleString("vi-VN")}đ từ khách hàng.`;
+          await tx.financialTransaction.create({
+            data: {
+              bookingId: session.bookingId,
+              transactionType: "debt_collect_pending",
+              amount: excessAmount,
+              note: excessReason,
+            },
+          });
+        }
       }
 
       if (await this.isBookingFullyInspected(tx, session.bookingId)) {
@@ -297,6 +629,20 @@ export class InspectionsService {
         include: this.sessionInclude(),
       });
     });
+    } catch (error) {
+      // Nếu có race condition khiến transaction failed, kiểm tra xem session đã hoàn tất chưa
+      const recheck = await this.prisma.inspectionSession?.findUnique({
+        where: { id },
+        include: this.sessionInclude(),
+      });
+      if (recheck?.status === InspectionStatus.completed) {
+        return ok(this.serialize(recheck));
+      }
+      if (error instanceof BadRequestException || error instanceof NotFoundException || error instanceof ConflictException) {
+        throw error;
+      }
+      throw new ConflictException("Hệ thống đang xử lý đơn hàng, vui lòng thử lại sau vài giây.");
+    }
 
     this.realtime.inspectionChanged({
       id: updated.id,
@@ -542,7 +888,23 @@ export class InspectionsService {
       throw new BadRequestException("Laundry ticket already completed.");
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      // Re-read bên trong transaction để tránh race condition
+      const freshTicket = await tx.laundryTicket.findUnique({ where: { id: ticketId } });
+      if (!freshTicket) throw new NotFoundException("Laundry ticket not found.");
+      if (freshTicket.status === "completed") {
+        throw new BadRequestException("Laundry ticket already completed.");
+      }
+
+      // Kiểm tra asset vẫn đang ở trạng thái laundry
+      const asset = await tx.garmentAsset.findUnique({ where: { id: freshTicket.garmentAssetId } });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
+      if (asset.status !== AssetStatus.laundry) {
+        throw new BadRequestException(
+          `Trang phục không còn ở trạng thái giặt sấy (hiện tại: ${asset.status}). Vui lòng kiểm tra lại.`,
+        );
+      }
+
       const done = await tx.laundryTicket.update({
         where: { id: ticketId },
         data: {
@@ -552,13 +914,10 @@ export class InspectionsService {
         },
       });
 
-      const claimed = await tx.garmentAsset.updateMany({
-        where: { id: ticket.garmentAssetId, status: AssetStatus.laundry },
+      await tx.garmentAsset.update({
+        where: { id: freshTicket.garmentAssetId },
         data: { status: AssetStatus.available, conditionNote: null },
       });
-      if (claimed.count !== 1) {
-        throw new BadRequestException("Asset is no longer in laundry status.");
-      }
 
       return done;
     });
@@ -737,6 +1096,10 @@ export class InspectionsService {
     const hasCompletedRefund =
       existingRefund?.status === PaymentStatus.refunded || existingRefund?.status === PaymentStatus.partially_refunded;
 
+    const refundReason = input.penaltyTotal > 0
+      ? `Hoàn cọc sau kiểm tra (Cọc ban đầu: ${input.depositTotal.toLocaleString("vi-VN")}đ - Khấu trừ hư tổn: ${input.penaltyTotal.toLocaleString("vi-VN")}đ ➔ Thực hoàn: ${refundAmount.toLocaleString("vi-VN")}đ)`
+      : `Hoàn 100% tiền cọc sau kiểm tra (Không phát sinh hư hại): ${refundAmount.toLocaleString("vi-VN")}đ`;
+
     if (refundAmount > 0 && !existingRefund) {
       const payment = await this.findAuthoritativePaidPayment(tx, input.bookingId);
       if (!payment) {
@@ -754,7 +1117,7 @@ export class InspectionsService {
           amount: refundAmount,
           status: PaymentStatus.pending,
           refund_method: refundMethod,
-          reason: "Tự động tạo sau khi kiểm tra toàn bộ trang phục",
+          reason: refundReason,
           processed_by: input.staffId,
         },
       });
@@ -764,10 +1127,22 @@ export class InspectionsService {
           refundId: createdRefund.id,
           transactionType: refundMethod === "cash" ? "refund_cash_pending" : "refund_bank_transfer_pending",
           amount: refundAmount,
-          note: `Tạo yêu cầu hoàn cọc tự động sau kiểm tra. Số tiền: ${refundAmount.toLocaleString("vi-VN")}đ`,
+          note: refundReason,
         },
       });
       hasRefundToApprove = true;
+    }
+
+    if (refundAmount <= 0 && input.depositTotal > 0 && input.penaltyTotal > 0) {
+      const forfeitReason = `Khấu trừ toàn bộ 100% tiền cọc (${input.depositTotal.toLocaleString("vi-VN")}đ) do tiền phạt hư hại (${input.penaltyTotal.toLocaleString("vi-VN")}đ) bằng hoặc vượt tiền cọc.`;
+      await tx.financialTransaction.create({
+        data: {
+          bookingId: input.bookingId,
+          transactionType: "deposit_forfeited",
+          amount: input.depositTotal,
+          note: forfeitReason,
+        },
+      });
     }
 
     const nextStatus = hasCompletedRefund || (!hasRefundToApprove && refundAmount <= 0)
@@ -787,8 +1162,8 @@ export class InspectionsService {
           toStatus: nextStatus,
           changedBy: input.staffId,
           note: nextStatus === BookingStatus.refund_pending
-            ? "Kiểm tra xong — đã tạo yêu cầu hoàn cọc, chờ quản lý duyệt"
-            : "All items inspected",
+            ? `Kiểm tra xong — Đã tạo yêu cầu hoàn cọc: ${refundAmount.toLocaleString("vi-VN")}đ (Khấu trừ phạt: ${input.penaltyTotal.toLocaleString("vi-VN")}đ). Chờ quản lý duyệt.`
+            : `Kiểm tra xong toàn bộ đồ. ${input.penaltyTotal > 0 ? `Khấu trừ toàn bộ cọc (${input.depositTotal.toLocaleString("vi-VN")}đ) do hư hại.` : "Hoàn tất đơn hàng."}`,
         },
       });
     }
@@ -817,11 +1192,34 @@ export class InspectionsService {
 
   // ── Serialization helpers ──────────────────────────────────────────────────
 
+  private extractHandoverImages(raw: any): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw.filter((x): x is string => typeof x === "string");
+    }
+    if (typeof raw === "object") {
+      if (Array.isArray(raw.images)) {
+        return raw.images.filter((x: any): x is string => typeof x === "string");
+      }
+    }
+    return [];
+  }
+
   private serialize(session: any) {
+    const handoverImages = this.extractHandoverImages(session.booking?.conditionImages);
+
     return {
-      id: session.id, bookingId: session.bookingId, garmentAssetId: session.garmentAssetId,
-      status: session.status, note: session.note,
-      createdAt: session.createdAt.toISOString(), completedAt: session.completedAt?.toISOString() ?? null,
+      id: session.id,
+      bookingId: session.bookingId,
+      garmentAssetId: session.garmentAssetId,
+      status: session.status,
+      note: session.note,
+      aiComparisonResult: session.aiComparisonResult ?? null,
+      aiComparedAt: session.completedAt ? session.aiComparedAt?.toISOString() ?? null : session.aiComparedAt?.toISOString() ?? null,
+      handoverImages,
+      conditionBeforeRental: session.booking?.conditionBeforeRental ?? null,
+      createdAt: session.createdAt.toISOString(),
+      completedAt: session.completedAt?.toISOString() ?? null,
       inspector: session.inspector ? { id: session.inspector.id, fullName: session.inspector.profile?.fullName ?? session.inspector.email } : null,
       asset: {
         id: session.garmentAsset.id, assetCode: session.garmentAsset.assetCode, status: session.garmentAsset.status, conditionNote: session.garmentAsset.conditionNote,
@@ -845,7 +1243,14 @@ export class InspectionsService {
         })),
       },
       findings: session.findings.map((f: any) => ({ id: f.id, findingType: f.findingType, severity: f.severity, description: f.description, penaltyAmount: Number(f.penaltyAmount), createdAt: f.createdAt.toISOString() })),
-      photos: session.photos.map((p: any) => ({ id: p.id, imageUrl: p.imageUrl, note: p.note, createdAt: p.createdAt.toISOString() })),
+      photos: session.photos.map((p: any) => ({
+        id: p.id,
+        imageUrl: p.imageUrl,
+        photoType: p.photoType ?? "after",
+        note: p.note,
+        aiAnalysis: p.aiAnalysis ?? null,
+        createdAt: p.createdAt.toISOString(),
+      })),
     };
   }
 }

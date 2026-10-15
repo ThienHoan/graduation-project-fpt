@@ -14,14 +14,26 @@ import {
   type PriceRuleType,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
+import {
+  Sparkles,
+  Flag,
+  Store,
+  Tag,
+  TrendingUp,
+  CalendarDays,
+  Plus,
+  Pencil,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 
-export const RULE_TYPE_META: Record<PriceRuleType, { label: string; priority: number; icon: string; color: string }> = {
-  tet: { label: "Tết", priority: 100, icon: "celebration", color: "bg-red-50 text-red-700" },
-  holiday: { label: "Ngày lễ", priority: 80, icon: "flag", color: "bg-amber-50 text-amber-700" },
-  store_program: { label: "Chương trình cửa hàng", priority: 70, icon: "storefront", color: "bg-purple-50 text-purple-700" },
-  double_sale: { label: "Sale đôi", priority: 60, icon: "sell", color: "bg-pink-50 text-pink-700" },
-  peak_season: { label: "Mùa cao điểm", priority: 50, icon: "trending_up", color: "bg-orange-50 text-orange-700" },
-  weekend: { label: "Cuối tuần", priority: 40, icon: "weekend", color: "bg-sky-50 text-sky-700" },
+export const RULE_TYPE_META: Record<PriceRuleType, { label: string; priority: number; icon: LucideIcon; color: string }> = {
+  tet: { label: "Tết", priority: 100, icon: Sparkles, color: "bg-red-50 text-red-700" },
+  holiday: { label: "Ngày lễ", priority: 80, icon: Flag, color: "bg-amber-50 text-amber-700" },
+  store_program: { label: "Chương trình cửa hàng", priority: 70, icon: Store, color: "bg-purple-50 text-purple-700" },
+  double_sale: { label: "Sale đôi", priority: 60, icon: Tag, color: "bg-pink-50 text-pink-700" },
+  peak_season: { label: "Mùa cao điểm", priority: 50, icon: TrendingUp, color: "bg-orange-50 text-orange-700" },
+  weekend: { label: "Cuối tuần", priority: 40, icon: CalendarDays, color: "bg-sky-50 text-sky-700" },
 };
 
 const RULE_TYPES = Object.keys(RULE_TYPE_META) as PriceRuleType[];
@@ -210,7 +222,7 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
             onClick={openCreate}
             className="inline-flex items-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-sm font-semibold text-white hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Plus className="h-4 w-4" />
             Thêm luật giá
           </button>
         </div>
@@ -239,6 +251,7 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
             )}
             {sorted.map((r) => {
               const meta = RULE_TYPE_META[r.ruleType];
+              const MetaIcon = meta.icon;
               const expired = !r.recurringYearly && r.endDate && r.endDate < today;
               return (
                 <tr key={r.id} className={r.isActive ? "" : "opacity-60"}>
@@ -248,8 +261,8 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
                     {r.note && <p className="text-xs text-stone-500">{r.note}</p>}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
-                      <span className="material-symbols-outlined text-[14px]">{meta.icon}</span>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.color}`}>
+                      <MetaIcon className="h-3.5 w-3.5" />
                       {meta.label}
                     </span>
                   </td>
@@ -277,11 +290,11 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
                     </button>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button type="button" onClick={() => openEdit(r)} className="mr-2 text-stone-500 hover:text-lotus" title="Sửa">
-                      <span className="material-symbols-outlined text-[20px]">edit</span>
+                    <button type="button" onClick={() => openEdit(r)} className="mr-2 text-stone-500 hover:text-lotus inline-flex items-center" title="Sửa">
+                      <Pencil className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => setToDelete(r)} className="text-stone-500 hover:text-red-600" title="Xoá">
-                      <span className="material-symbols-outlined text-[20px]">delete</span>
+                    <button type="button" onClick={() => setToDelete(r)} className="text-stone-500 hover:text-red-600 inline-flex items-center" title="Xoá">
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </td>
                 </tr>

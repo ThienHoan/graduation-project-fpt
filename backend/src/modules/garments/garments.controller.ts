@@ -27,7 +27,9 @@ export class GarmentsController {
   // ── Public: Catalog ────────────────────────────────────────────────────────
 
   @Get()
-  findAll() { return this.garmentsService.findAll(); }
+  findAll(@Query("includeDeleted") includeDeleted?: string) {
+    return this.garmentsService.findAll(includeDeleted === "true");
+  }
 
   @Get("sizes")
   findAllSizes() {
@@ -133,6 +135,13 @@ export class GarmentsController {
   @Roles("manager_owner", "admin")
   remove(@Param("id", ParseUUIDPipe) id: string) {
     return this.garmentsService.remove(id);
+  }
+
+  @Patch(":id/restore")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  restore(@Param("id", ParseUUIDPipe) id: string) {
+    return this.garmentsService.restore(id);
   }
 
   @Post(":id/images")

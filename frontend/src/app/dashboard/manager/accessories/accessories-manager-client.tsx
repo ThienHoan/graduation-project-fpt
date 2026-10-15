@@ -19,6 +19,8 @@ import {
   type AccessoryPayload,
   type LinkedGarment,
 } from "@/lib/api";
+import { Search, Plus, Sparkles, X } from "lucide-react";
+import { Pagination } from "@/components/common/pagination";
 
 const ASSET_STATUS_LABELS: Record<string, string> = {
   available: "Sẵn sàng",
@@ -68,6 +70,12 @@ export function AccessoriesManagerClient() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AccessoryDetail | null>(null);
   const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 8;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, categoryFilter, showInactive]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [assets, setAssets] = useState<AccessoryAsset[]>([]);
@@ -166,6 +174,11 @@ export function AccessoriesManagerClient() {
     });
   }, [items, search, categoryFilter]);
 
+  const paginatedItems = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
+
   const selected = items.find((a) => a.id === selectedId) ?? null;
   const totalAssets = items.reduce((s, a) => s + a.assetCount, 0);
 
@@ -200,7 +213,7 @@ export function AccessoriesManagerClient() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
-          <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-stone-400">search</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -238,7 +251,7 @@ export function AccessoriesManagerClient() {
           onClick={openCreate}
           className="inline-flex items-center gap-2 rounded-lg bg-lotus px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Plus className="h-4 w-4" />
           Thêm phụ kiện
         </button>
       </div>
@@ -251,102 +264,113 @@ export function AccessoriesManagerClient() {
           Chưa có phụ kiện nào. Nhấn “Thêm phụ kiện” để bắt đầu.
         </p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {filtered.map((a) => (
-            <div
-              key={a.id}
-              className={`rounded-xl border bg-white p-5 shadow-sm transition ${
-                selectedId === a.id ? "border-lotus" : "border-sand"
-              } ${a.isActive ? "" : "opacity-60"}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  {a.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.imageUrl} alt={a.name} className="h-14 w-14 shrink-0 rounded-lg border border-sand object-cover" />
-                  ) : (
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-sand bg-mist">
-                      <span className="material-symbols-outlined text-xl text-stone-300">diamond</span>
+        <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {paginatedItems.map((a) => (
+              <div
+                key={a.id}
+                className={`rounded-xl border bg-white p-5 shadow-sm transition ${
+                  selectedId === a.id ? "border-lotus" : "border-sand"
+                } ${a.isActive ? "" : "opacity-60"}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    {a.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.imageUrl} alt={a.name} className="h-14 w-14 shrink-0 rounded-lg border border-sand object-cover" />
+                    ) : (
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-sand bg-mist">
+                        <Sparkles className="h-5 w-5 text-stone-300" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-semibold text-antique">{a.code}</p>
+                      <h3 className="mt-0.5 truncate font-display text-2xl text-ink">{a.name}</h3>
+                      <p className="mt-1 text-xs text-stone-500">
+                        {[a.category, a.color, a.material].filter(Boolean).join(" · ") || "—"}
+                      </p>
                     </div>
+                  </div>
+                  {!a.isActive && (
+                    <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-500">
+                      Đã ẩn
+                    </span>
                   )}
-                  <div className="min-w-0">
-                    <p className="font-mono text-xs font-semibold text-antique">{a.code}</p>
-                    <h3 className="mt-0.5 truncate font-display text-2xl text-ink">{a.name}</h3>
-                    <p className="mt-1 text-xs text-stone-500">
-                      {[a.category, a.color, a.material].filter(Boolean).join(" · ") || "—"}
-                    </p>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <p className="text-sm text-stone-600">
+                    <span className="font-semibold text-ink">{a.assetCount}</span> tài sản
+                    {a.replacementValue > 0 && (
+                      <span className="text-stone-400"> · Đền {formatVND(a.replacementValue)}</span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => selectAccessory(a.id)}
+                      className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-antique"
+                    >
+                      {selectedId === a.id ? "Đang xem" : "Tài sản"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleLinkedGarments(a.id)}
+                      className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-jade transition hover:border-jade"
+                    >
+                      {linkedOpenId === a.id ? "Ẩn mẫu gắn" : "Mẫu đang gắn"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openEdit(a)}
+                      className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-lotus transition hover:border-lotus"
+                    >
+                      Sửa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleActive(a)}
+                      className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-500 transition hover:border-antique"
+                    >
+                      {a.isActive ? "Ẩn" : "Hiện"}
+                    </button>
                   </div>
                 </div>
-                {!a.isActive && (
-                  <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold text-stone-500">
-                    Đã ẩn
-                  </span>
+                {linkedOpenId === a.id && (
+                  <div className="mt-3 rounded-lg border border-sand bg-mist/60 p-3">
+                    {linkedLoadingId === a.id ? (
+                      <p className="text-xs text-stone-400">Đang tải...</p>
+                    ) : (linkedGarments[a.id] ?? []).length === 0 ? (
+                      <p className="text-xs text-stone-500">Chưa gắn cho mẫu trang phục nào.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {(linkedGarments[a.id] ?? []).map((g) => (
+                          <li key={g.garmentId} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="min-w-0 flex-1 truncate font-medium text-ink">
+                              {g.name}
+                              {!g.isActive && <span className="ml-1 text-stone-400">(đã ẩn)</span>}
+                            </span>
+                            <span className="shrink-0 text-stone-500">
+                              Size: {g.sizes.length > 0 ? g.sizes.join(", ") : "—"} · SL {g.quantity}
+                              {g.isIncluded ? "" : " · thuê kèm"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="mt-3 flex items-center justify-between">
-                <p className="text-sm text-stone-600">
-                  <span className="font-semibold text-ink">{a.assetCount}</span> tài sản
-                  {a.replacementValue > 0 && (
-                    <span className="text-stone-400"> · Đền {formatVND(a.replacementValue)}</span>
-                  )}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => selectAccessory(a.id)}
-                    className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-ink transition hover:border-antique"
-                  >
-                    {selectedId === a.id ? "Đang xem" : "Tài sản"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void toggleLinkedGarments(a.id)}
-                    className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-jade transition hover:border-jade"
-                  >
-                    {linkedOpenId === a.id ? "Ẩn mẫu gắn" : "Mẫu đang gắn"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void openEdit(a)}
-                    className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-lotus transition hover:border-lotus"
-                  >
-                    Sửa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void toggleActive(a)}
-                    className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-500 transition hover:border-antique"
-                  >
-                    {a.isActive ? "Ẩn" : "Hiện"}
-                  </button>
-                </div>
-              </div>
-              {linkedOpenId === a.id && (
-                <div className="mt-3 rounded-lg border border-sand bg-mist/60 p-3">
-                  {linkedLoadingId === a.id ? (
-                    <p className="text-xs text-stone-400">Đang tải...</p>
-                  ) : (linkedGarments[a.id] ?? []).length === 0 ? (
-                    <p className="text-xs text-stone-500">Chưa gắn cho mẫu trang phục nào.</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {(linkedGarments[a.id] ?? []).map((g) => (
-                        <li key={g.garmentId} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="min-w-0 flex-1 truncate font-medium text-ink">
-                            {g.name}
-                            {!g.isActive && <span className="ml-1 text-stone-400">(đã ẩn)</span>}
-                          </span>
-                          <span className="shrink-0 text-stone-500">
-                            Size: {g.sizes.length > 0 ? g.sizes.join(", ") : "—"} · SL {g.quantity}
-                            {g.isIncluded ? "" : " · thuê kèm"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <Pagination
+            currentPage={page}
+            totalItems={filtered.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            itemLabel="loại phụ kiện"
+            className="rounded-xl border border-sand bg-white shadow-sm"
+          />
         </div>
       )}
 
@@ -495,7 +519,7 @@ function AssetsPanel({
             onClick={onAddAsset}
             className="inline-flex items-center gap-2 rounded-lg bg-jade px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Plus className="h-4 w-4" />
             Thêm tài sản
           </button>
           <button
@@ -505,7 +529,7 @@ function AssetsPanel({
             aria-label="Đóng bảng tài sản"
             title="Đóng bảng tài sản"
           >
-            <span className="material-symbols-outlined text-[20px]">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -773,7 +797,7 @@ function AccessoryFormModal({
         <div className="mb-6 flex items-center justify-between">
           <h3 className="font-display text-2xl text-ink">{initial ? "Sửa phụ kiện" : "Thêm phụ kiện"}</h3>
           <button type="button" onClick={() => void handleClose()} className="text-stone-500 hover:text-lotus">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <div className="space-y-4">
@@ -863,7 +887,7 @@ function AccessoryFormModal({
                   className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
                   aria-label="Gỡ ảnh"
                 >
-                  <span className="material-symbols-outlined text-[14px]">close</span>
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             ) : (
@@ -931,7 +955,7 @@ function AccessoryAssetFormModal({
         <div className="mb-6 flex items-center justify-between">
           <h3 className="font-display text-2xl text-ink">Thêm tài sản mới</h3>
           <button type="button" onClick={onClose} className="text-stone-500 hover:text-lotus">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </div>
         <p className="mb-4 text-sm text-stone-500">

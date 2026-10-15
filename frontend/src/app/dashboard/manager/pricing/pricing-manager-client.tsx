@@ -25,6 +25,21 @@ import {
 import { ConfirmModal } from "@/components/heritage/ui";
 import { statusBadgeClass } from "@/lib/status-labels";
 import { PriceRulesTab } from "./price-rules-tab";
+import {
+  CheckCircle2,
+  AlertCircle,
+  Search,
+  Sparkles,
+  Calendar,
+  Lightbulb,
+  TrendingUp,
+  Plus,
+  RefreshCw,
+  Check,
+  X,
+  Pencil,
+  type LucideIcon,
+} from "lucide-react";
 
 const OCCASION_LABELS: Record<string, string> = {
   holiday: "Ngày lễ",
@@ -94,13 +109,15 @@ function ToastView({ toast }: { toast: Toast }) {
   if (!toast) return null;
   return (
     <div
-      className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold shadow-lg border animate-slide-in ${
+      className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border animate-slide-in ${
         toast.kind === "success" ? "bg-jade/5 text-jade border-jade/30" : "bg-red-50 text-red-700 border-red-200"
       }`}
     >
-      <span className="material-symbols-outlined text-[20px]">
-        {toast.kind === "success" ? "check_circle" : "error"}
-      </span>
+      {toast.kind === "success" ? (
+        <CheckCircle2 className="h-5 w-5 shrink-0" />
+      ) : (
+        <AlertCircle className="h-5 w-5 shrink-0" />
+      )}
       <span>{toast.message}</span>
     </div>
   );
@@ -160,9 +177,9 @@ function PricingFilterBar({
       <button
         type="button"
         onClick={onApply}
-        className="inline-flex items-center gap-1 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood"
+        className="inline-flex items-center gap-1.5 rounded-lg bg-lotus px-3 py-2 text-sm font-semibold text-white transition hover:bg-oxblood"
       >
-        <span className="material-symbols-outlined text-[16px]">search</span>
+        <Search className="h-4 w-4" />
         Tìm
       </button>
       <button
@@ -220,29 +237,32 @@ export function PricingManagerClient() {
   const [tab, setTab] = useState<PricingTab>("rules");
   const { toast, show } = useToasts();
 
-  const tabs: Array<{ key: PricingTab; label: string; icon: string }> = [
-    { key: "rules", label: "Luật giá tự động", icon: "auto_mode" },
-    { key: "calendar", label: "Lịch sự kiện", icon: "event" },
-    { key: "suggestions", label: "Đề xuất giá", icon: "lightbulb" },
-    { key: "periods", label: "Khoảng giá hiệu lực", icon: "price_change" },
+  const tabs: Array<{ key: PricingTab; label: string; icon: LucideIcon }> = [
+    { key: "rules", label: "Luật giá tự động", icon: Sparkles },
+    { key: "calendar", label: "Lịch sự kiện", icon: Calendar },
+    { key: "suggestions", label: "Đề xuất giá", icon: Lightbulb },
+    { key: "periods", label: "Khoảng giá hiệu lực", icon: TrendingUp },
   ];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2 border-b border-sand pb-3">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-              tab === t.key ? "bg-lotus text-white shadow" : "bg-white text-stone-600 border border-sand hover:border-lotus hover:text-lotus"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
-            {t.label}
-          </button>
-        ))}
+        {tabs.map((t) => {
+          const TabIcon = t.icon;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                tab === t.key ? "bg-lotus text-white shadow" : "bg-white text-stone-600 border border-sand hover:border-lotus hover:text-lotus"
+              }`}
+            >
+              <TabIcon className="h-4 w-4" />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
       {tab === "rules" && <PriceRulesTab showToast={show} />}
@@ -337,7 +357,7 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
           onClick={() => setModal({ open: true, editing: null })}
           className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2 text-sm font-semibold text-white transition hover:bg-oxblood"
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Plus className="h-4 w-4" />
           Thêm sự kiện
         </button>
       </div>
@@ -411,9 +431,9 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
                         type="button"
                         onClick={() => handleGenerate(evt)}
                         disabled={generating === evt.id}
-                        className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-50"
                       >
-                        <span className="material-symbols-outlined text-[16px]">auto_awesome</span>
+                        <Sparkles className="h-3.5 w-3.5" />
                         {generating === evt.id ? "Đang sinh..." : "Sinh đề xuất"}
                       </button>
                       <button
@@ -590,7 +610,7 @@ function CalendarFormModal({
         <header className="flex items-center justify-between border-b border-sand bg-warm-ivory px-6 py-4">
           <h3 className="font-display text-2xl text-ink">{editing ? "Sửa sự kiện" : "Thêm sự kiện"}</h3>
           <button type="button" onClick={onClose} className="text-stone-500 hover:text-ink">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </header>
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
@@ -851,15 +871,15 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
             onClick={() => setCreateOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg bg-lotus px-4 py-2 text-sm font-semibold text-white transition hover:bg-oxblood"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Plus className="h-4 w-4" />
             Tạo đề xuất
           </button>
           <button
             type="button"
             onClick={load}
-            className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
           >
-            <span className="material-symbols-outlined text-[18px]">refresh</span>
+            <RefreshCw className="h-4 w-4" />
             Nạp lại
           </button>
         </div>
@@ -880,17 +900,17 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
             <button
               type="button"
               onClick={() => setBulkAction("approve")}
-              className="inline-flex items-center gap-1 rounded-lg bg-jade px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-jade px-3 py-2 text-xs font-semibold text-white transition hover:opacity-90"
             >
-              <span className="material-symbols-outlined text-[16px]">check</span>
+              <Check className="h-3.5 w-3.5" />
               Duyệt đã chọn
             </button>
             <button
               type="button"
               onClick={() => setBulkAction("reject")}
-              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
             >
-              <span className="material-symbols-outlined text-[16px]">close</span>
+              <X className="h-3.5 w-3.5" />
               Từ chối đã chọn
             </button>
             <button
@@ -992,17 +1012,17 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
                           <button
                             type="button"
                             onClick={() => setEditTarget(s)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
                           >
-                            <span className="material-symbols-outlined text-[16px]">edit</span>
+                            <Pencil className="h-3.5 w-3.5" />
                             Sửa giá
                           </button>
                           <button
                             type="button"
                             onClick={() => setActionTarget({ id: s.id, action: "approve" })}
-                            className="inline-flex items-center gap-1 rounded-lg bg-jade/10 px-3 py-1.5 text-xs font-semibold text-jade transition hover:bg-jade/20"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-jade/10 px-3 py-1.5 text-xs font-semibold text-jade transition hover:bg-jade/20"
                           >
-                            <span className="material-symbols-outlined text-[16px]">check</span>
+                            <Check className="h-3.5 w-3.5" />
                             Duyệt
                           </button>
                           <button
@@ -1220,7 +1240,7 @@ function SuggestionFormModal({
         <header className="flex items-center justify-between border-b border-sand bg-warm-ivory px-6 py-4">
           <h3 className="font-display text-2xl text-ink">Tạo đề xuất thủ công</h3>
           <button type="button" onClick={onClose} className="text-stone-500 hover:text-ink">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </header>
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
@@ -1377,7 +1397,7 @@ function EditPriceModal({
         <header className="flex items-center justify-between border-b border-sand bg-warm-ivory px-6 py-4">
           <h3 className="font-display text-2xl text-ink">Sửa giá đề xuất</h3>
           <button type="button" onClick={onClose} className="text-stone-500 hover:text-ink">
-            <span className="material-symbols-outlined">close</span>
+            <X className="h-5 w-5" />
           </button>
         </header>
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
@@ -1487,9 +1507,9 @@ function PeriodsTab({ showToast }: { showToast: (k: "success" | "error", m: stri
         <button
           type="button"
           onClick={load}
-          className="inline-flex items-center gap-1 rounded-lg border border-sand px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-2 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
         >
-          <span className="material-symbols-outlined text-[18px]">refresh</span>
+          <RefreshCw className="h-4 w-4" />
           Nạp lại
         </button>
       </div>
