@@ -262,29 +262,37 @@ export function StaffPortalShell({
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const ItemIcon = item.icon;
+                  const isHashTab =
+                    (item.href.includes("#") || item.href === "/dashboard/staff") &&
+                    item.key !== "chat";
+                  const itemClass = isActive
+                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
+                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+                  if (isHashTab && onTabChange) {
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => onTabChange(item.key)}
+                        className={itemClass}
+                      >
+                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  }
+
                   return (
-                    <a
+                    <Link
                       key={item.key}
                       href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const isHashTab =
-                          (item.href.includes("#") || item.href === "/dashboard/staff") &&
-                          item.key !== "chat";
-                        if (isHashTab && onTabChange) {
-                          onTabChange(item.key);
-                        } else {
-                          router.push(item.href);
-                        }
-                      }}
-                      className={isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                      className={itemClass}
                     >
                       <ItemIcon className="h-4.5 w-4.5 shrink-0" />
                       <span className="truncate">{item.label}</span>
                       {item.key === "chat" && <StaffChatNavBadge />}
-                    </a>
+                    </Link>
                   );
                 })}
               </div>
@@ -493,30 +501,39 @@ export function ManagerPortalShell({
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const ItemIcon = item.icon;
+                  const isHashTab =
+                    (item.href.includes('#') || item.href === '/dashboard/manager') &&
+                    item.key !== "chat";
+                  const itemClass = isActive
+                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
+                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+                  if (isHashTab && onTabChange) {
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => onTabChange(item.key)}
+                        className={itemClass}
+                      >
+                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                        {item.key === "reviews" && <ManagerReviewsNavBadge />}
+                      </button>
+                    );
+                  }
+
                   return (
-                    <a
+                    <Link
                       key={item.key}
                       href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const isHashTab =
-                          (item.href.includes('#') || item.href === '/dashboard/manager') &&
-                          item.key !== "chat";
-                        if (isHashTab && onTabChange) {
-                          onTabChange(item.key);
-                        } else {
-                          router.push(item.href);
-                        }
-                      }}
-                      className={isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                      className={itemClass}
                     >
                       <ItemIcon className="h-4.5 w-4.5 shrink-0" />
                       <span className="truncate">{item.label}</span>
                       {item.key === "reviews" && <ManagerReviewsNavBadge />}
                       {item.key === "chat" && <StaffChatNavBadge />}
-                    </a>
+                    </Link>
                   );
                 })}
               </div>
@@ -660,21 +677,33 @@ export function AdminPortalShell({
           {items.map((item) => {
             const isActive = item.key === active;
             const ItemIcon = item.icon;
+            const itemClass = isActive
+              ? "flex w-full items-center gap-3 rounded-xl bg-lotus/10 px-4 py-3 text-left text-sm font-semibold text-lotus"
+              : "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+            if (onTabChange) {
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onTabChange(item.key)}
+                  className={itemClass}
+                >
+                  <ItemIcon className="h-5 w-5 shrink-0" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            }
+
             return (
-              <a
+              <Link
                 key={item.key}
                 href={item.href}
-                onClick={(e) => {
-                  e.preventDefault();
-                  onTabChange?.(item.key);
-                }}
-                className={isActive
-                  ? "flex items-center gap-3 rounded-xl bg-lotus/10 px-4 py-3 text-sm font-semibold text-lotus"
-                  : "flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                className={itemClass}
               >
                 <ItemIcon className="h-5 w-5 shrink-0" />
                 <span>{item.label}</span>
-              </a>
+              </Link>
             );
           })}
         </nav>

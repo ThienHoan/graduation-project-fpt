@@ -176,8 +176,13 @@ const ASSET_NEEDED_STATUSES = [
 ];
 
 export default function StaffDashboardPage() {
+  const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<Tab>("pending");
   const [bookings, setBookings] = useState<StaffBookingResponse[]>([]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -485,6 +490,10 @@ export default function StaffDashboardPage() {
   const totalPages = Math.max(1, Math.ceil(filteredBookings.length / STAFF_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pagedBookings = filteredBookings.slice((currentPage - 1) * STAFF_PAGE_SIZE, currentPage * STAFF_PAGE_SIZE);
+
+  if (!mounted) {
+    return null;
+  }
 
   return (
     <StaffPortalShell
