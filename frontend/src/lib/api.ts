@@ -98,6 +98,8 @@ export type GarmentSummary = {
   color: string | null;
   dailyPrice: number;
   depositAmount: number;
+  isActive?: boolean;
+  deletedAt?: string | null;
   images?: GarmentImage[];
 };
 
@@ -154,8 +156,9 @@ export async function getGarmentsGrouped(search?: string, category?: string) {
   return apiRequest<GarmentGrouped[]>(`/garments/grouped${query}`);
 }
 
-export async function getGarments() {
-  return apiRequest<GarmentSummary[]>("/garments");
+export async function getGarments(includeDeleted = false) {
+  const query = includeDeleted ? "?includeDeleted=true" : "";
+  return apiRequest<GarmentSummary[]>(`/garments${query}`);
 }
 
 export async function getGarmentById(id: string) {
@@ -1500,6 +1503,12 @@ export async function updateGarment(id: string, payload: {
 export async function deleteGarment(id: string) {
   return apiRequest<{ id: string; deleted: boolean }>(`/garments/${id}`, {
     method: "DELETE",
+  });
+}
+
+export async function restoreGarment(id: string) {
+  return apiRequest<{ id: string; restored: boolean }>(`/garments/${id}/restore`, {
+    method: "PATCH",
   });
 }
 

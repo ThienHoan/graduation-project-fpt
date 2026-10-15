@@ -33,6 +33,7 @@ import {
   Banknote,
   Wallet,
   RotateCcw,
+  EyeOff,
   Receipt,
   Calendar,
   PieChart,
@@ -69,6 +70,7 @@ import {
   createGarment,
   updateGarment,
   deleteGarment,
+  restoreGarment,
   addGarmentImage,
   removeGarmentImage,
   getGarmentCategories,
@@ -507,7 +509,7 @@ export default function ManagerDashboardPage() {
       getStaffCompletedRefundBookings().then((res) => {
         if (res.success && res.data) setCompletedRefundBookings(res.data);
       }),
-      getGarments().then((res) => {
+      getGarments(true).then((res) => {
         if (res.success && res.data) setGarments(res.data);
       }),
       getAllAssets().then((res) => {
@@ -527,7 +529,7 @@ export default function ManagerDashboardPage() {
   }, []);
 
   function refreshGarments() {
-    return getGarments().then((res) => {
+    return getGarments(true).then((res) => {
       if (res.success && res.data) setGarments(res.data);
     });
   }
@@ -639,10 +641,22 @@ export default function ManagerDashboardPage() {
     const res = await deleteGarment(id);
     if (res.success) {
       await refreshGarments();
-      if (selectedGarmentId === id) setSelectedGarmentId(null);
+      showToast("success", "Đã xóa mềm trang phục thành công (trang phục chuyển sang danh mục Đã ẩn).");
       setGarmentToDeleteId(null);
     } else {
       setErrorMsg(res.message ?? "Không thể xoá trang phục.");
+    }
+    setSubmitting(false);
+  }
+
+  async function handleRestoreGarment(id: string) {
+    setSubmitting(true);
+    const res = await restoreGarment(id);
+    if (res.success) {
+      await refreshGarments();
+      showToast("success", "Đã khôi phục trang phục thành công.");
+    } else {
+      setErrorMsg(res.message ?? "Không thể khôi phục trang phục.");
     }
     setSubmitting(false);
   }
@@ -708,7 +722,7 @@ export default function ManagerDashboardPage() {
 
   // ── Load garments ──
   useEffect(() => {
-    getGarments().then((res) => {
+    getGarments(true).then((res) => {
       if (res.success && res.data) {
         setGarments(res.data);
         if (res.data.length > 0 && !selectedGarmentId) {
@@ -1328,6 +1342,7 @@ export default function ManagerDashboardPage() {
           onCloseAssetModal={() => setAssetModalOpen(false)}
           onSubmitAsset={handleCreateAsset}
           onDeleteGarment={setGarmentToDeleteId}
+          onRestoreGarment={handleRestoreGarment}
           onCategoryCreated={(cat) => setCategories((prev) => [...prev, cat])}
           onSizeCreated={(label) =>
             setSizes((prev) =>
@@ -2454,6 +2469,7 @@ function InventoryTab({
   onCloseAssetModal,
   onSubmitAsset,
   onDeleteGarment,
+  onRestoreGarment,
   onCategoryCreated,
   onSizeCreated,
 }: {
@@ -2487,23 +2503,33 @@ function InventoryTab({
   onCloseAssetModal: () => void;
   onSubmitAsset: (payload: Parameters<typeof createAsset>[0]) => Promise<void>;
   onDeleteGarment: (id: string) => void;
+  onRestoreGarment: (id: string) => void;
   onCategoryCreated: (cat: GarmentCategory) => void;
   onSizeCreated: (label: string) => void;
 }) {
   const [garmentSearch, setGarmentSearch] = useState("");
+  const [garmentFilter, setGarmentFilter] = useState<"all" | "active" | "deleted">("all");
   const [assetSearch, setAssetSearch] = useState("");
   const [assetStatusFilter, setAssetStatusFilter] = useState("all");
 
+  const activeCount = useMemo(() => garments.filter((g) => !g.deletedAt).length, [garments]);
+  const deletedCount = useMemo(() => garments.filter((g) => Boolean(g.deletedAt)).length, [garments]);
+
   const filteredGarments = useMemo(() => {
     const q = garmentSearch.trim().toLowerCase();
-    return q
-      ? garments.filter((g) =>
-          [g.name, g.categoryName, g.sizeLabel].some((v) =>
-            v?.toLowerCase().includes(q),
-          ),
-        )
-      : garments;
-  }, [garments, garmentSearch]);
+    return garments.filter((g) => {
+      const isDeleted = Boolean(g.deletedAt);
+      if (garmentFilter === "active" && isDeleted) return false;
+      if (garmentFilter === "deleted" && !isDeleted) return false;
+
+      if (q) {
+        return [g.name, g.categoryName, g.sizeLabel].some((v) =>
+          v?.toLowerCase().includes(q),
+        );
+      }
+      return true;
+    });
+  }, [garments, garmentSearch, garmentFilter]);
 
   const filteredAssets = useMemo(() => {
     const q = assetSearch.trim().toLowerCase();
@@ -2544,7 +2570,7 @@ function InventoryTab({
             Thêm trang phục
           </button>
         </div>
-        <div className="border-b border-sand bg-white px-4 py-3">
+        <div className="border-b border-sand bg-white px-4 py-3 space-y-2.5">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
             <input
@@ -2553,6 +2579,42 @@ function InventoryTab({
               className="w-full rounded-lg border border-sand bg-mist py-2 pl-10 pr-3 text-sm outline-none focus:border-antique"
               placeholder="Tìm trang phục, danh mục, size..."
             />
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("all")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                garmentFilter === "all"
+                  ? "bg-stone-800 text-white font-semibold"
+                  : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+              }`}
+            >
+              Tất cả ({garments.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("active")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                garmentFilter === "active"
+                  ? "bg-lotus text-white font-semibold"
+                  : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+              }`}
+            >
+              Đang hoạt động ({activeCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setGarmentFilter("deleted")}
+              className={`rounded-lg px-2.5 py-1 font-medium transition flex items-center gap-1 ${
+                garmentFilter === "deleted"
+                  ? "bg-amber-600 text-white font-semibold"
+                  : "bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100"
+              }`}
+            >
+              <EyeOff className="h-3 w-3" />
+              <span>Đã xóa mềm ({deletedCount})</span>
+            </button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -2564,11 +2626,14 @@ function InventoryTab({
             <div className="grid grid-cols-2 gap-4">
               {filteredGarments.map((g) => {
                 const isSelected = g.id === selectedGarmentId;
+                const isDeleted = Boolean(g.deletedAt);
                 return (
                   <div
                     key={g.id}
                     className={`group rounded-lg border overflow-hidden text-left transition relative ${
-                      isSelected
+                      isDeleted
+                        ? "opacity-75 grayscale-[0.35] border-dashed border-amber-300 bg-amber-50/20"
+                        : isSelected
                         ? "border-lotus ring-2 ring-lotus/20"
                         : "border-outline-variant hover:shadow-md"
                     }`}
@@ -2591,9 +2656,16 @@ function InventoryTab({
                             <Shirt className="h-12 w-12 text-antique/30" />
                           </div>
                         )}
-                        <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
-                          {g.categoryName ?? "Trang phục"}
-                        </div>
+                        {isDeleted ? (
+                          <div className="absolute top-2 left-2 rounded bg-amber-700/90 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm flex items-center gap-1 shadow-2xs">
+                            <EyeOff className="h-3 w-3" />
+                            <span>Đã xóa mềm (Ẩn)</span>
+                          </div>
+                        ) : (
+                          <div className="absolute top-2 left-2 rounded bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-ink backdrop-blur-sm">
+                            {g.categoryName ?? "Trang phục"}
+                          </div>
+                        )}
                       </div>
                       <div className="p-3">
                         <h3 className="font-display text-base text-ink line-clamp-1">
@@ -2613,22 +2685,39 @@ function InventoryTab({
                       </div>
                     </button>
                     <div className="absolute top-2 right-2 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onEditGarment(g)}
-                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
-                        aria-label="Chỉnh sửa"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteGarment(g.id)}
-                        className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
-                        aria-label="Xoá"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {isDeleted ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRestoreGarment(g.id);
+                          }}
+                          className="rounded-md bg-emerald-600 px-2 py-1 text-white text-xs font-semibold shadow-xs hover:bg-emerald-700 transition flex items-center gap-1"
+                          title="Khôi phục lại trang phục kinh doanh"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span>Khôi phục</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onEditGarment(g)}
+                            className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-lotus transition"
+                            aria-label="Chỉnh sửa"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteGarment(g.id)}
+                            className="rounded-md bg-white/90 backdrop-blur-sm p-1.5 text-stone-500 hover:text-red-500 transition"
+                            aria-label="Xoá"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -4135,7 +4224,7 @@ function DeleteGarmentConfirmModal({
           <h3 className="font-display text-xl text-ink">Xóa trang phục</h3>
           <p className="mt-2 text-sm text-stone-500">
             Bạn có chắc chắn muốn xóa trang phục này không? Trang phục sẽ được
-            xóa mềm và có thể khôi phục sau.
+            xóa mềm (ẩn khỏi danh mục công khai) và chuyển vào tab &ldquo;Đã xóa mềm&rdquo;. Bạn có thể khôi phục lại bất kỳ lúc nào.
           </p>
         </div>
         <div className="flex justify-end gap-3 mt-6">

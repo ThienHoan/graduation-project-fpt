@@ -42,9 +42,13 @@ export class GarmentsService {
     private readonly redisService?: RedisService,
   ) { }
 
-  async findAll() {
+  async findAll(includeDeleted = false) {
+    const where: Prisma.GarmentWhereInput = includeDeleted
+      ? {}
+      : { isActive: true, deletedAt: null };
+
     const garments = await this.prisma.garment.findMany({
-      where: { isActive: true, deletedAt: null },
+      where,
       include: {
         category: true,
         garment_sizes: { where: { is_active: true } },
@@ -53,12 +57,16 @@ export class GarmentsService {
       orderBy: { createdAt: "desc" },
     });
     return ok(garments.map((g) => ({
-      id: g.id, name: g.name, categoryName: g.category?.name ?? null,
+      id: g.id,
+      name: g.name,
+      categoryName: g.category?.name ?? null,
       sizeId: g.garment_sizes[0]?.id ?? null,
       sizeLabel: g.garment_sizes[0]?.size_label ?? null,
       color: g.color ?? null,
       dailyPrice: Number(g.garment_sizes[0]?.daily_price ?? 0),
       depositAmount: Number(g.garment_sizes[0]?.deposit_amount ?? 0),
+      isActive: g.isActive,
+      deletedAt: g.deletedAt ? g.deletedAt.toISOString() : null,
       images: g.images.map((img) => ({
         id: img.id,
         imageUrl: img.imageUrl,
@@ -70,7 +78,7 @@ export class GarmentsService {
 
   async findOne(id: string) {
     const garment = await this.prisma.garment.findFirst({
-      where: { id, isActive: true, deletedAt: null },
+      where: { id },
       include: {
         category: true,
         garment_sizes: { where: { is_active: true } },
@@ -216,7 +224,22 @@ export class GarmentsService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+    await this.redisService?.delPattern("garments:*");
     return ok({ id, deleted: true });
+  }
+
+  async restore(id: string) {
+    const garment = await this.prisma.garment.findFirst({
+      where: { id },
+    });
+    if (!garment) throw new NotFoundException("Garment not found.");
+
+    await this.prisma.garment.update({
+      where: { id },
+      data: { deletedAt: null, isActive: true },
+    });
+    await this.redisService?.delPattern("garments:*");
+    return ok({ id, restored: true });
   }
 
   // ── Manager / Owner: Add image ─────────────────────────────────────────────

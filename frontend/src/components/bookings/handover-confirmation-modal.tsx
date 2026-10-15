@@ -130,7 +130,7 @@ export function HandoverConfirmationModal({ booking, onClose, onCompleted, onErr
       const response = await confirmBookingHandover(bookingId, {
         handoverStatus,
         conditionBeforeRental: condition,
-        conditionImages: normalizedImages,
+        conditionImages: normalizedImages.length > 0 ? normalizedImages : undefined,
         correctProductConfirmed: correctProduct,
         noDefectConfirmed: noVisibleDefect,
         customerAgreed,
