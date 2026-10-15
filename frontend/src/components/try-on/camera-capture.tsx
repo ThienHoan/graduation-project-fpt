@@ -227,6 +227,8 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
   }
 
 
+  const [showGuide, setShowGuide] = useState(true);
+
   return (
     <div className="space-y-4">
       <div className="relative overflow-hidden rounded-xl border border-sand bg-mist">
@@ -241,13 +243,70 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
           />
         )}
 
+        {/* Pose Silhouette Overlay Guide */}
+        {isCameraReady && !previewUrl && showGuide && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between p-4">
+            <div className="rounded-full bg-black/60 px-3 py-1 text-[11px] font-medium text-white backdrop-blur-sm shadow-sm">
+              Khung căn chỉnh dáng AI: Hãy đứng khớp với đường viền
+            </div>
+
+            {/* SVG Silhouette */}
+            <svg
+              className="h-full w-full max-w-[280px] text-lotus/50 drop-shadow-md transition-opacity duration-300"
+              viewBox="0 0 200 300"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeDasharray="4 3"
+            >
+              {/* Head oval */}
+              <ellipse cx="100" cy="50" rx="22" ry="28" />
+              {/* Neck & Shoulders */}
+              <path d="M92 78 L92 90 L60 106 L45 150" />
+              <path d="M108 78 L108 90 L140 106 L155 150" />
+              {/* Torso & Waist line */}
+              <path d="M60 106 C65 140 68 175 62 210 L58 290" />
+              <path d="M140 106 C135 140 132 175 138 210 L142 290" />
+              {/* Center guide line */}
+              <line x1="100" y1="20" x2="100" y2="295" strokeWidth="0.8" stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" />
+              {/* Shoulder horizontal guide */}
+              <line x1="45" y1="106" x2="155" y2="106" strokeWidth="1" stroke="rgba(255,255,255,0.6)" strokeDasharray="2 2" />
+              {/* Waist horizontal guide */}
+              <line x1="60" y1="170" x2="140" y2="170" strokeWidth="1" stroke="rgba(255,255,255,0.6)" strokeDasharray="2 2" />
+            </svg>
+
+            <div className="flex items-center gap-3 text-[11px] font-medium text-white/90 drop-shadow">
+              <span>Vai ngang</span>
+              <span>•</span>
+              <span>Đứng thẳng lưng</span>
+              <span>•</span>
+              <span>Thấy rõ eo</span>
+            </div>
+          </div>
+        )}
+
         {countdown !== null && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/35 text-white backdrop-blur-[1px]">
-            <span className="font-display text-7xl drop-shadow-lg">{countdown}</span>
-            <span className="mt-2 text-sm font-semibold uppercase tracking-[0.22em] drop-shadow">Chuẩn bị chụp</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 text-white backdrop-blur-[2px]">
+            <span className="font-display text-8xl drop-shadow-xl animate-pulse">{countdown}</span>
+            <span className="mt-3 text-xs font-semibold uppercase tracking-[0.25em] drop-shadow">Chuẩn bị chụp</span>
           </div>
         )}
       </div>
+
+      {/* Guide toggle button when camera is on */}
+      {isCameraReady && !previewUrl && (
+        <div className="flex items-center justify-between text-xs">
+          <button
+            type="button"
+            onClick={() => setShowGuide((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 text-stone-600 hover:text-lotus transition"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-antique" />
+            <span>{showGuide ? "Ẩn khung căn dáng AI" : "Hiện khung căn dáng AI"}</span>
+          </button>
+          <span className="text-stone-400 text-[11px]">Đứng cách camera 1.5m - 2m</span>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50/80 p-3 text-xs text-red-600">

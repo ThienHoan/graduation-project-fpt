@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { CameraCapture } from "@/components/try-on/camera-capture";
@@ -25,11 +26,15 @@ import {
   EyeOff,
   X,
   History,
+  Ruler,
+  Shirt,
+  BookOpen,
 } from "lucide-react";
 import {
   getGarmentsGrouped,
   getMyMeasurements,
   getTryonHistory,
+  getTryonQuota,
   getTryonStatus,
   hideTryonHistoryItem,
   submitTryon,
@@ -37,11 +42,94 @@ import {
   type GarmentGrouped,
   type TryonHistoryItem,
   type TryonMode,
+  type TryonQuota,
   type TryonSource,
 } from "@/lib/api";
 import { readStoredAccessToken } from "@/lib/auth";
 
 type ViewState = "setup" | "processing" | "result";
+
+function computeRecommendedSize(
+  sizes: GarmentGrouped["sizes"],
+  customer: CustomerMeasurement | null,
+): string | null {
+  if (!customer || !sizes || sizes.length === 0) return null;
+
+  let bestSizeId: string | null = null;
+  let bestScore = -Infinity;
+
+  for (const s of sizes) {
+    let score = 100;
+    const m = s.measurements;
+    if (m?.bustCm && customer.bustCm) {
+      const diff = Number(m.bustCm) - Number(customer.bustCm);
+      // Áo cổ phục thường cần độ cử động ngực khoảng 2 - 5cm
+      if (diff >= 2 && diff <= 5) score += 25;
+      else if (diff >= 0 && diff < 2) score += 10;
+      else if (diff < 0) score -= Math.abs(diff) * 15; // Quá chật ngực
+      else score -= (diff - 5) * 5; // Rộng ngực
+    }
+
+    if (m?.waistCm && customer.waistCm) {
+      const diff = Number(m.waistCm) - Number(customer.waistCm);
+      // Cử động eo khoảng 1 - 4cm
+      if (diff >= 1 && diff <= 4) score += 25;
+      else if (diff >= 0 && diff < 1) score += 10;
+      else if (diff < 0) score -= Math.abs(diff) * 15;
+      else score -= (diff - 4) * 5;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestSizeId = s.garmentSizeId;
+    }
+  }
+
+  return bestSizeId;
+}
+
+const AO_DAI_HISTORICAL_FACTS = [
+  {
+    title: "Khởi nguồn từ Áo Ngũ Thân (Năm 1744)",
+    tag: "Khởi nguồn lịch sử",
+    content: "Tiền thân của chiếc áo dài Việt Nam chính là áo ngũ thân lập lĩnh, được định hình chính thức bởi sắc dụ cải cách trang phục của Chúa Nguyễn Phúc Khoát vào năm 1744 tại Đàng Trong nhằm khẳng định bản sắc văn hóa độc lập và phong nhã của dân tộc.",
+  },
+  {
+    title: "Ý nghĩa triết lý 'Tứ thân phụ mẫu'",
+    tag: "Đạo hiếu sâu sắc",
+    content: "Năm thân của áo ngũ thân mang triết lý nhân sinh: 4 thân ngoài tượng trưng cho 'tứ thân phụ mẫu' (cha mẹ đẻ và cha mẹ chồng/vợ), thân thứ năm ẩn bên trong tượng trưng cho người mặc. Cấu trúc này nhắc nhở con cháu luôn được gia đình bao bọc và trọn lòng hiếu kính.",
+  },
+  {
+    title: "Năm hạt ngọc Ngũ Thường",
+    tag: "Cốt cách người xưa",
+    content: "Hàng cúc 5 khuy cài chéo truyền thống tượng trưng cho đạo Ngũ Thường của người phương Đông: Nhân - Lễ - Nghĩa - Trí - Tín. Mỗi khi cài khuy áo, người xưa tự nhắc nhở giữ trọn phẩm hạnh, phong thái đĩnh đạc và chuẩn mực đoan chính.",
+  },
+  {
+    title: "Dấu ấn canh tân Áo dài Le Mur (1930)",
+    tag: "Bước ngoặt hiện đại",
+    content: "Năm 1930, họa sĩ Cát Tường (Le Mur) cùng nhóm Tự Lực Văn Đoàn đã sáng tạo cải biến áo ngũ thân thành áo dài tân thời ôm sát dáng người thanh tân, mở ra thời kỳ rực rỡ của tà áo dài Việt Nam vươn tầm quốc tế.",
+  },
+  {
+    title: "Áo Nhật Bình - Tuyệt tác Hoàng triều",
+    tag: "Di sản cung đình",
+    content: "Áo Nhật Bình là thường phục cao quý của Hoàng thái hậu, Hoàng hậu và Công chúa triều Nguyễn. Cổ áo hình chữ nhật viền thêu chỉ vàng lộng lẫy cùng dải ngũ sắc tượng trưng cho vẻ đẹp quyền quý, đoan trang bậc nhất cung đình Huế.",
+  },
+  {
+    title: "Áo Tấc - Lễ phục tôn nghiêm",
+    tag: "Lễ nhạc truyền thống",
+    content: "Áo tấc (áo ngũ thân tay thụng) là bộ lễ phục trang trọng nhất thời xưa trong các dịp tế tự, hôn lễ và yết bái. Phần tay áo thụng rộng một tấc (40cm), hai tay chắp trang nghiêm trước ngực thể hiện sự tôn kính trời đất, tổ tiên.",
+  },
+  {
+    title: "Hồn cốt lụa tơ tằm Vạn Phúc & Hà Đông",
+    tag: "Tinh hoa làng nghề",
+    content: "Cổ phục Việt Nam gắn liền với các làng nghề dệt lụa tơ tằm thủ công nghìn năm tuổi: mùa hè mặc vào mát rượi làn da, mùa đông ấm áp, mềm rủ óng ả tự nhiên và mang lại cảm giác dễ chịu tuyệt đối cho người mặc.",
+  },
+  {
+    title: "Vẻ đẹp kín đáo mà thanh thoát kiêu sa",
+    tag: "Niềm tự hào dân tộc",
+    content: "Áo dài Việt Nam được bạn bè quốc tế ca ngợi là một trong những trang phục truyền thống tao nhã nhất: trang nhã, kín đáo từ cổ đến chân nhưng vạt tà xẻ cao uyển chuyển lại tôn vinh từng bước đi nhẹ nhàng, duyên dáng của người Việt.",
+  },
+];
 
 function TryOnInner() {
   const searchParams = useSearchParams();
@@ -72,6 +160,20 @@ function TryOnInner() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
   const [customerMeasurements, setCustomerMeasurements] = useState<CustomerMeasurement | null>(null);
+  const [quota, setQuota] = useState<TryonQuota | null>(null);
+  const [factIndex, setFactIndex] = useState(0);
+  const [progressPercent, setProgressPercent] = useState(15);
+
+  async function loadQuota() {
+    if (!readStoredAccessToken()) {
+      setQuota(null);
+      return;
+    }
+    const res = await getTryonQuota();
+    if (res.success && res.data) {
+      setQuota(res.data);
+    }
+  }
 
   async function loadHistory() {
     if (!readStoredAccessToken()) {
@@ -86,6 +188,31 @@ function TryOnInner() {
     }
     setIsHistoryLoading(false);
   }
+
+  // Timer giả lập tiến trình dệt sắc phục và luân phiên các mẩu chuyện văn hóa
+  useEffect(() => {
+    if (viewState !== "processing") {
+      setProgressPercent(15);
+      return;
+    }
+
+    const progressTimer = setInterval(() => {
+      setProgressPercent((prev) => {
+        if (prev >= 92) return 92;
+        const inc = Math.floor(Math.random() * 4) + 2;
+        return Math.min(prev + inc, 92);
+      });
+    }, 600);
+
+    const factTimer = setInterval(() => {
+      setFactIndex((prev) => (prev + 1) % AO_DAI_HISTORICAL_FACTS.length);
+    }, 4500);
+
+    return () => {
+      clearInterval(progressTimer);
+      clearInterval(factTimer);
+    };
+  }, [viewState]);
 
   // Load garments + pre-select from URL
   useEffect(() => {
@@ -119,6 +246,7 @@ function TryOnInner() {
     setHasAccessToken(Boolean(token));
     if (token) {
       void loadHistory();
+      void loadQuota();
       void getMyMeasurements().then((res) => {
         if (res.success && res.data) {
           setCustomerMeasurements(res.data);
@@ -128,9 +256,41 @@ function TryOnInner() {
   }, []);
 
   const selectedGroup = groups[selectedGroupIdx] ?? null;
-  const selectedSize = selectedGroup?.sizes.find((s) => s.garmentSizeId === selectedSizeId) ?? selectedGroup?.sizes[0];
 
-  const canSubmit = selectedSizeId && imageBase64 && consent;
+  // Gợi ý size chuẩn dựa theo số đo khách hàng
+  const recommendedSizeId = useMemo(() => {
+    return computeRecommendedSize(selectedGroup?.sizes ?? [], customerMeasurements);
+  }, [selectedGroup, customerMeasurements]);
+
+  // Tự động chuyển sang size vừa nhất nếu khách có số đo và chưa chỉ định từ URL
+  useEffect(() => {
+    if (recommendedSizeId && !preselectedGarmentSizeId) {
+      setSelectedSizeId(recommendedSizeId);
+    }
+  }, [recommendedSizeId, preselectedGarmentSizeId]);
+
+  const selectedSize =
+    selectedGroup?.sizes.find((s) => s.garmentSizeId === selectedSizeId) ??
+    selectedGroup?.sizes[0] ??
+    null;
+
+  // Sizing comparison metrics for currently selected size
+  const selectedSizeBustDiff =
+    selectedSize?.measurements?.bustCm && customerMeasurements?.bustCm
+      ? Number(selectedSize.measurements.bustCm) - Number(customerMeasurements.bustCm)
+      : null;
+
+  const selectedSizeWaistDiff =
+    selectedSize?.measurements?.waistCm && customerMeasurements?.waistCm
+      ? Number(selectedSize.measurements.waistCm) - Number(customerMeasurements.waistCm)
+      : null;
+
+  const selectedSizeDrapeClearance =
+    selectedSize?.measurements?.lengthCm && customerMeasurements?.heightCm
+      ? Math.max(0, Math.round(Number(customerMeasurements.heightCm) - 25 - Number(selectedSize.measurements.lengthCm)))
+      : null;
+
+  const canSubmit = Boolean(selectedSizeId && imageBase64 && consent);
 
   function handleImageData(base64: string) {
     setImageBase64(base64);
@@ -139,7 +299,7 @@ function TryOnInner() {
   }
 
   async function handleTryOn() {
-    if (!canSubmit) return;
+    if (!canSubmit || !imageBase64 || !selectedSizeId) return;
     if (!readStoredAccessToken()) {
       setErrorMsg("Vui lòng đăng nhập để sử dụng tính năng thử đồ AI và lưu lịch sử.");
       return;
@@ -170,6 +330,7 @@ function TryOnInner() {
       setIsCachedResult(Boolean(res.data.isCached));
       setViewState("result");
       void loadHistory();
+      void loadQuota();
       return;
     }
 
@@ -198,10 +359,12 @@ function TryOnInner() {
         );
       } else if (current.status === "completed" && current.resultImageUrl) {
         window.clearInterval(pollInterval);
+        setProgressPercent(100);
         setResultImage(current.resultImageUrl);
         setIsCachedResult(Boolean(current.isCached));
         setViewState("result");
         void loadHistory();
+        void loadQuota();
       } else if (current.status === "failed") {
         window.clearInterval(pollInterval);
         setErrorMsg(current.errorMessage ?? "Quá trình tạo ảnh thất bại. Vui lòng thử lại.");
@@ -230,6 +393,7 @@ function TryOnInner() {
     setResultImage(null);
     setIsCachedResult(false);
     setErrorMsg(null);
+    void loadQuota();
   }
 
   function handleSelectSimilarGarment(garmentId: string) {
@@ -270,6 +434,32 @@ function TryOnInner() {
             Chụp hoặc tải ảnh chân dung để công nghệ AI hòa quyện dung mạo của bạn vào từng tà áo cổ phục Việt Nam.
             Trải nghiệm chân thực, chuẩn dáng sắc sảo trước khi quyết định đặt thuê.
           </p>
+
+          {/* Daily Quota Badge */}
+          {hasAccessToken && quota && (
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <div
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold shadow-xs transition ${
+                  quota.remaining > 1
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                    : quota.remaining === 1
+                    ? "border-amber-300 bg-amber-50 text-amber-900"
+                    : "border-rose-300 bg-rose-50 text-rose-800"
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    quota.remaining > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
+                  }`}
+                />
+                <span>Hôm nay bạn còn:</span>
+                <span className={`font-bold ${quota.remaining > 0 ? "text-lotus" : "text-rose-600"}`}>
+                  {quota.remaining}/{quota.limit} lượt thử đồ AI
+                </span>
+                <span className="text-[10px] text-stone-400 font-normal">· Làm mới sau 00:00</span>
+              </div>
+            </div>
+          )}
         </section>
 
         <div className="grid gap-8 lg:grid-cols-[1fr_1.1fr]">
@@ -302,24 +492,125 @@ function TryOnInner() {
                     <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
                   </div>
 
-                  {/* Size selection */}
-                  {selectedGroup && selectedGroup.sizes.length > 1 && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold text-stone-500">Kích thước:</span>
-                      {selectedGroup.sizes.map((s) => (
-                        <button
-                          key={s.garmentSizeId}
-                          type="button"
-                          onClick={() => setSelectedSizeId(s.garmentSizeId)}
-                          className={`rounded-full px-3.5 py-1 text-xs font-semibold transition ${
-                            selectedSizeId === s.garmentSizeId
-                              ? "bg-lotus text-white shadow-xs"
-                              : "border border-sand bg-parchment/60 text-stone-600 hover:border-lotus/40 hover:bg-lotus/10"
-                          }`}
-                        >
-                          Size {s.sizeLabel ?? "—"}
-                        </button>
-                      ))}
+                  {/* Size selection & Fit Indicator */}
+                  {selectedGroup && selectedGroup.sizes.length > 0 && (
+                    <div className="space-y-3 pt-1">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
+                            <Shirt className="h-3.5 w-3.5 text-lotus" />
+                            Kích thước áo:
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {selectedGroup.sizes.map((s) => {
+                            const isSelected = selectedSizeId === s.garmentSizeId;
+                            const isRec = s.garmentSizeId === recommendedSizeId;
+                            return (
+                              <button
+                                key={s.garmentSizeId}
+                                type="button"
+                                onClick={() => setSelectedSizeId(s.garmentSizeId)}
+                                className={`relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                                  isSelected
+                                    ? "bg-lotus text-white shadow-xs"
+                                    : isRec
+                                    ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                    : "border border-sand bg-parchment/60 text-stone-600 hover:border-lotus/40 hover:bg-lotus/10"
+                                }`}
+                              >
+                                <span>Size {s.sizeLabel ?? "—"}</span>
+                                {isRec && (
+                                  <span
+                                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                                      isSelected ? "bg-white/20 text-white" : "bg-amber-200 text-amber-950"
+                                    }`}
+                                  >
+                                    ⭐ Vừa nhất
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Sizing Fit Card */}
+                      <div className="rounded-xl border border-sand bg-parchment/60 p-3 text-xs space-y-2">
+                        <div className="flex items-center justify-between border-b border-sand/60 pb-1.5">
+                          <span className="font-semibold text-stone-700 flex items-center gap-1.5">
+                            <Ruler className="h-3.5 w-3.5 text-lotus" />
+                            Thông số may Size {selectedSize?.sizeLabel ?? "—"}:
+                          </span>
+                          {customerMeasurements ? (
+                            <span className="text-[11px] font-medium text-emerald-700 flex items-center gap-1">
+                              <CheckCircle2 className="h-3 w-3" /> Đã so khớp số đo của bạn
+                            </span>
+                          ) : (
+                            <Link
+                              href="/dashboard/customer/measurements"
+                              className="text-[11px] font-semibold text-lotus hover:underline"
+                            >
+                              + Nhập số đo để tự động chọn size chuẩn
+                            </Link>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                          <div className="rounded-lg bg-white/80 p-2 border border-sand/60">
+                            <span className="text-[10px] text-stone-400 block font-medium">Vòng ngực</span>
+                            <span className="font-semibold text-ink text-xs">
+                              {selectedSize?.measurements?.bustCm ? `${selectedSize.measurements.bustCm}cm` : "Tiêu chuẩn"}
+                            </span>
+                            {selectedSizeBustDiff !== null && (
+                              <span className="block text-[10px] text-stone-500 font-medium">
+                                {selectedSizeBustDiff >= 2 && selectedSizeBustDiff <= 5
+                                  ? `+${selectedSizeBustDiff}cm (vừa vặn)`
+                                  : selectedSizeBustDiff > 5
+                                  ? `+${selectedSizeBustDiff}cm (thùng thình)`
+                                  : `${selectedSizeBustDiff}cm (bó chật)`}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="rounded-lg bg-white/80 p-2 border border-sand/60">
+                            <span className="text-[10px] text-stone-400 block font-medium">Vòng eo</span>
+                            <span className="font-semibold text-ink text-xs">
+                              {selectedSize?.measurements?.waistCm ? `${selectedSize.measurements.waistCm}cm` : "Tiêu chuẩn"}
+                            </span>
+                            {selectedSizeWaistDiff !== null && (
+                              <span className="block text-[10px] text-stone-500 font-medium">
+                                {selectedSizeWaistDiff >= 1 && selectedSizeWaistDiff <= 4
+                                  ? `+${selectedSizeWaistDiff}cm (vừa vặn)`
+                                  : selectedSizeWaistDiff > 4
+                                  ? `+${selectedSizeWaistDiff}cm (rộng eo)`
+                                  : `${selectedSizeWaistDiff}cm (ôm sát)`}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="rounded-lg bg-white/80 p-2 border border-sand/60">
+                            <span className="text-[10px] text-stone-400 block font-medium">Vòng mông</span>
+                            <span className="font-semibold text-ink text-xs">
+                              {selectedSize?.measurements?.hipCm ? `${selectedSize.measurements.hipCm}cm` : "Tà xẻ tự do"}
+                            </span>
+                            <span className="block text-[10px] text-stone-500">Thả tà thoải mái</span>
+                          </div>
+
+                          <div className="rounded-lg bg-white/80 p-2 border border-sand/60">
+                            <span className="text-[10px] text-stone-400 block font-medium">Chiều dài tà</span>
+                            <span className="font-semibold text-ink text-xs">
+                              {selectedSize?.measurements?.lengthCm ? `${selectedSize.measurements.lengthCm}cm` : "135cm"}
+                            </span>
+                            {selectedSizeDrapeClearance !== null && (
+                              <span className="block text-[10px] text-stone-500">
+                                Cách đất ~{selectedSizeDrapeClearance}cm
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -470,14 +761,27 @@ function TryOnInner() {
                 </div>
               )}
 
+              {quota && quota.remaining <= 0 && (
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>
+                    Bạn đã sử dụng hết {quota.limit}/{quota.limit} lượt thử đồ AI hôm nay. Bạn vẫn có thể xem lại ảnh đã tạo trong Lịch sử hoặc quay lại thử mới sau 00:00!
+                  </span>
+                </div>
+              )}
+
               <button
                 type="button"
-                disabled={!canSubmit || viewState === "processing"}
+                disabled={!canSubmit || viewState === "processing" || (quota !== null && quota.remaining <= 0)}
                 onClick={handleTryOn}
                 className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-lotus px-6 py-4 text-xs font-semibold uppercase tracking-[0.18em] text-white shadow-md transition hover:bg-oxblood disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Sparkles className="h-4 w-4" />
-                {viewState === "processing" ? "Đang xử lý hình ảnh..." : "Bắt đầu mặc thử AI"}
+                {viewState === "processing"
+                  ? "Đang dệt nên sắc phục..."
+                  : quota && quota.remaining <= 0
+                  ? "Đã dùng hết lượt thử hôm nay"
+                  : "Bắt đầu mặc thử AI"}
               </button>
             </section>
           </div>
@@ -516,29 +820,80 @@ function TryOnInner() {
               )}
 
               {viewState === "processing" && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 p-8 text-center backdrop-blur-md">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 p-6 sm:p-8 text-center backdrop-blur-md overflow-y-auto">
                   {/* Glowing pulse ring & laser scan */}
                   <div className="relative flex items-center justify-center">
-                    <div className="h-28 w-28 animate-spin rounded-full border-4 border-stone-200 border-t-lotus" />
-                    <Sparkles className="absolute h-9 w-9 text-lotus animate-pulse" />
+                    <div className="h-24 w-24 animate-spin rounded-full border-4 border-stone-200 border-t-lotus" />
+                    <Sparkles className="absolute h-8 w-8 text-lotus animate-pulse" />
                   </div>
 
-                  <h2 className="mt-6 font-display text-3xl font-semibold text-lotus">Đang dệt nên sắc phục...</h2>
-                  
+                  <h2 className="mt-5 font-display text-2xl sm:text-3xl font-semibold text-lotus">
+                    Đang dệt nên sắc phục...
+                  </h2>
+
                   {queuePosition > 1 && (
-                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
+                    <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
                       <Clock className="h-3.5 w-3.5" />
                       Hàng đợi: Vị trí #{queuePosition}
                     </span>
                   )}
 
-                  <p className="mt-3 max-w-sm text-xs leading-relaxed text-stone-600">
-                    {processingStatusText}
-                  </p>
+                  {/* Thanh tiến trình giả lập mượt mà */}
+                  <div className="mt-4 w-full max-w-md">
+                    <div className="flex items-center justify-between text-[11px] font-medium text-stone-500 mb-1.5">
+                      <span>{processingStatusText}</span>
+                      <span className="font-semibold text-lotus">{progressPercent}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100 p-0.5 border border-sand">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-antique to-lotus transition-all duration-500 ease-out"
+                        style={{ width: `${progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
 
-                  <div className="mt-8 flex items-center gap-2 text-[11px] text-stone-400">
+                  {/* Cổ phục & Áo dài: Có thể bạn chưa biết? */}
+                  <div className="mt-5 w-full max-w-lg rounded-2xl border border-sand/80 bg-parchment/70 p-4 text-left shadow-xs backdrop-blur-xs">
+                    <div className="flex items-center justify-between border-b border-sand/60 pb-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-lotus">
+                        <BookOpen className="h-4 w-4 text-antique" />
+                        <span>Có thể bạn chưa biết?</span>
+                        <span className="rounded-full bg-lotus/10 px-2 py-0.5 text-[10px] font-medium text-lotus">
+                          {AO_DAI_HISTORICAL_FACTS[factIndex].tag}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-medium text-stone-400">
+                        {factIndex + 1}/{AO_DAI_HISTORICAL_FACTS.length}
+                      </span>
+                    </div>
+                    <div className="mt-2.5 min-h-[76px]">
+                      <h4 className="text-xs font-bold text-ink">
+                        {AO_DAI_HISTORICAL_FACTS[factIndex].title}
+                      </h4>
+                      <p className="mt-1 text-xs leading-relaxed text-stone-600 transition-opacity duration-300">
+                        {AO_DAI_HISTORICAL_FACTS[factIndex].content}
+                      </p>
+                    </div>
+
+                    {/* Navigation Dots */}
+                    <div className="mt-3 flex items-center justify-center gap-1.5 pt-1">
+                      {AO_DAI_HISTORICAL_FACTS.map((_, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setFactIndex(i)}
+                          className={`h-1.5 rounded-full transition-all ${
+                            i === factIndex ? "w-5 bg-lotus" : "w-1.5 bg-stone-300 hover:bg-stone-400"
+                          }`}
+                          title={`Chuyện xưa ${i + 1}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 flex items-center gap-2 text-[11px] text-stone-400">
                     <span className="h-1.5 w-1.5 rounded-full bg-lotus animate-ping" />
-                    <span>Hệ thống AI xử lý theo tiêu chuẩn thẩm mỹ cổ phục</span>
+                    <span>Hệ thống AI xử lý theo chuẩn mực văn hoá và thẩm mỹ cổ phục Việt</span>
                   </div>
                 </div>
               )}
@@ -553,6 +908,13 @@ function TryOnInner() {
                   selectedSizeId={selectedSizeId}
                   isCached={isCachedResult}
                   customerMeasurements={customerMeasurements}
+                  sizeMeasurements={selectedSize?.measurements ?? null}
+                  categoryName={selectedGroup?.categoryName ?? null}
+                  availableSizes={selectedGroup?.sizes.map((s) => ({
+                    garmentSizeId: s.garmentSizeId,
+                    sizeLabel: s.sizeLabel,
+                  }))}
+                  onChangeSize={(newSizeId) => setSelectedSizeId(newSizeId)}
                   onRetry={handleTryOn}
                   onReset={handleReset}
                 />

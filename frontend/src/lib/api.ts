@@ -2716,3 +2716,14 @@ export async function hideTryonHistoryItem(id: string) {
   });
 }
 
+export type TryonQuota = {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetsAt: string;
+};
+
+export async function getTryonQuota() {
+  return apiRequest<TryonQuota>("/ai/tryon/quota");
+}
+
