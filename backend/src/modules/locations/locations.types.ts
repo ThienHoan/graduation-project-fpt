@@ -9,12 +9,13 @@ export type AddressSuggestion = {
 export type ResolvedAddress = {
   fullAddress: string;
   name?: string;
+  ward?: string;
   district?: string;
   province?: string;
   country?: string;
   latitude?: number;
   longitude?: number;
-  provider: "gogoduk";
+  provider: "gogoduk" | "goong";
   providerPlaceId?: string;
 };
 

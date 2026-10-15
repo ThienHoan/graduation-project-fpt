@@ -91,10 +91,10 @@ const DEFAULT_AI_SETTINGS = {
   max_rental_days: 30,
   deposit_refund_window_h: 48,
   late_penalty_per_day: 200000,
-  store_address: "123 Lê Thánh Tôn, Bến Nghé, Quận 1, TP.HCM",
-  store_phone: "0901999888",
-  store_lat: "10.7769",
-  store_lng: "106.7009",
+  store_address: "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng",
+  store_phone: "0236 730 0999",
+  store_lat: "15.967945",
+  store_lng: "108.260727",
   shipping_rate_per_km: 5000,
 };
 

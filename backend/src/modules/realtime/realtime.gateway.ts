@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { OnGatewayConnection, WebSocketGateway, WebSocketServer } from "@nestjs/websockets";
 import type { AppRole } from "@prisma/client";
@@ -29,6 +29,8 @@ interface RealtimeSocket extends Socket {
 })
 @Injectable()
 export class RealtimeGateway implements OnGatewayConnection {
+  private readonly logger = new Logger(RealtimeGateway.name);
+
   @WebSocketServer()
   server!: Server;
 
@@ -62,7 +64,14 @@ export class RealtimeGateway implements OnGatewayConnection {
       return;
     }
 
-    const user = await this.prisma.userAccount.findUnique({ where: { id: payload.sub } });
+    let user;
+    try {
+      user = await this.prisma.userAccount.findUnique({ where: { id: payload.sub } });
+    } catch (error) {
+      this.logger.error("Database error during realtime connection handshake:", error);
+      client.disconnect();
+      return;
+    }
     if (!user || !user.isActive) {
       client.disconnect();
       return;

@@ -16,6 +16,7 @@ export type TryonJob = {
   imageHash: string;
   garmentImageUrl: string;
   tryonCategory: string;
+  fitType?: "loose" | "tight" | "regular";
 };
 
 export type JobProcessor = (job: TryonJob) => Promise<{
@@ -153,6 +154,9 @@ export class TryonQueueService implements OnModuleInit {
                 garmentImageUrl: job.garmentImageUrl,
                 inputSchema: result.inputSchema,
                 imageHash: job.imageHash,
+                fitType: job.fitType ?? "regular",
+                sizeLabel: job.sizeLabel,
+                garmentSizeId: job.garmentSizeId,
                 isCached: false,
               },
             },

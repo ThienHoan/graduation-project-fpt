@@ -20,6 +20,12 @@ export class AiController {
     return this.aiService.createTryon(body, user.id);
   }
 
+  @Get("tryon/quota")
+  @UseGuards(JwtAuthGuard)
+  getTryonQuota(@CurrentUser() user: AuthenticatedUser) {
+    return this.aiService.getTryonQuota(user.id);
+  }
+
   @Get("tryon/status/:id")
   @UseGuards(JwtAuthGuard)
   getTryonStatus(

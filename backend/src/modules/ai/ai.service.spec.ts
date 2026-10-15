@@ -297,6 +297,7 @@ describe("AiService", () => {
         findFirst: vi.fn().mockResolvedValue(null), // Cache MISS
       };
       prisma.tryonRequest = {
+        count: vi.fn().mockResolvedValue(0),
         create: vi.fn().mockResolvedValue({ id: "req-pending-1" }),
       };
 

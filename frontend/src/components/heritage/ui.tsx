@@ -44,7 +44,7 @@ import {
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 export type StaffNavKey = "overview" | "pending" | "all" | "refunds" | "map" | "inspection" | "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
+type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "penalty-review" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -206,7 +206,7 @@ export function StaffPortalShell({
     {
       groupTitle: "Vận hành & Đơn hàng",
       items: [
-        { key: "overview", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff" },
+        { key: "all", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff#all" },
         { key: "pending", label: "Chờ xác nhận", icon: Clock, href: "/dashboard/staff#pending" },
         { key: "map", label: "Bản đồ giao nhận", icon: Map, href: "/dashboard/staff#map" },
       ],
@@ -228,7 +228,7 @@ export function StaffPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
         <div className="mb-6 px-3 pt-3">
           <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
@@ -262,29 +262,37 @@ export function StaffPortalShell({
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const ItemIcon = item.icon;
+                  const isHashTab =
+                    (item.href.includes("#") || item.href === "/dashboard/staff") &&
+                    item.key !== "chat";
+                  const itemClass = isActive
+                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
+                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+                  if (isHashTab && onTabChange) {
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => onTabChange(item.key)}
+                        className={itemClass}
+                      >
+                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  }
+
                   return (
-                    <a
+                    <Link
                       key={item.key}
                       href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const isHashTab =
-                          (item.href.includes("#") || item.href === "/dashboard/staff") &&
-                          item.key !== "chat";
-                        if (isHashTab && onTabChange) {
-                          onTabChange(item.key);
-                        } else {
-                          router.push(item.href);
-                        }
-                      }}
-                      className={isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                      className={itemClass}
                     >
                       <ItemIcon className="h-4.5 w-4.5 shrink-0" />
                       <span className="truncate">{item.label}</span>
                       {item.key === "chat" && <StaffChatNavBadge />}
-                    </a>
+                    </Link>
                   );
                 })}
               </div>
@@ -431,6 +439,7 @@ export function ManagerPortalShell({
       items: [
         { key: "finance", label: "Đối soát tài chính", icon: DollarSign, href: "/dashboard/manager#finance" },
         { key: "refunds", label: "Duyệt hoàn cọc", icon: RefreshCw, href: "/dashboard/manager#refunds" },
+        { key: "penalty-review", label: "Duyệt phạt hư hại", icon: ShieldCheck, href: "/dashboard/manager#penalty-review" },
       ],
     },
     {
@@ -451,7 +460,7 @@ export function ManagerPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
         <div className="mb-6 px-3 pt-3">
           <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
@@ -493,30 +502,39 @@ export function ManagerPortalShell({
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const ItemIcon = item.icon;
+                  const isHashTab =
+                    (item.href.includes('#') || item.href === '/dashboard/manager') &&
+                    item.key !== "chat";
+                  const itemClass = isActive
+                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
+                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+                  if (isHashTab && onTabChange) {
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => onTabChange(item.key)}
+                        className={itemClass}
+                      >
+                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                        {item.key === "reviews" && <ManagerReviewsNavBadge />}
+                      </button>
+                    );
+                  }
+
                   return (
-                    <a
+                    <Link
                       key={item.key}
                       href={item.href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const isHashTab =
-                          (item.href.includes('#') || item.href === '/dashboard/manager') &&
-                          item.key !== "chat";
-                        if (isHashTab && onTabChange) {
-                          onTabChange(item.key);
-                        } else {
-                          router.push(item.href);
-                        }
-                      }}
-                      className={isActive
-                        ? "flex items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-sm font-semibold text-lotus"
-                        : "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                      className={itemClass}
                     >
                       <ItemIcon className="h-4.5 w-4.5 shrink-0" />
                       <span className="truncate">{item.label}</span>
                       {item.key === "reviews" && <ManagerReviewsNavBadge />}
                       {item.key === "chat" && <StaffChatNavBadge />}
-                    </a>
+                    </Link>
                   );
                 })}
               </div>
@@ -640,7 +658,7 @@ export function AdminPortalShell({
   ];
 
   return (
-    <div className="min-h-screen bg-mist text-ink lg:flex">
+    <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
       {/* Side Navigation */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex">
         <div className="mb-8 px-3 pt-4">
@@ -660,21 +678,33 @@ export function AdminPortalShell({
           {items.map((item) => {
             const isActive = item.key === active;
             const ItemIcon = item.icon;
+            const itemClass = isActive
+              ? "flex w-full items-center gap-3 rounded-xl bg-lotus/10 px-4 py-3 text-left text-sm font-semibold text-lotus"
+              : "flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+
+            if (onTabChange) {
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onTabChange(item.key)}
+                  className={itemClass}
+                >
+                  <ItemIcon className="h-5 w-5 shrink-0" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            }
+
             return (
-              <a
+              <Link
                 key={item.key}
                 href={item.href}
-                onClick={(e) => {
-                  e.preventDefault();
-                  onTabChange?.(item.key);
-                }}
-                className={isActive
-                  ? "flex items-center gap-3 rounded-xl bg-lotus/10 px-4 py-3 text-sm font-semibold text-lotus"
-                  : "flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus"}
+                className={itemClass}
               >
                 <ItemIcon className="h-5 w-5 shrink-0" />
                 <span>{item.label}</span>
-              </a>
+              </Link>
             );
           })}
         </nav>

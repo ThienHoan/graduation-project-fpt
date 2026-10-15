@@ -43,10 +43,12 @@ export class ProductStatsQueryDto {
 }
 
 export class TrackViewDto {
-  @IsUUID("all")
-  garmentId!: string;
+  @IsOptional()
+  @IsString()
+  garmentId?: string;
 
   /** ID ẩn danh do trình duyệt sinh và lưu localStorage */
+  @IsOptional()
   @IsString()
-  visitorKey!: string;
+  visitorKey?: string;
 }

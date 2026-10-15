@@ -43,6 +43,8 @@ import {
   AlertCircle,
   LayoutDashboard,
   RotateCcw,
+  Shirt,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -176,8 +178,14 @@ const ASSET_NEEDED_STATUSES = [
 ];
 
 export default function StaffDashboardPage() {
+  const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<Tab>("pending");
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [bookings, setBookings] = useState<StaffBookingResponse[]>([]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -216,19 +224,36 @@ export default function StaffDashboardPage() {
   const [refundBankAccount, setRefundBankAccount] = useState("");
   const [refundBankHolder, setRefundBankHolder] = useState("");
 
+  const switchTab = useCallback((newTab: Tab) => {
+    setTab(newTab);
+    setPage(1);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `#${newTab}`);
+    }
+  }, []);
+
   useEffect(() => {
     const handleHash = () => {
       const hash = window.location.hash.replace("#", "") as Tab;
       if (hash === "pending" || hash === "all" || hash === "refunds" || hash === "map") {
-        setTab(hash);
+        setTab((prev) => (prev !== hash ? hash : prev));
       }
     };
-    handleHash();
     window.addEventListener("hashchange", handleHash);
     return () => window.removeEventListener("hashchange", handleHash);
   }, []);
 
   useEffect(() => {
+    // Nếu có hash trên URL khác tab mặc định thì đồng bộ trước, tránh gửi request đúp lúc khởi tạo
+    const hash = typeof window !== "undefined" ? (window.location.hash.replace("#", "") as Tab) : "";
+    if (hash && (hash === "pending" || hash === "all" || hash === "refunds" || hash === "map")) {
+      if (hash !== tab) {
+        setTab(hash);
+        return;
+      }
+    }
+
+    let cancelled = false;
     setPage(1);
     if (tab === "map") {
       setLoading(false);
@@ -236,30 +261,54 @@ export default function StaffDashboardPage() {
     }
     setLoading(true);
     setErrorMsg(null);
-    let fetcher;
-    if (tab === "refunds") {
-      fetcher = getStaffCompletedRefundBookings;
-    } else {
-      fetcher = tab === "pending" ? getStaffPendingBookings : getStaffAllBookings;
-    }
+
+    const fetcher =
+      tab === "refunds"
+        ? getStaffCompletedRefundBookings
+        : tab === "pending"
+          ? getStaffPendingBookings
+          : getStaffAllBookings;
+
     fetcher()
       .then((res) => {
-        if (res.success && res.data) setBookings(res.data);
-        else setErrorMsg(res.message ?? "Không thể tải danh sách đơn.");
+        if (cancelled) return;
+        if (res.success && res.data) {
+          setBookings(res.data);
+          if (tab === "pending" || tab === "all") {
+            setPendingCount(res.data.filter((b) => b.status === "pending_confirmation").length);
+          }
+        } else {
+          setErrorMsg(res.message ?? "Không thể tải danh sách đơn.");
+        }
       })
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (cancelled) return;
+        setErrorMsg(err instanceof Error ? err.message : "Không thể tải danh sách đơn.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [tab]);
 
-  const refreshActiveTab = useCallback(() => {
+  const refreshActiveTab = useCallback(async () => {
     if (tab === "map") return;
-    const fetcher = tab === "refunds"
-      ? getStaffCompletedRefundBookings
-      : tab === "pending"
-        ? getStaffPendingBookings
-        : getStaffAllBookings;
-    return fetcher().then((res) => {
-      if (res.success && res.data) setBookings(res.data);
-    });
+    const fetcher =
+      tab === "refunds"
+        ? getStaffCompletedRefundBookings
+        : tab === "pending"
+          ? getStaffPendingBookings
+          : getStaffAllBookings;
+    const res = await fetcher();
+    if (res.success && res.data) {
+      setBookings(res.data);
+      if (tab === "pending" || tab === "all") {
+        setPendingCount(res.data.filter((b) => b.status === "pending_confirmation").length);
+      }
+    }
   }, [tab]);
 
   useRealtimeInvalidation({
@@ -459,7 +508,7 @@ export default function StaffDashboardPage() {
     ? Math.max(0, refundDialog.depositTotal - refundDialog.penaltyTotal)
     : 0;
 
-  const pendingRefundCount = tab === "pending" ? bookings.filter((b) => b.status === "pending_confirmation").length : 0;
+  const pendingRefundCount = pendingCount ?? (tab === "pending" ? bookings.filter((b) => b.status === "pending_confirmation").length : 0);
   // Đảm bảo đơn mới nhất luôn ở đầu theo ngày tạo.
   // Tab refunds giữ nguyên thứ tự backend (đã sắp theo lần cập nhật hoàn cọc).
   const sortedBookings =
@@ -486,18 +535,20 @@ export default function StaffDashboardPage() {
   const currentPage = Math.min(page, totalPages);
   const pagedBookings = filteredBookings.slice((currentPage - 1) * STAFF_PAGE_SIZE, currentPage * STAFF_PAGE_SIZE);
 
+  if (!mounted) {
+    return null;
+  }
+
   return (
     <StaffPortalShell
-      active={tab === "pending" ? "pending" : tab === "refunds" ? "refunds" : tab === "map" ? "map" : "overview"}
+      active={tab === "pending" ? "pending" : tab === "refunds" ? "refunds" : tab === "map" ? "map" : "all"}
       title="Quản lý đơn thuê"
       subtitle="Xác nhận, theo dõi và điều phối vòng đời đơn thuê trang phục."
       onTabChange={(key) => {
         if (key === "pending" || key === "all" || key === "refunds" || key === "map") {
-          setTab(key as Tab);
-          setPage(1);
+          switchTab(key as Tab);
         } else if (key === "overview") {
-          setTab("all");
-          setPage(1);
+          switchTab("all");
         }
       }}
     >
@@ -506,7 +557,7 @@ export default function StaffDashboardPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => { setTab("pending"); setPage(1); }}
+            onClick={() => switchTab("pending")}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               tab === "pending"
                 ? "bg-lotus text-white shadow-xs"
@@ -525,7 +576,7 @@ export default function StaffDashboardPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setTab("all"); setPage(1); }}
+            onClick={() => switchTab("all")}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               tab === "all"
                 ? "bg-lotus text-white shadow-xs"
@@ -537,7 +588,7 @@ export default function StaffDashboardPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setTab("refunds"); setPage(1); }}
+            onClick={() => switchTab("refunds")}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               tab === "refunds"
                 ? "bg-lotus text-white shadow-xs"
@@ -549,7 +600,7 @@ export default function StaffDashboardPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setTab("map"); setPage(1); }}
+            onClick={() => switchTab("map")}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               tab === "map"
                 ? "bg-lotus text-white shadow-xs"
@@ -584,7 +635,10 @@ export default function StaffDashboardPage() {
       {tab === "map" ? (
         <DeliveryMapPanel />
       ) : loading ? (
-        <div className="py-20 text-center text-stone-400">Đang tải...</div>
+        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-sand bg-white py-12 text-center shadow-xs">
+          <Loader2 className="h-7 w-7 animate-spin text-lotus" />
+          <p className="mt-3 text-sm text-stone-500">Đang tải danh sách đơn...</p>
+        </div>
       ) : filteredBookings.length === 0 ? (
         <div className="py-20 text-center text-stone-400">
           {searchQuery
@@ -599,6 +653,7 @@ export default function StaffDashboardPage() {
             const isActioning = actioningId === booking.id;
             const garmentName = booking.items[0]?.garmentName ?? "—";
             const sizeLabel = booking.items[0]?.sizeLabel ?? "—";
+            const garmentImageUrl = booking.items[0]?.imageUrl ?? null;
             // Refund info for completed bookings
             const refund = booking.refunds?.[0];
             const isRefunded = refund && (refund.status === "refunded" || refund.status === "partially_refunded");
@@ -672,8 +727,24 @@ export default function StaffDashboardPage() {
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Trang phục</p>
-                    <p className="mt-1 font-medium text-ink">{garmentName}</p>
-                    <p className="text-sm text-stone-500">Size: {sizeLabel}</p>
+                    <div className="mt-1 flex items-center gap-3">
+                      {garmentImageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={garmentImageUrl}
+                          alt={garmentName}
+                          className="h-16 w-12 shrink-0 rounded-lg border border-sand object-cover shadow-xs"
+                        />
+                      ) : (
+                        <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg border border-sand bg-parchment text-stone-300">
+                          <Shirt className="h-5 w-5 text-stone-400" />
+                        </div>
+                      )}
+                      <div>
+                        <p className="font-medium text-ink">{garmentName}</p>
+                        <p className="text-sm text-stone-500">Size: {sizeLabel}</p>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Thời gian thuê</p>

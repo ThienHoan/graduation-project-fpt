@@ -798,7 +798,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -873,7 +873,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -909,7 +909,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -941,7 +941,7 @@ export class BookingsService {
       include: {
         items: {
           include: {
-            garment_sizes: { include: { garments: true } },
+            garment_sizes: { include: { garments: { include: { images: { orderBy: { sortOrder: "asc" } } } } } },
             garmentAsset: true,
           },
         },
@@ -1108,17 +1108,17 @@ export class BookingsService {
 
     if (!booking) throw new NotFoundException("Booking not found.");
     if (booking.pickupMethod !== "delivery") {
-      throw new BadRequestException("Đơn này không sử dụng giao hàng.");
+      return ok(null);
     }
     const deliverySnapshot = readBookingDeliverySnapshot(booking);
     if (!deliverySnapshot?.latitude || !deliverySnapshot?.longitude) {
-      throw new BadRequestException("Địa chỉ giao hàng chưa có tọa độ snapshot.");
+      return ok(null);
     }
 
     const storeLatSetting = await this.prisma.systemSetting.findUnique({ where: { key: "store_lat" } });
     const storeLngSetting = await this.prisma.systemSetting.findUnique({ where: { key: "store_lng" } });
-    const storeLat = Number((storeLatSetting?.value as any)?.value) || 10.7769;
-    const storeLng = Number((storeLngSetting?.value as any)?.value) || 106.7009;
+    const storeLat = Number((storeLatSetting?.value as any)?.value) || 15.967945;
+    const storeLng = Number((storeLngSetting?.value as any)?.value) || 108.260727;
 
     const customerLat = Number(deliverySnapshot.latitude);
     const customerLng = Number(deliverySnapshot.longitude);
@@ -1923,13 +1923,17 @@ export class BookingsService {
           });
         }
       }
+      const assignedAssetIds = booking.items
+        .map((item) => item.garmentAssetId)
+        .filter((assetId): assetId is string => Boolean(assetId));
+
       if (booking.conditionBeforeRental === "MINOR_DAMAGE" || booking.conditionBeforeRental === "MAJOR_DAMAGE") {
-        await transitionBookingAssets(tx, id, AssetStatus.reserved, AssetStatus.rented);
-        const quarantined = await tx.garmentAsset.updateMany({
-          where: { id: { in: booking.items.map((item) => item.garmentAssetId!) }, status: AssetStatus.rented },
-          data: { status: AssetStatus.inspection_pending },
-        });
-        if (quarantined.count !== booking.items.length) throw new ConflictException("Không thể cách ly asset.");
+        if (assignedAssetIds.length > 0) {
+          await tx.garmentAsset.updateMany({
+            where: { id: { in: assignedAssetIds } },
+            data: { status: AssetStatus.inspection_pending },
+          });
+        }
       } else {
         await releaseBookingAssets(tx, id);
       }
@@ -2413,6 +2417,7 @@ export class BookingsService {
         assetCode: item.garmentAsset?.assetCode ?? null,
         assetStatus: item.garmentAsset?.status ?? null,
         conditionNote: item.garmentAsset?.conditionNote ?? null,
+        purchaseCost: item.garmentAsset?.purchaseCost ? Number(item.garmentAsset.purchaseCost) : null,
       })),
       accessories: accessoryRows.map((row: any) => ({
         id: row.id,

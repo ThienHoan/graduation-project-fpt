@@ -185,6 +185,21 @@ export async function getMyAddresses() {
   return apiRequest<CustomerAddress[]>("/users/me/addresses");
 }
 
+export type CustomerMeasurement = {
+  id: string;
+  heightCm: number | null;
+  weightKg: number | null;
+  bustCm: number | null;
+  waistCm: number | null;
+  hipCm: number | null;
+  usualSize: string | null;
+  createdAt: string;
+};
+
+export async function getMyMeasurements() {
+  return apiRequest<CustomerMeasurement | null>("/users/me/measurements");
+}
+
 // ---------- Shipping / Locations ----------
 
 export type ShippingFeeEstimate = {
@@ -276,6 +291,7 @@ export type BookingItem = {
   assetCode?: string | null;
   assetStatus?: string | null;
   conditionNote?: string | null;
+  purchaseCost?: number | null;
 };
 
 export type HandoverStatus = "PENDING" | "CONFIRMED" | "REJECTED";
@@ -596,6 +612,7 @@ export type InspectionAsset = {
   assetCode: string;
   status: string;
   conditionNote: string | null;
+  purchaseCost?: number | null;
   garment: {
     id: string;
     name: string;
@@ -651,6 +668,7 @@ export type AiInspectionComparisonResult = {
   actionReason: string;
   detectedIssues: AiInspectionFindingSuggestion[];
   totalSuggestedPenalty: number;
+  garmentValue?: number;
   confidence: number;
   beforePhotosAnalyzed: number;
   afterPhotosAnalyzed: number;
@@ -787,7 +805,63 @@ export async function completeInspection(
   });
 }
 
-// ---------- Asset management types ----------
+export async function overrideInspectionPenalty(
+  sessionId: string,
+  payload: {
+    findings?: { id: string; penaltyAmount: number; description?: string }[];
+    totalPenaltyOverride?: number;
+    reason: string;
+  },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/override-penalty`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------- Manager: duyệt / từ chối phạt ----------
+
+export type PendingApprovalEntry = InspectionSessionResponse & {
+  depositAmount: number;
+  totalPenalty: number;
+  penaltyRatio: number;
+  garmentValue?: number;
+  finalAssetStatus: string;
+  customerName: string | null;
+};
+
+/** Lấy danh sách biên bản kiểm tra chờ manager duyệt (phạt > 30% cọc) */
+export async function getInspectionsPendingApproval() {
+  return apiRequest<PendingApprovalEntry[]>("/inspections/pending-approval");
+}
+
+/** Manager duyệt phạt — có thể điều chỉnh mức từng finding */
+export async function managerApproveInspection(
+  sessionId: string,
+  payload: {
+    findings?: { id: string; penaltyAmount: number; description?: string }[];
+    totalPenaltyOverride?: number;
+    note: string;
+  },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/manager-approve`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Manager từ chối phạt — huỷ penalty, complete không trừ tiền */
+export async function managerRejectInspection(
+  sessionId: string,
+  payload: { reason: string },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/manager-reject`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+
 
 export type AvailableAsset = {
   id: string;
@@ -1374,6 +1448,8 @@ export type InspectionLogEntry = {
   status: string;
   inspectorName: string | null;
   findingsCount: number;
+  photosCount?: number;
+  hasAi?: boolean;
   totalPenalty: number;
   createdAt: string;
   completedAt: string | null;
@@ -2243,6 +2319,7 @@ export type ReviewResponse = {
   reportedBy: string | null;
   editCount: number;
   isLocked: boolean;
+  fitFeedback?: "tight" | "true_to_size" | "loose" | null;
   createdAt: string;
   updatedAt: string;
   garment?: {
@@ -2257,15 +2334,51 @@ export type ReviewResponse = {
   } | null;
 };
 
-export async function createReview(payload: { garmentId: string; bookingId?: string; rating: number; comment?: string; images?: string[]; video?: string; }) {
+export type GarmentReviewsQuery = {
+  rating?: number;
+  hasMedia?: boolean;
+  fit?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type GarmentReviewsData = {
+  reviews: ReviewResponse[];
+  averageRating: number;
+  total: number;
+  filteredTotal: number;
+  ratingCounts: Record<number, number>;
+  mediaCount: number;
+  fitCounts: Record<string, number>;
+  page: number;
+  totalPages: number;
+  limit: number;
+};
+
+export async function createReview(payload: {
+  garmentId: string;
+  bookingId?: string;
+  rating: number;
+  comment?: string;
+  fitFeedback?: "tight" | "true_to_size" | "loose";
+  images?: string[];
+  video?: string;
+}) {
   return apiRequest<ReviewResponse>("/reviews", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function getGarmentReviews(garmentId: string) {
-  return apiRequest<{ reviews: ReviewResponse[]; averageRating: number; total: number }>(`/reviews/garment/${garmentId}`);
+export async function getGarmentReviews(garmentId: string, query?: GarmentReviewsQuery) {
+  const params = new URLSearchParams();
+  if (query?.rating) params.set("rating", String(query.rating));
+  if (query?.hasMedia !== undefined) params.set("hasMedia", String(query.hasMedia));
+  if (query?.fit) params.set("fit", query.fit);
+  if (query?.page) params.set("page", String(query.page));
+  if (query?.limit) params.set("limit", String(query.limit));
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<GarmentReviewsData>(`/reviews/garment/${garmentId}${q}`);
 }
 
 export async function getMyReviews() {
@@ -2304,7 +2417,16 @@ export async function hideReview(reviewId: string, reason?: string) {
   });
 }
 
-export async function updateReview(id: string, payload: { rating?: number; comment?: string; images?: string[]; video?: string; }) {
+export async function updateReview(
+  id: string,
+  payload: {
+    rating?: number;
+    comment?: string;
+    fitFeedback?: "tight" | "true_to_size" | "loose";
+    images?: string[];
+    video?: string;
+  },
+) {
   return apiRequest<ReviewResponse>(`/reviews/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -2553,8 +2675,10 @@ export async function getProductStats(query: {
 }
 
 /** Ghi nhận lượt xem sản phẩm (ẩn danh, chống trùng 30 phút ở server). Không chặn UI nếu lỗi. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function trackGarmentView(garmentId: string) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || !garmentId || !UUID_REGEX.test(garmentId)) return;
   let visitorKey = "";
   try {
     visitorKey = localStorage.getItem("heritage-visitor-key") ?? "";
@@ -2569,7 +2693,7 @@ export function trackGarmentView(garmentId: string) {
     method: "POST",
     body: JSON.stringify({ garmentId, visitorKey }),
     authToken: null,
-  });
+  }).catch(() => {});
 }
 
 // ---------- AI Virtual Try-On & Recommendations ----------
@@ -2653,5 +2777,16 @@ export async function hideTryonHistoryItem(id: string) {
   return apiRequest<{ id: string; hidden: boolean }>(`/ai/tryon/results/${id}/hide`, {
     method: "PATCH",
   });
+}
+
+export type TryonQuota = {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetsAt: string;
+};
+
+export async function getTryonQuota() {
+  return apiRequest<TryonQuota>("/ai/tryon/quota");
 }
 

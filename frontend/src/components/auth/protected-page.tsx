@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { resolveDashboardPath, type AppRole } from "@/lib/auth";
 import { useAuth } from "./auth-provider";
@@ -14,6 +14,16 @@ export function ProtectedPage({ allowedRoles, children }: ProtectedPageProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { session, status } = useAuth();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const allowedRolesKey = useMemo(
+    () => allowedRoles?.slice().sort().join(",") ?? "",
+    [allowedRoles],
+  );
 
   useEffect(() => {
     if (status === "loading") {
@@ -29,9 +39,14 @@ export function ProtectedPage({ allowedRoles, children }: ProtectedPageProps) {
     if (allowedRoles && session && !allowedRoles.includes(session.user.role)) {
       router.replace(resolveDashboardPath(session.user.role));
     }
-  }, [allowedRoles, pathname, router, session, status]);
+  }, [allowedRoles, allowedRolesKey, pathname, router, session, status]);
 
-  if (status !== "authenticated" || (allowedRoles && session && !allowedRoles.includes(session.user.role))) {
+  const isAuthorized =
+    status === "authenticated" &&
+    Boolean(session) &&
+    (!allowedRoles || (session && allowedRoles.includes(session.user.role)));
+
+  if (!mounted || !isAuthorized) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16">
         <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">

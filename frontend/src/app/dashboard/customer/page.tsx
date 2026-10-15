@@ -80,14 +80,14 @@ const DEMO_DELIVERY_TRACK: DeliveryTrackData = {
   bookingId: "DEMO-CP-2026",
   status: "in_transit",
   shipperLocationAvailable: true,
-  storeLat: 10.7769,
-  storeLng: 106.7009,
-  customerLat: 10.7932,
-  customerLng: 106.6800,
+  storeLat: 15.967945,
+  storeLng: 108.260727,
+  customerLat: 16.0544,
+  customerLng: 108.2022,
   deliveredAt: null,
   handoverConfirmed: false,
-  customerName: "Nguyễn Văn An",
-  customerAddress: "123 Đường Pasteur, Phường Võ Thị Sáu, Quận 3, TP.HCM",
+  customerName: "Thiện Hoàn",
+  customerAddress: "29 Kiệt 569, Hòa Thuận Đông, Hải Châu, Đà Nẵng",
 };
 
 type HistoryTab = "all" | "active" | "refund" | "completed" | "cancelled";
@@ -1477,29 +1477,68 @@ export default function CustomerDashboardPage() {
                 </div>
               ) : (
                 inspectionSessions.map((session, sIdx) => {
+                  const garmentName = session.asset?.garment?.name || "Trang phục";
+                  const garmentValue = Number(session.asset?.purchaseCost) || Number(session.aiComparisonResult?.garmentValue) || 0;
+                  const isPendingApproval = session.status === "pending_manager_approval";
+
                   return (
                     <div
                       key={session.id || sIdx}
                       className="rounded-xl border border-stone-200 bg-white p-4 shadow-2xs"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
-                        <div>
-                          <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700 mr-2">
-                            Mã đồ: {session.asset?.assetCode || session.asset?.garment?.name || "Trang phục"}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-ink text-sm">
+                            {garmentName}
                           </span>
+                          {session.asset?.assetCode && (
+                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-mono font-medium text-stone-700">
+                              Mã: {session.asset.assetCode}
+                            </span>
+                          )}
+                          {session.asset?.garment?.sizeLabel && (
+                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">
+                              Size {session.asset.garment.sizeLabel}
+                            </span>
+                          )}
+                          {garmentValue > 0 && (
+                            <span className="inline-block rounded bg-sand/40 px-2.5 py-0.5 text-xs font-semibold text-stone-800">
+                              Giá trị niêm yết: {garmentValue.toLocaleString("vi-VN")}đ
+                            </span>
+                          )}
                           <span className="text-xs text-stone-400">
                             {new Date(session.createdAt).toLocaleString("vi-VN")}
                           </span>
                           {session.inspector && (
-                            <span className="ml-2 text-xs text-stone-500">
+                            <span className="text-xs text-stone-500">
                               • Chuyên viên: {session.inspector.fullName}
                             </span>
                           )}
                         </div>
-                        <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
-                          Trạng thái: {session.status === "completed" ? "Đã thẩm định xong" : session.status}
-                        </span>
+                        <div>
+                          {session.status === "completed" ? (
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-200">
+                              Đã hoàn tất thẩm định
+                            </span>
+                          ) : isPendingApproval ? (
+                            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 border border-amber-200">
+                              Đang chờ Quản lý đối soát
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
+                              Trạng thái: {session.status === "in_progress" ? "Đang kiểm tra" : session.status}
+                            </span>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Thông báo nhẹ nhàng khi đang chờ quản lý duyệt */}
+                      {isPendingApproval && (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                          <Clock className="h-4 w-4 shrink-0 text-amber-600" />
+                          <span>Biên bản đang được Quản lý thẩm định và đối soát để đảm bảo mức bồi hoàn chuẩn xác và hợp lý nhất cho quý khách.</span>
+                        </div>
+                      )}
 
                       {/* Integrity score */}
                       {session.aiComparisonResult?.conditionScore !== undefined && session.aiComparisonResult?.conditionScore !== null && (() => {
@@ -1507,7 +1546,14 @@ export default function CustomerDashboardPage() {
                         const loss = 100 - score;
                         return (
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-mist px-3 py-2 text-xs">
-                            <span className="font-semibold text-stone-600">Đánh giá chất lượng sau thuê:</span>
+                            <div className="space-y-0.5">
+                              <span className="font-semibold text-stone-700">Đánh giá chất lượng sau thuê:</span>
+                              {garmentValue > 0 && (
+                                <p className="text-[11px] text-stone-500">
+                                  Cơ sở định giá trang phục: <strong className="text-stone-800">{garmentValue.toLocaleString("vi-VN")}đ</strong>
+                                </p>
+                              )}
+                            </div>
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 font-medium shadow-2xs">
                               <span className="text-stone-700">Độ nguyên vẹn: <strong className="font-bold text-ink">{score}/100</strong></span>
                               {loss > 0 ? (
@@ -1549,30 +1595,74 @@ export default function CustomerDashboardPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-stone-100">
-                                {session.findings.map((f, fIdx) => (
-                                  <tr key={f.id || fIdx} className="hover:bg-stone-50/50">
-                                    <td className="px-3 py-2 font-medium text-ink capitalize">
-                                      {f.findingType || "Hao mòn"}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
-                                        f.severity === "high" || f.severity === "severe" || f.severity === "nang"
-                                          ? "bg-red-100 text-red-700"
-                                          : f.severity === "medium" || f.severity === "vua"
-                                          ? "bg-amber-100 text-amber-700"
-                                          : "bg-blue-50 text-blue-700"
-                                      }`}>
-                                        {f.severity || "Nhẹ"}
-                                      </span>
-                                    </td>
-                                    <td className="px-3 py-2 text-stone-600 max-w-xs">
-                                      {f.description || "Chi tiết kiểm tra định kỳ"}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-semibold text-amber-700">
-                                      {formatVND(f.penaltyAmount || 0)}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {session.findings.map((f, fIdx) => {
+                                  const hasManagerFinding = session.findings.some((item) => item.findingType?.startsWith("[Quản lý"));
+                                  const isStaffProposal = f.findingType?.startsWith("[Staff");
+                                  const isManagerApproval = f.findingType?.startsWith("[Quản lý phê duyệt]");
+                                  const isManagerReject = f.findingType?.startsWith("[Quản lý từ chối]");
+                                  const cleanType = (f.findingType || "Hao mòn")
+                                    .replace(/^\[(Staff thẩm định|Staff đề xuất|Quản lý phê duyệt|Quản lý từ chối phạt)\]\s*/i, "")
+                                    .trim();
+
+                                  return (
+                                    <tr key={f.id || fIdx} className={`hover:bg-stone-50/50 ${isStaffProposal && hasManagerFinding ? "opacity-75 bg-stone-50/40" : ""}`}>
+                                      <td className="px-3 py-2 font-medium text-ink">
+                                        <div>{cleanType}</div>
+                                        {isStaffProposal && (
+                                          <span className="inline-block rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
+                                            Nhân viên thẩm định (Đề xuất)
+                                          </span>
+                                        )}
+                                        {isManagerApproval && (
+                                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                                            Quản lý phê duyệt (Chính thức)
+                                          </span>
+                                        )}
+                                        {isManagerReject && (
+                                          <span className="inline-block rounded bg-stone-200 px-1.5 py-0.5 text-[10px] font-bold text-stone-600">
+                                            Quản lý từ chối phạt
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
+                                          f.severity === "high" || f.severity === "severe" || f.severity === "nang"
+                                            ? "bg-red-100 text-red-700"
+                                            : f.severity === "medium" || f.severity === "vua"
+                                            ? "bg-amber-100 text-amber-700"
+                                            : "bg-blue-50 text-blue-700"
+                                        }`}>
+                                          {f.severity || "Nhẹ"}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2 text-stone-600 max-w-xs">
+                                        <p className="whitespace-pre-line leading-relaxed">{f.description || "Chi tiết kiểm tra định kỳ"}</p>
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <div>
+                                          <span className={`font-semibold tabular-nums ${
+                                            isStaffProposal && hasManagerFinding
+                                              ? "line-through text-stone-400 text-xs"
+                                              : "text-amber-700"
+                                          }`}>
+                                            {formatVND(f.penaltyAmount || 0)}
+                                          </span>
+                                          {Number(f.penaltyAmount) > 0 && garmentValue > 0 && (!isStaffProposal || !hasManagerFinding) && (
+                                            <p className="text-[10px] text-stone-500 font-normal mt-0.5">
+                                              ~{Math.round(Number(f.penaltyAmount) / garmentValue * 100)}% giá trị áo
+                                            </p>
+                                          )}
+                                          {isStaffProposal && hasManagerFinding && (
+                                            <p className="text-[10px] text-stone-400">Mức đề xuất cũ</p>
+                                          )}
+                                          {isManagerApproval && (
+                                            <p className="text-[10px] text-emerald-700 font-semibold">Khấu trừ thực tế</p>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

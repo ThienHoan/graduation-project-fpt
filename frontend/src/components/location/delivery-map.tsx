@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getDeliveryTrack, type DeliveryTrackData } from "@/lib/api";
 import { DeliveryTracker } from "@/components/location/delivery-tracker";
 import { Truck, ExternalLink, X } from "lucide-react";
+import { getMapTileConfig } from "@/lib/map-config";
 
 let cssInjected = false;
 
@@ -58,7 +59,7 @@ function statusLabel(status: string) {
   return map[status] ?? status;
 }
 
-export function DeliveryMap({ points, storeLat = 10.7769, storeLng = 106.7009, storeName = "Atelier", className = "" }: DeliveryMapProps) {
+export function DeliveryMap({ points, storeLat = 15.967945, storeLng = 108.260727, storeName = "Atelier Cổ Phục FPT Đà Nẵng", className = "" }: DeliveryMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [selectedPoint, setSelectedPoint] = useState<DeliveryPoint | null>(null);
@@ -102,9 +103,11 @@ export function DeliveryMap({ points, storeLat = 10.7769, storeLng = 106.7009, s
       const map = L.map(containerRef.current);
       mapRef.current = map;
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OSM",
-        maxZoom: 19,
+      const tileConfig = getMapTileConfig();
+      L.tileLayer(tileConfig.url, {
+        attribution: tileConfig.attribution,
+        maxZoom: tileConfig.maxZoom,
+        subdomains: tileConfig.subdomains || "0123",
       }).addTo(map);
 
       // Store marker

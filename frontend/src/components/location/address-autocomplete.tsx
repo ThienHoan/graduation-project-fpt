@@ -21,7 +21,7 @@ export type ResolvedAddress = {
   country?: string;
   latitude?: number | null;
   longitude?: number | null;
-  provider: "gogoduk";
+  provider: "gogoduk" | "goong";
   providerPlaceId?: string;
 };
 
@@ -34,7 +34,7 @@ type AddressAutocompleteProps = {
 function suggestionToAddress(suggestion: AddressSuggestion): ResolvedAddress {
   return {
     fullAddress: suggestion.label,
-    provider: "gogoduk",
+    provider: "goong",
     providerPlaceId: suggestion.placeId,
   };
 }

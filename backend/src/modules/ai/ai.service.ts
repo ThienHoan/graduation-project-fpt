@@ -97,6 +97,8 @@ export class AiService implements OnModuleInit {
             job.garmentImageUrl,
             job.garmentName,
             job.tryonCategory as TryonCategory,
+            job.sizeLabel ?? undefined,
+            job.fitType ?? "regular",
           );
           return {
             resultUrl: res.url,
@@ -136,7 +138,38 @@ export class AiService implements OnModuleInit {
       );
     }
 
-    // ── 1. Kiểm tra Cache ảnh AI ──────────────────────────────────────────────
+    // ── 1. Xác định fitType dựa trên độ chênh lệch số đo ──────────────────────
+    let fitType: "loose" | "tight" | "regular" = "regular";
+    try {
+      const customerMeasurement: any = await (this.prisma as any).customerMeasurement?.findFirst({
+        where: { customerId },
+        orderBy: { createdAt: "desc" },
+      });
+      if (customerMeasurement) {
+        const deltaBust = size.bust_cm && customerMeasurement.bustCm
+          ? Number(size.bust_cm) - Number(customerMeasurement.bustCm)
+          : null;
+        const deltaWaist = size.waist_cm && customerMeasurement.waistCm
+          ? Number(size.waist_cm) - Number(customerMeasurement.waistCm)
+          : null;
+
+        if ((deltaBust !== null && deltaBust < 0) || (deltaWaist !== null && deltaWaist < 0)) {
+          fitType = "tight";
+        } else if ((deltaBust !== null && deltaBust > 6) || (deltaWaist !== null && deltaWaist > 5)) {
+          fitType = "loose";
+        }
+      } else if (size.size_label) {
+        const lbl = size.size_label.toUpperCase().trim();
+        if (lbl === "XXL" || lbl === "2XL" || lbl === "3XL" || lbl === "XL") fitType = "loose";
+        else if (lbl === "XS" || lbl === "XXS") fitType = "tight";
+      }
+    } catch {
+      // Giữ fitType = regular nếu có lỗi
+    }
+
+    const fitSourceMarker = `hash:${image.imageHash};fit:${fitType}`;
+
+    // ── 2. Kiểm tra Cache ảnh AI theo Garment, Hash ảnh và FitType (Phom dáng) ─
     const cachedResult = await this.prisma.tryonResult.findFirst({
       where: {
         hiddenAt: null,
@@ -144,7 +177,7 @@ export class AiService implements OnModuleInit {
           garmentId: size.garment_id,
           mode: dto.mode,
           status: TryonStatus.completed,
-          sourceImageUrl: { contains: image.imageHash },
+          sourceImageUrl: { contains: fitSourceMarker },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -152,14 +185,14 @@ export class AiService implements OnModuleInit {
 
     if (cachedResult && (cachedResult.storedImageUrl || cachedResult.resultImageUrl)) {
       const finalUrl = cachedResult.storedImageUrl ?? cachedResult.resultImageUrl!;
-      this.logger.log(`[Cache HIT] Tái sử dụng ảnh thử đồ cho garment=${size.garments.name}, hash=${image.imageHash.slice(0, 10)}`);
+      this.logger.log(`[Cache HIT] Tái sử dụng ảnh thử đồ fitType=${fitType} cho garment=${size.garments.name}, hash=${image.imageHash.slice(0, 10)}`);
 
       const request = await this.prisma.tryonRequest.create({
         data: {
           customerId,
           garmentId: size.garment_id,
           status: TryonStatus.completed,
-          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
+          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;${fitSourceMarker}`,
           consentAccepted: true,
           mode: dto.mode,
           completedAt: new Date(),
@@ -179,6 +212,9 @@ export class AiService implements OnModuleInit {
             isCached: true,
             originalResultId: cachedResult.id,
             imageHash: image.imageHash,
+            fitType,
+            sizeLabel: size.size_label,
+            garmentSizeId: dto.garmentSizeId,
           },
         },
       });
@@ -190,19 +226,39 @@ export class AiService implements OnModuleInit {
         mode: dto.mode,
         garmentName: size.garments.name,
         sizeLabel: size.size_label,
+        fitType,
         isCached: true,
         queuePosition: 0,
       });
     }
 
-    // ── 2. Xử lý qua Queue nếu có TryonQueueService ───────────────────────────
+    // ── 3. Kiểm tra Hạn mức thử đồ trong ngày (Daily Quota) ──────────────────
+    const dailyLimit = this.getPositiveNumberEnv("AI_TRYON_DAILY_LIMIT", 5);
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const usedToday = await this.prisma.tryonRequest.count({
+      where: {
+        customerId,
+        createdAt: { gte: startOfDay },
+        status: { in: [TryonStatus.completed, TryonStatus.processing, TryonStatus.pending] },
+      },
+    });
+
+    if (usedToday >= dailyLimit) {
+      throw new BadRequestException(
+        `Hôm nay bạn đã sử dụng hết ${dailyLimit}/${dailyLimit} lượt thử đồ AI miễn phí. Lượt thử mới sẽ được làm mới sau 00:00!`,
+      );
+    }
+
+    // ── 4. Xử lý qua Queue nếu có TryonQueueService ───────────────────────────
     if (this.tryonQueueService) {
       const request = await this.prisma.tryonRequest.create({
         data: {
           customerId,
           garmentId: size.garment_id,
           status: TryonStatus.pending,
-          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
+          sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;${fitSourceMarker}`,
           consentAccepted: true,
           mode: dto.mode,
         },
@@ -221,6 +277,7 @@ export class AiService implements OnModuleInit {
         imageHash: image.imageHash,
         garmentImageUrl,
         tryonCategory,
+        fitType,
       });
 
       const position = this.tryonQueueService.getQueuePosition(request.id);
@@ -231,6 +288,7 @@ export class AiService implements OnModuleInit {
         mode: dto.mode,
         garmentName: size.garments.name,
         sizeLabel: size.size_label,
+        fitType,
         isCached: false,
         queuePosition: position,
       });
@@ -242,7 +300,7 @@ export class AiService implements OnModuleInit {
         customerId,
         garmentId: size.garment_id,
         status: TryonStatus.processing,
-        sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;hash:${image.imageHash}`,
+        sourceImageUrl: `base64:${image.mimeType};${image.sizeBytes}bytes;${fitSourceMarker}`,
         consentAccepted: true,
         mode: dto.mode,
       },
@@ -250,7 +308,15 @@ export class AiService implements OnModuleInit {
 
     let result: ReplicateResult;
     try {
-      result = await this.callReplicate(dto.mode, image.dataUri, garmentImageUrl, size.garments.name, tryonCategory);
+      result = await this.callReplicate(
+        dto.mode,
+        image.dataUri,
+        garmentImageUrl,
+        size.garments.name,
+        tryonCategory,
+        size.size_label ?? undefined,
+        fitType,
+      );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown AI error";
       console.error("[AI] Replicate error:", message);
@@ -295,7 +361,7 @@ export class AiService implements OnModuleInit {
     return ok({
       id: request.id,
       status: "completed",
-      resultImageUrl: storedImageUrl ?? result.url,
+      resultImageUrl: storedImageUrl ?? this.toAccessibleImageUrl(result.url),
       mode: dto.mode,
       garmentName: size.garments.name,
       sizeLabel: size.size_label,
@@ -320,12 +386,14 @@ export class AiService implements OnModuleInit {
         ? (result.aiMetadata as any).isCached === true
         : false;
 
+    const rawResultUrl = result?.storedImageUrl ?? result?.resultImageUrl ?? null;
+
     return ok({
       id: request.id,
       status: request.status,
       mode: request.mode,
       garmentName: request.garment.name,
-      resultImageUrl: result?.storedImageUrl ?? result?.resultImageUrl ?? null,
+      resultImageUrl: rawResultUrl ? this.toAccessibleImageUrl(rawResultUrl) : null,
       isCached: Boolean(isCached),
       errorMessage: request.errorMessage ?? null,
       queuePosition:
@@ -336,24 +404,59 @@ export class AiService implements OnModuleInit {
     });
   }
 
+  async getTryonQuota(customerId: string) {
+    const limit = this.getPositiveNumberEnv("AI_TRYON_DAILY_LIMIT", 5);
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const used = await this.prisma.tryonRequest.count({
+      where: {
+        customerId,
+        createdAt: { gte: startOfDay },
+        status: { in: [TryonStatus.completed, TryonStatus.processing, TryonStatus.pending] },
+      },
+    });
+
+    const remaining = Math.max(0, limit - used);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    return ok({
+      limit,
+      used,
+      remaining,
+      resetsAt: endOfDay.toISOString(),
+    });
+  }
+
   private async callReplicate(
     mode: TryonMode,
     userImageDataUri: string,
     garmentImageUrl: string,
     garmentName: string,
     category: TryonCategory,
+    sizeLabel?: string,
+    fitType: "loose" | "tight" | "regular" = "regular",
   ): Promise<ReplicateResult> {
     const apiToken = process.env.REPLICATE_API_TOKEN;
     if (!apiToken) throw new Error("REPLICATE_API_TOKEN not configured");
 
     const model = this.getModelPath(mode);
-    const { input, inputSchema } = this.buildReplicateInput(mode, userImageDataUri, garmentImageUrl, garmentName, category);
+    const { input, inputSchema } = this.buildReplicateInput(
+      mode,
+      userImageDataUri,
+      garmentImageUrl,
+      garmentName,
+      category,
+      sizeLabel,
+      fitType,
+    );
 
     this.logger.debug(`Fetching version for ${model}...`);
     const version = await this.fetchLatestModelVersion(model, apiToken);
 
     this.logger.debug(`POST ${REPLICATE_API}/predictions → ${model}:${version}`);
-    this.logger.debug(`mode=${mode} model=${model} inputKeys=${Object.keys(input).join(",")}`);
+    this.logger.debug(`mode=${mode} model=${model} size=${sizeLabel ?? "N/A"} fitType=${fitType} inputKeys=${Object.keys(input).join(",")}`);
 
     let prediction = await this.createPrediction(version, input, apiToken);
     this.logger.debug(`Prediction ${prediction.id}: ${prediction.status}`);
@@ -378,6 +481,8 @@ export class AiService implements OnModuleInit {
     garmentImageUrl: string,
     garmentName: string,
     category: TryonCategory,
+    sizeLabel?: string,
+    fitType: "loose" | "tight" | "regular" = "regular",
   ): { input: Record<string, unknown>; inputSchema: string } {
     if (mode === "face_swap") {
       return {
@@ -389,7 +494,7 @@ export class AiService implements OnModuleInit {
       };
     }
 
-    const garmentPrompt = this.buildGarmentPreservationPrompt(garmentName);
+    const garmentPrompt = this.buildGarmentPreservationPrompt(garmentName, sizeLabel, fitType);
 
     return {
       inputSchema: "idm-vton",
@@ -399,20 +504,37 @@ export class AiService implements OnModuleInit {
         garment_des: garmentPrompt,
         category,
         crop: true,
-        steps: 30,
+        steps: 35,
       },
     };
   }
 
-  private buildGarmentPreservationPrompt(garmentName: string): string {
+  private buildGarmentPreservationPrompt(
+    garmentName: string,
+    sizeLabel?: string,
+    fitType: "loose" | "tight" | "regular" = "regular",
+  ): string {
+    let sizeContext = sizeLabel
+      ? `Tailored fit proportioned for size ${sizeLabel}.`
+      : "Render authentic garment proportions.";
+
+    if (fitType === "loose") {
+      sizeContext += " Oversized baggy loose silhouette. The garment is visibly larger than the person's body frame: drooping shoulder seams falling visibly past the shoulders, deep loose folds and excess fabric bunching around the waist and hips, extra long sleeves covering the wrists, and an elongated flowing hem draping low towards the floor. Show the visual appearance of an oversized, loose-fitting outfit.";
+    } else if (fitType === "tight") {
+      sizeContext += " Snug tight-fitting silhouette with visible fabric tension. The garment is noticeably small on the person: taut fabric stretched tight across the chest and torso with visible horizontal tension pull lines, fitted high armholes, cropped shorter sleeves exposing the wrists, and a shorter hemline resting visibly higher above the ankles. Show the visual appearance of a tight, form-fitting outfit.";
+    } else {
+      sizeContext += " Balanced regular fit conforming naturally to the body contours with authentic fabric weight, elegant waist contour, and flowing traditional hemline with natural drape.";
+    }
+
     return [
       `Exact virtual try-on of the reference garment: ${garmentName}.`,
+      sizeContext,
       "Dress the person in the exact same traditional Vietnamese garment shown in the reference image.",
       "Preserve the garment identity faithfully: same main color, same secondary colors, same fabric texture, same fabric sheen, same embroidery, same floral or decorative patterns, same pattern placement, same trim, same seams, and same edge lines.",
       "Pay special attention to the collar and neckline: preserve the exact collar height, collar shape, collar opening, button or placket line, shoulder seams, sleeve cuffs, and sleeve length.",
       "For áo dài, áo tấc, ngũ thân, nhật bình, and other Vietnamese traditional garments, preserve the long front and back panels, side slits, layered structure, traditional silhouette, and matching pants if visible.",
       "Do not redesign the outfit. Do not change the collar, neckline, sleeve shape, color, pattern, fabric identity, decorations, cultural style, or garment category.",
-      "Only adapt the garment naturally to the person's body pose and lighting while keeping the reference garment visually identical.",
+      "Only adapt the garment naturally to the person's body pose and lighting while keeping the reference garment visually identical with soft, natural cloth wrinkles and shadows.",
     ].join(" ");
   }
 
@@ -518,6 +640,16 @@ export class AiService implements OnModuleInit {
     return null;
   }
 
+  public toAccessibleImageUrl(url: string): string {
+    if (!url) return url;
+    // Nếu URL từ replicate.delivery (thường bị các ISP Việt Nam chặn/DNS sinkhole), bọc qua CDN proxy an toàn
+    if (url.includes("replicate.delivery")) {
+      const cleanUrl = url.replace(/^https?:\/\//, "");
+      return `https://images.weserv.nl/?url=${encodeURIComponent(cleanUrl)}`;
+    }
+    return url;
+  }
+
   private async persistResultImage(replicateUrl: string, requestId: string): Promise<string | null> {
     const baseUrl = process.env.SUPABASE_URL?.replace(/\/$/, "");
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -529,17 +661,30 @@ export class AiService implements OnModuleInit {
     }
 
     try {
-      const imageRes = await fetch(replicateUrl);
-      if (!imageRes.ok) {
-        throw new Error(`download ${imageRes.status}: ${(await imageRes.text()).substring(0, 150)}`);
+      // 1. Tải ảnh từ Replicate (có cơ chế fallback proxy nếu mạng ISP chặn kết nối trực tiếp replicate.delivery)
+      let imageRes: Response;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        imageRes = await fetch(replicateUrl, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!imageRes.ok) throw new Error(`HTTP ${imageRes.status}`);
+      } catch (directErr) {
+        // Fallback: Tải qua CDN Proxy an toàn vì domain replicate.delivery thường bị ISP Việt Nam chặn DNS / SNI reset
+        const proxyUrl = this.toAccessibleImageUrl(replicateUrl);
+        this.logger.debug(`[AI] Replicate CDN tải trực tiếp gặp sự cố, chuyển sang tải qua CDN Proxy an toàn: ${proxyUrl}`);
+        imageRes = await fetch(proxyUrl);
+        if (!imageRes.ok) {
+          throw new Error(`download proxy failed ${imageRes.status}: ${(await imageRes.text()).substring(0, 150)}`);
+        }
       }
 
-      const contentType = imageRes.headers.get("content-type") || "image/png";
-      const extension = contentType.includes("jpeg")
-        ? "jpg"
+      const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+      const extension = contentType.includes("png")
+        ? "png"
         : contentType.includes("webp")
           ? "webp"
-          : "png";
+          : "jpg";
       const buffer = Buffer.from(await imageRes.arrayBuffer());
       const objectPath = `${requestId}.${extension}`;
       const uploadUrl = `${baseUrl}/storage/v1/object/${bucket}/${objectPath}`;
@@ -548,6 +693,7 @@ export class AiService implements OnModuleInit {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${serviceRoleKey}`,
+          "apikey": serviceRoleKey,
           "Content-Type": contentType,
           "x-upsert": "true",
         },
@@ -558,10 +704,13 @@ export class AiService implements OnModuleInit {
         throw new Error(`upload ${uploadRes.status}: ${(await uploadRes.text()).substring(0, 150)}`);
       }
 
-      return `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+      const publicUrl = `${baseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+      this.logger.log(`[AI] Lưu ảnh kết quả về Supabase Storage thành công: ${publicUrl}`);
+      return publicUrl;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "unknown storage error";
-      console.error("[AI] Lưu ảnh kết quả về Supabase Storage thất bại:", message);
+      const cause = (err as any)?.cause?.message || (err as any)?.cause || "";
+      const message = err instanceof Error ? `${err.message} ${cause}` : "unknown storage error";
+      console.warn("[AI] Lưu ảnh kết quả về Supabase Storage thất bại:", message);
       return null;
     }
   }
@@ -652,14 +801,17 @@ export class AiService implements OnModuleInit {
     return ok(
       requests
         .filter((r) => r.results[0]?.storedImageUrl || r.results[0]?.resultImageUrl)
-        .map((r) => ({
-          id: r.results[0].id,
-          requestId: r.id,
-          status: r.status,
-          garmentName: r.garment.name,
-          resultImageUrl: r.results[0]?.storedImageUrl ?? r.results[0]?.resultImageUrl ?? null,
-          createdAt: r.createdAt.toISOString(),
-        })),
+        .map((r) => {
+          const rawUrl = r.results[0]?.storedImageUrl ?? r.results[0]?.resultImageUrl ?? null;
+          return {
+            id: r.results[0].id,
+            requestId: r.id,
+            status: r.status,
+            garmentName: r.garment.name,
+            resultImageUrl: rawUrl ? this.toAccessibleImageUrl(rawUrl) : null,
+            createdAt: r.createdAt.toISOString(),
+          };
+        }),
     );
   }
 
@@ -1134,6 +1286,7 @@ Tối đa 3 topics.`;
       suggestedPenalty: number;
     }>;
     totalSuggestedPenalty: number;
+    garmentValue?: number;
     confidence: number;
     beforePhotosAnalyzed: number;
     afterPhotosAnalyzed: number;
@@ -1403,6 +1556,7 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         actionReason: String(parsed.actionReason || "Dựa trên tình trạng bề mặt và kết cấu vải."),
         detectedIssues,
         totalSuggestedPenalty: totalPenalty,
+        garmentValue,
         confidence: Math.min(1, Math.max(0.5, Number(parsed.confidence) || 0.9)),
         beforePhotosAnalyzed: beforeImages.length,
         afterPhotosAnalyzed: afterImages.length,
@@ -1418,6 +1572,7 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         actionReason: "Cần giặt sấy đồ trước khi xếp vào kho.",
         detectedIssues: [],
         totalSuggestedPenalty: 0,
+        garmentValue,
         confidence: 0.75,
         beforePhotosAnalyzed: beforeImages.length,
         afterPhotosAnalyzed: afterImages.length,
