@@ -1,0 +1,303 @@
+﻿{
+    "success":  true,
+    "data":  [
+                 {
+                     "id":  "6f8f635d-95f8-485d-9ed1-9c6c00de874e",
+                     "name":  "Sản Phẩm Test",
+                     "categoryName":  "TEST",
+                     "sizeId":  "153d3220-6b66-4049-a064-15304960b01b",
+                     "sizeLabel":  "L",
+                     "color":  "Trắng",
+                     "dailyPrice":  10000,
+                     "depositAmount":  1,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "e6f72097-9968-4b76-b96b-9893211506c2",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/catalog/28fbebea-afd7-44c1-80b9-edd741b0c190/c1fe9c27-ee2e-48d2-a3a2-1b4dd5963937.jpg",
+                                        "altText":  null,
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "48894f87-d017-47b7-8049-e85387119be7",
+                     "name":  "Áo Dài Nam Ngũ Thân",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "0c8247bd-0c77-420f-9d4f-8da21d3a2f72",
+                     "sizeLabel":  "M",
+                     "color":  "Xanh lá",
+                     "dailyPrice":  400000,
+                     "depositAmount":  900000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "97fb2de5-226e-4ae6-b69f-1816f3a9d45c",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1787712928267-2c3a0404-b128-4c0d-bf98-e9b94162642f.jpg",
+                                        "altText":  null,
+                                        "sortOrder":  0
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "d81b6d3f-2ddb-402c-9154-041b29767300",
+                     "name":  "Áo Dài Nam Tay Thụng Ngũ Thân ",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "78b73702-7516-49f3-bced-b76e6b889a11",
+                     "sizeLabel":  "L",
+                     "color":  "Đỏ",
+                     "dailyPrice":  350000,
+                     "depositAmount":  1000000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "20520e69-7ff4-44f4-9184-50437bda9233",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1787711587503-_o_d_i.jpg",
+                                        "altText":  null,
+                                        "sortOrder":  0
+                                    },
+                                    {
+                                        "id":  "80cf1ee8-3f1f-48f2-95c7-35232907df94",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1790873816007-cho-thue-ao-ngu-than-tay-thung-3_630.webp",
+                                        "altText":  null,
+                                        "sortOrder":  2
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "43cc9592-5ed3-4e43-bb51-a14facbce729",
+                     "name":  "Áo dài tím hoa cúc",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "56014673-3d4f-44d9-bf32-6dcf43498005",
+                     "sizeLabel":  "S",
+                     "color":  "Tím",
+                     "dailyPrice":  360000,
+                     "depositAmount":  1050000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "9aaf8a17-bd46-45a2-a30f-9e944163b5c9",
+                                        "imageUrl":  "https://img.lazcdn.com/g/ff/kf/S471807bfb79840188dc154cdb73a6ec7L.jpg_720x720q80.jpg",
+                                        "altText":  "Áo dài tím hoa cúc - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "ef459ccb-dc72-4cfc-ba71-f957974ae6a1",
+                     "name":  "Áo dài hồng pastel",
+                     "categoryName":  "Áo dài cách tân",
+                     "sizeId":  "9760b9b5-db02-4480-a7c0-1ef3bd4bd49f",
+                     "sizeLabel":  "L",
+                     "color":  "Hồng pastel",
+                     "dailyPrice":  300000,
+                     "depositAmount":  850000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "1281e449-c108-445c-819a-fa9340fa886e",
+                                        "imageUrl":  "https://bizweb.dktcdn.net/100/236/196/products/beb7751b8d6e5930007f51.jpg?v=1695717586967",
+                                        "altText":  null,
+                                        "sortOrder":  3
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "f697aa1e-2178-4ca7-8dc7-1e09dc2813c4",
+                     "name":  "Áo dài đỏ thêu sen",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "c75579b7-bfc3-47aa-8d20-837fd844416a",
+                     "sizeLabel":  "L",
+                     "color":  "Đỏ",
+                     "dailyPrice":  350000,
+                     "depositAmount":  1000000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "7b2d20f0-d918-4935-b9de-227029637e7c",
+                                        "imageUrl":  "https://bizweb.dktcdn.net/100/236/196/products/1fefad15c3cd17934edc.jpg?v=1696474705203",
+                                        "altText":  "Áo dài đỏ thêu sen - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000010",
+                     "name":  "Vest đen 3 mảnh nam",
+                     "categoryName":  "Vest \u0026 Suit",
+                     "sizeId":  "7f039264-c7d5-4425-baa5-08dfd715f962",
+                     "sizeLabel":  "M",
+                     "color":  "Đen",
+                     "dailyPrice":  450000,
+                     "depositAmount":  1500000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "63bbe5eb-768c-49c7-bc91-4c039ee32b31",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1782720531450-anh-1-vest-den.jpg",
+                                        "altText":  null,
+                                        "sortOrder":  3
+                                    },
+                                    {
+                                        "id":  "f3b02477-a439-4fe6-bf7d-04680183cbec",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1784717447772-anh-2-vest-den.jpeg",
+                                        "altText":  null,
+                                        "sortOrder":  4
+                                    },
+                                    {
+                                        "id":  "0d8406b6-d38d-4f54-81ab-be87bb9fa04d",
+                                        "imageUrl":  "https://ecylctxtoznnjjcctlxx.supabase.co/storage/v1/object/public/products/1784717452692-anh-3-vest-den.jpg",
+                                        "altText":  null,
+                                        "sortOrder":  5
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000003",
+                     "name":  "Áo dài tím hoa cúc",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "2dd5b4f1-00b3-4597-ae5c-12f94a191cf9",
+                     "sizeLabel":  "L",
+                     "color":  "Tím",
+                     "dailyPrice":  360000,
+                     "depositAmount":  1050000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "897a1416-463f-4b91-a857-2fa438ee46b5",
+                                        "imageUrl":  "https://lamia.com.vn/storage/ao-dai/ao-dai-cach-tan-phoi-hoa-tiet-hoa-ad139-5.jpg",
+                                        "altText":  "Áo dài tím hoa cúc - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000006",
+                     "name":  "Nhật Bình xanh ngọc",
+                     "categoryName":  "Cổ phục",
+                     "sizeId":  "2ffd2ab6-4ec5-4f1e-af27-ef09e9e62fd1",
+                     "sizeLabel":  "S",
+                     "color":  "Xanh ngọc",
+                     "dailyPrice":  550000,
+                     "depositAmount":  1300000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "96b09ca0-5570-4a51-a54b-768baa10bdc0",
+                                        "imageUrl":  "https://cophuchoangthanhhue.com/wp-content/uploads/2024/10/Hinh-anh-34-1.jpeg",
+                                        "altText":  "Nhật Bình xanh ngọc - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000009",
+                     "name":  "Váy cưới xòe trắng đính đá",
+                     "categoryName":  "Váy cưới",
+                     "sizeId":  "f52364af-31c5-4a5c-bbeb-385ca6b47d0a",
+                     "sizeLabel":  "S",
+                     "color":  "Trắng",
+                     "dailyPrice":  900000,
+                     "depositAmount":  3000000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "99e855c1-d894-40ce-b236-d3a2458b1f35",
+                                        "imageUrl":  "https://aodaitailoc.com/wp-content/uploads/2022/08/Thiet-ke-vay-cuoi-cong-chua-xoe-cua-Xoai-Non.jpg",
+                                        "altText":  "Váy cưới xòe trắng - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000004",
+                     "name":  "Áo dài trắng lụa mềm",
+                     "categoryName":  "Áo dài cách tân",
+                     "sizeId":  "0456e5d6-589e-4348-96e2-820a876062d7",
+                     "sizeLabel":  "S",
+                     "color":  "Trắng",
+                     "dailyPrice":  320000,
+                     "depositAmount":  900000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "93265024-625d-46e1-aed0-37fcae61df0f",
+                                        "imageUrl":  "https://media-cdn-v2.laodong.vn/storage/newsportal/2024/12/22/1439065/86M9073-H50---22M907-01.jpg",
+                                        "altText":  "Áo dài trắng lụa mềm - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000007",
+                     "name":  "Áo Tấc nâu trầm",
+                     "categoryName":  "Cổ phục",
+                     "sizeId":  "c637b3d6-0c23-49d8-95d7-607531754310",
+                     "sizeLabel":  "L",
+                     "color":  "Nâu",
+                     "dailyPrice":  480000,
+                     "depositAmount":  1200000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "f6d1666c-3a02-46a6-a3de-5e3616fcfdaa",
+                                        "imageUrl":  "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ-pX1xQ-4BgBfyqx_o0AijuaAJVPFxMjwkAk3ynAXZsgcayV_U-lJLkN4\u0026s=10",
+                                        "altText":  "Áo Tấc nâu trầm - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000002",
+                     "name":  "Áo dài xanh ngọc thêu hoa",
+                     "categoryName":  "Áo dài truyền thống",
+                     "sizeId":  "5fde9224-117f-4d6e-ace6-b78dffb9f9a6",
+                     "sizeLabel":  "S",
+                     "color":  "Xanh ngọc",
+                     "dailyPrice":  380000,
+                     "depositAmount":  1100000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "b3e84f8a-879e-43db-a5f8-e711e076d25f",
+                                        "imageUrl":  "https://overabridal.com/wp-content/uploads/2023/05/ao-dai-cuoi-hoi-cho-co-dau-nu-181.jpg",
+                                        "altText":  "Áo dài xanh ngọc thêu hoa - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 },
+                 {
+                     "id":  "00000000-0000-0000-0002-000000000008",
+                     "name":  "Ngũ Thân tím than",
+                     "categoryName":  "Cổ phục",
+                     "sizeId":  "df3d98cf-cd8f-470d-9b29-48cc7c7c66f0",
+                     "sizeLabel":  "M",
+                     "color":  "Tím than",
+                     "dailyPrice":  500000,
+                     "depositAmount":  1400000,
+                     "isActive":  true,
+                     "deletedAt":  null,
+                     "images":  [
+                                    {
+                                        "id":  "a34ed4c0-3eda-4637-8fc5-031a642ee413",
+                                        "imageUrl":  "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQSwIGpIKzsNGks7IkiHFpfEn6AF6vjLmfPw-iwvHngNxkuViqUUcCbnT66\u0026s=10",
+                                        "altText":  "Ngũ Thân tím than - mặt trước",
+                                        "sortOrder":  1
+                                    }
+                                ]
+                 }
+             ]
+}

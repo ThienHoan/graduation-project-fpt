@@ -207,10 +207,23 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     getGarmentsGrouped().then((res) => {
       if (res.success && res.data) {
         for (const g of res.data) {
-          const found = g.sizes.find((s) => s.garmentSizeId === garmentId);
-          if (found) {
+          // 1. Kiểm tra nếu garmentId khớp với garmentSizeId hoặc garmentId của size
+          const foundSize = g.sizes.find(
+            (s) => s.garmentSizeId === garmentId || s.garmentId === garmentId
+          );
+          // 2. Hoặc garmentId khớp với ID sản phẩm mẹ (garmentId) hoặc slug URL
+          const matchesGroup =
+            g.garmentId === garmentId ||
+            g.slug === garmentId ||
+            encodeURIComponent(g.slug) === garmentId;
+
+          if (foundSize || matchesGroup) {
             setGroup(g);
-            setSelectedGarmentId(garmentId);
+            // Ưu tiên size tìm được, nếu không thì lấy size đầu tiên khả dụng
+            const initialSizeId = foundSize
+              ? foundSize.garmentSizeId
+              : g.sizes[0]?.garmentSizeId || null;
+            setSelectedGarmentId(initialSizeId);
             setLoading(false);
 
             if (g.garmentId) {
