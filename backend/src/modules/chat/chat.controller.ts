@@ -1,23 +1,73 @@
-import { Body, Controller, DefaultValuePipe, ForbiddenException, Get, ParseIntPipe, ParseUUIDPipe, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors, MaxFileSizeValidator, ParseFilePipe, FileTypeValidator } from "@nestjs/common";
+import { Body, Controller, DefaultValuePipe, ForbiddenException, Get, Logger, ParseIntPipe, ParseUUIDPipe, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors, MaxFileSizeValidator, ParseFilePipe, FileTypeValidator } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { ChatService } from "./chat.service";
 import { ChatGateway } from "./chat.gateway";
+import type { AutoReplyTrigger } from "./auto-reply-policy";
 import { ok } from "../../common/api-response";
 
 @Controller("chat")
 @UseGuards(JwtAuthGuard)
 export class ChatController {
+  private readonly logger = new Logger(ChatController.name);
+
   constructor(
     private readonly chatService: ChatService,
     private readonly chatGateway: ChatGateway,
   ) {}
 
+  /**
+   * Chạy auto-reply cho các tin không đi qua socket (product card, booking card,
+   * ảnh/video) rồi phát kết quả cho phòng chat.
+   */
+  private async runAutoReply(conversationId: string, trigger: AutoReplyTrigger) {
+    // Staff đang giữ quyền trả lời, kể cả chưa gửi tin → AI không chen ngang.
+    if (this.chatGateway.hasActiveStaffLock(conversationId)) return;
+
+    let accepted = false;
+
+    try {
+      const aiMsgs = await this.chatService.maybeAutoReply(conversationId, trigger, {
+        onAccepted: () => {
+          accepted = true;
+          this.chatGateway.emitAiTyping(conversationId, true);
+        },
+        shouldAbort: () => this.chatGateway.hasActiveStaffLock(conversationId),
+      });
+
+      if (aiMsgs.length === 0) return;
+
+      // Giữ đúng assignment hiện tại thay vì luôn gửi null.
+      const current = await this.chatService.getConversationById(conversationId);
+      for (const aiMsg of aiMsgs) {
+        this.chatGateway.server?.to(conversationId).emit("message_received", {
+          conversationId,
+          message: aiMsg,
+          staffId: current.staff_id ?? null,
+          status: current.status,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Auto-reply failed for conversation ${conversationId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      // Chỉ tắt indicator nếu chính request này đã bật nó.
+      if (accepted) {
+        this.chatGateway.emitAiTyping(conversationId, false);
+      }
+    }
+  }
+
   @Get("conversations/counts")
   async getConversationCounts(@CurrentUser() user: AuthenticatedUser) {
-    return ok(await this.chatService.getConversationCounts(user));
+    return ok(
+      await this.chatService.getConversationCounts(user, (conversationId, staffId) =>
+        this.chatGateway.isStaffLockActive(conversationId, staffId),
+      ),
+    );
   }
 
   @Get("conversations")
@@ -25,7 +75,11 @@ export class ChatController {
     @CurrentUser() user: AuthenticatedUser,
     @Query("tab") tab?: string,
   ) {
-    return ok(await this.chatService.listConversations(user, tab));
+    return ok(
+      await this.chatService.listConversations(user, tab, (conversationId, staffId) =>
+        this.chatGateway.isStaffLockActive(conversationId, staffId),
+      ),
+    );
   }
 
   @Get("conversations/me")
@@ -110,28 +164,12 @@ export class ChatController {
       }
 
       // Trigger AI auto-reply for product card clicks (C6)
-      const productName =
-        (message?.metadata as Record<string, { name?: string }> | null)
-          ?.product?.name ?? "";
-      void this.chatService
-        .maybeAutoReply(
-          conversationId,
-          `[Đã gửi sản phẩm] ${productName}`,
-          this.chatGateway.hasOnlineStaff(),
-          "product_card",
-        )
-        .then((aiMsgs) => {
-          for (const aiMsg of aiMsgs) {
-            this.chatGateway.server
-              ?.to(conversationId)
-              .emit("message_received", {
-                conversationId,
-                message: aiMsg,
-                staffId: null,
-                status: "open",
-              });
-          }
-        });
+      void this.runAutoReply(conversationId, {
+        content: "",
+        messageType: "product_card",
+        metadata: message?.metadata as Record<string, unknown> | null,
+        messageId: message?.id,
+      });
     }
 
     return ok(message);
@@ -170,6 +208,15 @@ export class ChatController {
           content: message?.content ?? "",
         });
       }
+
+      // Booking card/complaint luôn được policy xử lý cố định (không gọi model)
+      // để khách nhận phản hồi ngay và staff nhận đúng ngữ cảnh.
+      void this.runAutoReply(conversationId, {
+        content: "",
+        messageType: "booking_card",
+        metadata: message?.metadata as Record<string, unknown> | null,
+        messageId: message?.id,
+      });
     }
 
     return ok(message);
@@ -210,6 +257,15 @@ export class ChatController {
           content: message?.content ?? "",
         });
       }
+
+      // AI không đọc được nội dung ảnh/video: trả lời cố định để khách biết
+      // đã nhận media, hoặc chuyển staff nếu hội thoại đang là đơn hàng/khiếu nại.
+      void this.runAutoReply(conversationId, {
+        content: "",
+        messageType: message?.message_type ?? "image",
+        metadata: message?.metadata as Record<string, unknown> | null,
+        messageId: message?.id,
+      });
     }
 
     return ok(message);

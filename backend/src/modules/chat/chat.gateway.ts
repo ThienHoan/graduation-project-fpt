@@ -28,6 +28,26 @@ interface ActiveReplier {
   lockedAt: Date;
 }
 
+// Sau khi lock staff hết hạn, chờ một khoảng ngắn để staff khác kịp nhận
+// hội thoại trước khi AI trả lời tin cuối của khách.
+const POST_RELEASE_AI_DELAY_MS = 20_000;
+
+// Số phút staff giữ quyền trả lời một hội thoại trước khi lock tự hết hạn.
+// Có thể đổi trong backend/.env mà không cần sửa code:
+//   CHAT_STAFF_LOCK_TIMEOUT_MINUTES=30
+const DEFAULT_STAFF_LOCK_TIMEOUT_MINUTES = 20;
+
+// Đọc tại thời điểm dùng (không phải lúc import module) để chắc chắn
+// ConfigModule đã nạp backend/.env xong.
+export function getStaffLockTimeoutMs(): number {
+  const configured = Number(process.env.CHAT_STAFF_LOCK_TIMEOUT_MINUTES);
+  const minutes =
+    Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_STAFF_LOCK_TIMEOUT_MINUTES;
+  return minutes * 60 * 1000;
+}
+
 @WebSocketGateway({
   namespace: "/chat",
   cors: {
@@ -49,6 +69,10 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     if (this.rateLimitCleanupInterval) {
       clearInterval(this.rateLimitCleanupInterval);
     }
+    for (const timeout of this.postReleaseAiTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    this.postReleaseAiTimeouts.clear();
   }
   @WebSocketServer()
   server!: Server;
@@ -57,6 +81,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
   private readonly activeReplier = new Map<string, ActiveReplier>();
   private readonly lockTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly disconnectReleaseTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly postReleaseAiTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly messageRateLimits = new Map<string, number[]>();
   private rateLimitCleanupInterval?: NodeJS.Timeout;
   private readonly aiReplyCounters = new Map<string, number>();
@@ -254,11 +279,31 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       return;
     }
 
-    const existingLock = this.activeReplier.get(body.conversationId);
+    let existingLock = this.activeReplier.get(body.conversationId);
 
-    // Zombie lock: DB has staff_id but in-memory lock is gone (e.g. server restart)
-    // Don't clear reopened conversations — keep original staff assigned
-    // Don't clear if last message is from the assigned staff (Chờ phản hồi)
+    // Tài khoản được gán không còn tồn tại hoặc đã bị vô hiệu hoá (mất acc,
+    // admin khoá tài khoản): trả hội thoại về "Chờ tiếp nhận" ngay, bất kể
+    // tin cuối là của ai, để staff khác có thể mở và tiếp tục hỗ trợ.
+    if (conversation.staff_id && conversation.staff_id !== user.userId) {
+      const unavailable = await this.chatService.releaseAssignmentIfStaffUnavailable(
+        body.conversationId,
+        conversation.staff_id,
+      );
+      if (unavailable) {
+        const staleLock = this.activeReplier.get(body.conversationId);
+        if (staleLock?.staffId === conversation.staff_id) {
+          this.clearActiveLock(body.conversationId);
+          this.clearDisconnectReleaseForSocket(staleLock.socketId);
+          existingLock = undefined;
+        }
+        conversation = await this.chatService.getConversationById(body.conversationId);
+      }
+    }
+
+    // Zombie lock: DB has staff_id but in-memory lock is gone (e.g. server
+    // restart). The assignment is stale even if staff sent the last message;
+    // release it so the conversation can move to "Chờ khách" and be picked up.
+    // Don't clear reopened conversations — keep original staff assigned.
     if (conversation.staff_id && conversation.staff_id !== user.userId && !existingLock && !conversation.reopened_from_resolved) {
       const released = await this.chatService.releaseStaffAssignmentIfStale(body.conversationId, conversation.staff_id);
       if (released) {
@@ -288,6 +333,9 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       }
     }
 
+    // Staff đã nhận hội thoại trong khoảng chờ → huỷ lượt AI sau release.
+    this.clearPostReleaseAiTimer(body.conversationId);
+
     if (existingLock?.staffId === user.userId) {
       this.clearDisconnectReleaseForSocket(existingLock.socketId);
     }
@@ -304,6 +352,9 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     if (!existingLock || existingLock.staffId !== user.userId) {
       this.scheduleLockExpiration(body.conversationId);
     }
+
+    // Staff vừa nhận → tắt indicator AI nếu một lượt auto-reply cũ đang chờ.
+    this.emitAiTyping(body.conversationId, false);
 
     client.emit("open_conversation_result", {
       conversationId: body.conversationId,
@@ -328,8 +379,23 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       return;
     }
 
+    // Staff chỉ được xoá tin của mình khi đang giữ lock trả lời của hội thoại.
+    // Khách vẫn xoá được tin của khách mà không cần lock.
+    if (this.isStaffSide(user.role) && !this.isStaffLockActive(body.conversationId, user.userId)) {
+      client.emit("delete_error", {
+        conversationId: body.conversationId,
+        messageId: body.messageId,
+        reason: "lock_required",
+      });
+      return;
+    }
+
     try {
-      const result = await this.chatService.deleteMessage(user.userId, body.messageId);
+      const result = await this.chatService.deleteMessage(
+        user.userId,
+        body.messageId,
+        body.conversationId,
+      );
       this.server.to(body.conversationId).emit("message_deleted", {
         conversationId: body.conversationId,
         messageId: body.messageId,
@@ -390,6 +456,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         return { success: false, error: "conversation_locked" };
       }
 
+      this.clearPostReleaseAiTimer(body.conversationId);
       this.activeReplier.set(body.conversationId, {
         staffId: user.userId,
         name: user.fullName,
@@ -429,30 +496,52 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       this.aiReplyCounters.set(convId, counter);
       const currentCounter = counter;
 
-      this.server.to(convId).emit("typing", {
-        conversationId: convId,
-        isTyping: true,
-        userId: "ai-assistant",
-      });
+      const isCurrentReply = () => this.aiReplyCounters.get(convId) === currentCounter;
 
-      void this.chatService.maybeAutoReply(convId, body.content, this.hasOnlineStaff()).then((aiMsgs) => {
-        if (this.aiReplyCounters.get(convId) !== currentCounter) return;
+      // Staff đã nhận hội thoại (dù chưa gửi tin) → không để AI chen ngang.
+      // Vẫn tăng counter ở trên để vô hiệu callback AI cũ nếu có.
+      if (!this.hasActiveStaffLock(convId)) {
+        void this.chatService.maybeAutoReply(
+          convId,
+          { content: body.content, messageType: "text", messageId: message.id },
+          {
+            // Chỉ hiện "AI đang nhập" khi tin này thực sự được đưa vào hàng đợi
+            // (không phải tin rỗng/emoji hay hội thoại đang có staff xử lý).
+            onAccepted: () => {
+              if (!isCurrentReply()) return;
+              this.emitAiTyping(convId, true);
+            },
+            // Staff có thể nhận hội thoại trong lúc debounce/model đang chạy.
+            shouldAbort: () => this.hasActiveStaffLock(convId),
+          },
+        ).then(async (aiMsgs) => {
+          if (!isCurrentReply()) return;
+          this.emitAiTyping(convId, false);
+          if (aiMsgs.length === 0) return;
 
-        this.server.to(convId).emit("typing", {
-          conversationId: convId,
-          isTyping: false,
-          userId: "ai-assistant",
-        });
-
-        for (const aiMsg of aiMsgs) {
-          this.server.to(convId).emit("message_received", {
-            conversationId: convId,
-            message: aiMsg,
-            staffId: null,
-            status: "open",
+          // Giữ đúng assignment hiện tại trong payload. Trước đây hardcode
+          // staffId=null làm UI tưởng hội thoại vừa bị nhả và hiện lại nút nhận.
+          const aiConv = await this.prisma.conversations.findUnique({
+            where: { id: convId },
+            select: { staff_id: true, status: true },
           });
-        }
-      });
+          for (const aiMsg of aiMsgs) {
+            this.server.to(convId).emit("message_received", {
+              conversationId: convId,
+              message: aiMsg,
+              staffId: aiConv?.staff_id ?? null,
+              status: aiConv?.status ?? "open",
+            });
+          }
+        }).catch(() => {
+          // Không để typing indicator treo nếu auto-reply ném lỗi ngoài dự kiến.
+          if (!isCurrentReply()) return;
+          this.emitAiTyping(convId, false);
+        });
+      } else {
+        // Lock hiện tại đã vô hiệu callback AI cũ; tắt indicator ngay.
+        this.emitAiTyping(convId, false);
+      }
     }
 
     return { success: true, tempId: body.tempId };
@@ -512,6 +601,32 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     });
   }
 
+  emitAiTyping(conversationId: string, isTyping: boolean) {
+    this.server?.to(conversationId).emit("typing", {
+      conversationId,
+      isTyping,
+      userId: "ai-assistant",
+    });
+  }
+
+  /**
+   * Staff đang giữ lock trả lời (đã nhận hội thoại nhưng có thể chưa gửi tin).
+   * Auto-reply phải dừng để không chen ngang.
+   */
+  hasActiveStaffLock(conversationId: string): boolean {
+    return this.activeReplier.has(conversationId);
+  }
+
+  /**
+   * Dùng cho REST danh sách/đếm tab: chỉ coi là "Chờ phản hồi" khi đúng staff
+   * đang giữ lock và lock chưa quá CHAT_STAFF_LOCK_TIMEOUT_MINUTES.
+   */
+  isStaffLockActive(conversationId: string, staffId: string): boolean {
+    const activeLock = this.activeReplier.get(conversationId);
+    if (!activeLock || activeLock.staffId !== staffId) return false;
+    return Date.now() < activeLock.lockedAt.getTime() + getStaffLockTimeoutMs();
+  }
+
   getLockStatus(conversationId: string) {
     const activeLock = this.activeReplier.get(conversationId);
     if (!activeLock) {
@@ -523,7 +638,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       };
     }
 
-    const expiresAt = new Date(activeLock.lockedAt.getTime() + 20 * 60 * 1000);
+    const expiresAt = new Date(activeLock.lockedAt.getTime() + getStaffLockTimeoutMs());
     return {
       isLocked: true,
       lockedBy: { staffId: activeLock.staffId, name: activeLock.name },
@@ -545,17 +660,9 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       //console.log("TIMER FIRE", socketId, staffId, "onlineUsers.has?", hasOnline);
       if (!hasOnline) {
         //console.log("CLEAR DB staff_id for", staffId);
-        void this.chatService.autoReplyReleasedConversations(staffId, this.hasOnlineStaff()).then((results) => {
+        void this.chatService.autoReplyReleasedConversations(staffId).then((results) => {
           for (const { conversationId, messages: aiMsgs } of results) {
-            for (const aiMsg of aiMsgs) {
-              //console.log("EMIT AI (post-release)", aiMsg.id, aiMsg.content);
-              this.server.to(conversationId).emit("message_received", {
-                conversationId,
-                message: aiMsg,
-                staffId: null,
-                status: "open",
-              });
-            }
+            this.emitAiMessages(conversationId, aiMsgs);
           }
         });
       }
@@ -590,7 +697,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     }
   }
 
-  private releaseLock(conversationId: string) {
+  private releaseLock(conversationId: string, options?: { scheduleAi?: boolean }) {
     const lock = this.activeReplier.get(conversationId);
     if (!lock) {
       return;
@@ -598,9 +705,51 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
 
     this.clearActiveLock(conversationId);
 
-    void this.chatService.releaseConversationLock(conversationId, lock.staffId).then((status) => {
-      this.server?.to("staff").emit("chat_unlocked", { conversationId, status });
+    void this.chatService.releaseConversationLock(conversationId, lock.staffId).then((result) => {
+      const { status, released } = result;
+      this.server?.to("staff").emit("chat_unlocked", { conversationId, status, released });
+
+      // Chỉ AI trả lời khi lock thực sự nhả assignment và hội thoại còn mở.
+      // Chờ một khoảng ngắn để staff khác kịp nhận trước khi AI chen vào.
+      if (options?.scheduleAi && released && status === "open") {
+        this.schedulePostReleaseAutoReply(conversationId);
+      }
     });
+  }
+
+  private schedulePostReleaseAutoReply(conversationId: string) {
+    this.clearPostReleaseAiTimer(conversationId);
+
+    const timeout = setTimeout(() => {
+      this.postReleaseAiTimeouts.delete(conversationId);
+      void this.chatService
+        .autoReplyUnassignedIfCustomerWaiting(conversationId)
+        .then((aiMsgs) => this.emitAiMessages(conversationId, aiMsgs))
+        .catch(() => undefined);
+    }, POST_RELEASE_AI_DELAY_MS);
+
+    this.postReleaseAiTimeouts.set(conversationId, timeout);
+  }
+
+  private clearPostReleaseAiTimer(conversationId: string) {
+    const timeout = this.postReleaseAiTimeouts.get(conversationId);
+    if (!timeout) {
+      return;
+    }
+
+    clearTimeout(timeout);
+    this.postReleaseAiTimeouts.delete(conversationId);
+  }
+
+  private emitAiMessages(conversationId: string, aiMsgs: Array<{ id: string }>) {
+    for (const aiMsg of aiMsgs) {
+      this.server?.to(conversationId).emit("message_received", {
+        conversationId,
+        message: aiMsg,
+        staffId: null,
+        status: "open",
+      });
+    }
   }
 
   private scheduleLockExpiration(conversationId: string) {
@@ -615,14 +764,14 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         return;
       }
 
-      this.releaseLock(conversationId);
+      this.releaseLock(conversationId, { scheduleAi: true });
       if (this.server) {
         const holdingSocket = this.server.sockets?.sockets?.get?.(lock.socketId) ?? null;
         if (holdingSocket) {
           holdingSocket.emit("lock_expired", { conversationId });
         }
       }
-    }, 20 * 60 * 1000);
+    }, getStaffLockTimeoutMs());
 
     this.lockTimeouts.set(conversationId, timeout);
   }

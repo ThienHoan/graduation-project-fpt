@@ -2,10 +2,12 @@ import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/co
 import { Throttle } from "@nestjs/throttler";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { OptionalJwtAuthGuard } from "../auth/guards/optional-jwt-auth.guard";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { AiService } from "./ai.service";
 import { CreateTryonDto } from "./dto/create-tryon.dto";
 import { ProductAdvisorDto } from "./dto/product-advisor.dto";
+import { PerUserThrottlerGuard } from "./guards/per-user-throttler.guard";
 
 @Controller("ai")
 export class AiController {
@@ -55,8 +57,14 @@ export class AiController {
     return this.aiService.getOccasions();
   }
 
+  /**
+   * Dùng được cả khi chưa đăng nhập (ô tư vấn AI ở trang catalog).
+   * Nếu có token hợp lệ thì rate limit tính theo user, tránh việc nhiều staff
+   * dùng chung IP văn phòng làm cạn bucket của nhau.
+   */
   @Post("product-advisor")
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @UseGuards(OptionalJwtAuthGuard, PerUserThrottlerGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   productAdvisor(@Body() body: ProductAdvisorDto) {
     return this.aiService.productAdvisor(body);
   }

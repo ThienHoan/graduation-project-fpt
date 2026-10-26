@@ -21,6 +21,21 @@ export type ChatMessage = {
   };
 };
 
+export type StaffConversationTab =
+  | "unassigned"
+  | "resolved"
+  | "waiting_customer"
+  | "awaiting_reply"
+  | "needs_reply";
+
+export type ChatConversationCounts = {
+  needsReply: number;
+  awaitingReply: number;
+  unassigned: number;
+  waitingCustomer: number;
+  resolved: number;
+};
+
 export type ChatConversation = {
   id: string;
   customerId: string;
@@ -96,6 +111,66 @@ export function getBookingTopic(msg: ChatMessage): string | null {
   return data?.topic ?? null;
 }
 
+export type AdvisorHistoryRole = "customer" | "staff" | "ai";
+
+export type AdvisorHistoryItem = {
+  role: AdvisorHistoryRole;
+  content: string;
+  createdAt: string;
+};
+
+/**
+ * Dựng history gửi cho AI advisor từ danh sách tin nhắn.
+ *
+ * - AI phải giữ đúng vai "ai" (trước đây bị map thành "customer").
+ * - Mọi người gửi không phải khách (staff/manager) đều là "staff",
+ *   kể cả khi hội thoại đã được chuyển cho staff khác.
+ * - Card/ảnh/video được mô tả thành chữ để model hiểu ngữ cảnh.
+ */
+export function buildAdvisorHistory(params: {
+  messages: ChatMessage[];
+  customerId: string;
+  excludeMessageId?: string;
+  limit?: number;
+}): AdvisorHistoryItem[] {
+  const { messages, customerId, excludeMessageId, limit = 10 } = params;
+
+  return messages
+    .filter(
+      (m) =>
+        !m.deleted_at &&
+        (!m.message_type || ["text", "product_card", "booking_card", "image", "video"].includes(m.message_type)) &&
+        m.id !== excludeMessageId,
+    )
+    .slice(-limit)
+    .map((m) => {
+      let content = m.content;
+
+      if (m.message_type === "product_card") {
+        const product = getProductCardData(m);
+        if (product) {
+          const price = typeof product.price === "number" ? product.price.toLocaleString("vi-VN") : "";
+          content = `[Thẻ sản phẩm] ${product.name} | Size: ${product.size ?? "N/A"}${price ? ` | Giá: ${price}đ/ngày` : ""}`;
+        }
+      } else if (m.message_type === "booking_card") {
+        const data = getBookingCardData(m);
+        if (data) {
+          content = `[Thẻ đơn hàng] Mã ${data.booking.code} | Trạng thái: ${data.booking.statusLabel}`;
+        }
+      } else if (m.message_type === "image") {
+        content = "[Hình ảnh]";
+      } else if (m.message_type === "video") {
+        content = "[Video]";
+      }
+
+      const isCustomer = m.sender_id === customerId || m.user_accounts?.role === "customer";
+      const role: AdvisorHistoryRole =
+        m.sender_type === "ai" ? "ai" : isCustomer ? "customer" : "staff";
+
+      return { role, content, createdAt: m.created_at };
+    });
+}
+
 export async function sendBookingCardMessage(params: {
   conversationId: string;
   bookingId: string;
@@ -158,12 +233,7 @@ export async function getChatConversations(tab?: string) {
 }
 
 export async function getChatConversationCounts() {
-  return apiRequest<{
-    needsReply: number;
-    awaitingReply: number;
-    unassigned: number;
-    resolved: number;
-  }>("/chat/conversations/counts");
+  return apiRequest<ChatConversationCounts>("/chat/conversations/counts");
 }
 
 export async function getConversationMessages(conversationId: string, before?: string, limit = 15) {
@@ -209,7 +279,7 @@ export type AIAdvisorResponse = {
 
 export async function getProductAdvisor(params: {
   message: string;
-  history?: Array<{ role: "customer" | "staff"; content: string; createdAt: string }>;
+  history?: AdvisorHistoryItem[];
   rentalStartDate?: string;
   rentalEndDate?: string;
 }) {

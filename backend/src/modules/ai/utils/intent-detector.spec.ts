@@ -67,4 +67,19 @@ describe("IntentDetector", () => {
     const result = detectIntent("Còn váy xanh không?");
     expect(result.intent).toBe("search");
   });
+
+  it("detects search intent when asking what else the shop has", () => {
+    expect(detectIntent("Ngoài áo dài shop còn có trang phục gì").intent).toBe("search");
+    expect(detectIntent("Sản phẩm ngoài cổ phục").intent).toBe("search");
+  });
+
+  it("detects search intent when asking for other items", () => {
+    expect(detectIntent("Áo dài khác ngoài áo dài trên").intent).toBe("search");
+    expect(detectIntent("Cổ phục còn mẫu nào khác").intent).toBe("search");
+  });
+
+  it("detects search intent for a broad catalog question", () => {
+    expect(detectIntent("Shop có những loại nào?").intent).toBe("search");
+    expect(detectIntent("Ngoài áo dài còn gì?").intent).toBe("search");
+  });
 });

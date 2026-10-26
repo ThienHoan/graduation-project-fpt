@@ -18,6 +18,7 @@ import {
   type ChatConversation,
   type ChatMessage,
   type ConversationLockStatus,
+  type StaffConversationTab,
 } from "@/lib/chat";
 import { CustomerChatBubble } from "./customer-chat-bubble";
 import { StaffChatWorkspace } from "./staff-chat-workspace";
@@ -39,7 +40,7 @@ export default function ChatPage() {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [staffCanReply, setStaffCanReply] = useState(false);
   const [staffLockError, setStaffLockError] = useState<string | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<"needs_reply" | "awaiting_reply" | "unassigned" | "resolved">("needs_reply");
+  const [sidebarTab, setSidebarTab] = useState<StaffConversationTab>("needs_reply");
   const [notification, setNotification] = useState<string | null>(null);
 
 
@@ -47,6 +48,9 @@ export default function ChatPage() {
   const currentConversationIdRef = useRef<string | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unassignedRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarTabRef = useRef(sidebarTab);
+  sidebarTabRef.current = sidebarTab;
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const selectedConversationRef = useRef<ChatConversation | null>(null);
   const messagesConversationIdRef = useRef<string | null>(null);
@@ -138,13 +142,32 @@ export default function ChatPage() {
 
     const onMessageReceived = (payload: { conversationId: string; message: ChatMessage; staffId?: string | null; status?: string }) => {
 
-      // If the message is from current user, remove only the first matching optimistic message (fallback)
-      if (payload.message.sender_id === session?.user.id) {
-        setMessages((prev) => {
-          const idx = prev.findIndex((m) => m.id.startsWith("temp-") && m.content === payload.message.content);
-          if (idx === -1) return prev;
-          return prev.filter((_, i) => i !== idx);
-        });
+      const isOwnMessage = payload.message.sender_id === session?.user.id;
+      const isSelectedConversation = payload.conversationId === conv()?.id;
+
+      setMessages((prev) => {
+        let next = prev;
+        if (isOwnMessage) {
+          // Thay optimistic message bằng bản ghi thật từ server.
+          const optimisticIndex = next.findIndex(
+            (message) => message.id.startsWith("temp-") && message.content === payload.message.content,
+          );
+          if (optimisticIndex !== -1) {
+            next = next.filter((_, index) => index !== optimisticIndex);
+          }
+        }
+
+        // Socket có thể phát lại cùng một message (reconnect/retry). Bỏ qua
+        // bản ghi đã có để không hiển thị hai bong bóng giống nhau.
+        if (next.some((message) => message.id === payload.message.id)) {
+          return next;
+        }
+
+        if (!isSelectedConversation) return next;
+        return [...next, payload.message];
+      });
+
+      if (isOwnMessage) {
         setFailedMessages((prev) => {
           const next = new Set(prev);
           for (const id of prev) {
@@ -152,18 +175,11 @@ export default function ChatPage() {
           }
           return next;
         });
-      }
-      // Always update messages if this conversation is selected
-      if (payload.conversationId === conv()?.id) {
-        setMessages((prev) => [...prev, payload.message]);
-        // Mark read via REST when receiving message in active conversation
-        if (payload.message.sender_id !== session?.user.id) {
-          void markConversationRead(payload.conversationId);
-        }
-      }
-      // Refresh lock status when staff sends a message (timeout is renewed by backend)
-      if (payload.message.sender_id === session?.user.id) {
+        // Refresh lock status when staff sends a message (timeout is renewed by backend)
         void refreshLockStatus(payload.conversationId);
+      } else if (isSelectedConversation) {
+        // Mark read via REST when receiving message in active conversation
+        void markConversationRead(payload.conversationId);
       }
       // Always update the sidebar conversation's lastMessage
       let updatedTopicFields: Record<string, unknown> | null = null;
@@ -255,11 +271,17 @@ export default function ChatPage() {
           prev?.id === conversationId ? { ...prev, staffId: session.user.id, staffName, status: payload.status ?? prev.status } : prev,
         );
           if (isAcceptingConversationRef.current) {
-            // Determine correct tab based on who sent the last message
-            const lastFromStaff = selectedConversation?.lastMessage?.sender_id === session.user.id;
+            // Chuyển ngay sang tab Cá nhân sau khi Tiếp nhận / Tư vấn bổ sung.
+            // Dùng ref vì effect socket được tạo với closure cũ.
+            const current = selectedConversationRef.current;
+            const last = current?.lastMessage;
+            const lastFromStaff =
+              last != null && last.sender_id !== current?.customerId && last.sender_type !== "ai";
             setSidebarTab(lastFromStaff ? "awaiting_reply" : "needs_reply");
             isAcceptingConversationRef.current = false;
           }
+      } else if (isAcceptingConversationRef.current) {
+        isAcceptingConversationRef.current = false;
       }
 
       void refreshLockStatus(conversationId);
@@ -275,27 +297,71 @@ export default function ChatPage() {
         void refreshLockStatus();
       }
     };
-    const onChatUnlocked = (payload: { conversationId: string; status?: string }) => {
+    const onChatUnlocked = (payload: { conversationId: string; status?: string; released?: boolean }) => {
       const isRevertingToResolved = payload.status === "resolved";
+      // Server cũ không gửi `released`; mặc định coi như đã nhả để tương thích.
+      const wasReleased = payload.released !== false;
+      const shouldClearStaff = !isRevertingToResolved && wasReleased;
+
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === payload.conversationId
-            ? { ...conversation, ...(isRevertingToResolved ? {} : { staffId: null, staffName: null }), status: payload.status ?? conversation.status }
+            ? {
+                ...conversation,
+                ...(shouldClearStaff ? { staffId: null, staffName: null } : {}),
+                status: payload.status ?? conversation.status,
+              }
             : conversation,
         ),
       );
       if (payload.conversationId === conv()?.id) {
-        setSelectedConversation((prev) => prev ? { ...prev, ...(isRevertingToResolved ? {} : { staffId: null, staffName: null }), status: payload.status ?? prev.status } : prev);
+        setSelectedConversation((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...(shouldClearStaff ? { staffId: null, staffName: null } : {}),
+                status: payload.status ?? prev.status,
+              }
+            : prev,
+        );
         setStaffCanReply(false);
-        setStaffLockError(null);
+        // Nếu assignment vẫn giữ nguyên (released=false), giữ thông báo
+        // "Phiên trả lời đã hết hạn" thay vì xoá mất lý do composer bị khoá.
+        if (shouldClearStaff) {
+          setStaffLockError(null);
+        }
         void refreshLockStatus();
+      }
+
+      // Refresh đúng tab đang xem nếu hội thoại vừa được nhả về hàng chờ.
+      // Hội thoại có tin cuối của staff sẽ nằm ở "Chờ khách", còn lại ở
+      // "Chờ tiếp nhận"; cả hai đều thuộc nhóm Chung.
+      if (isStaff && wasReleased && !isRevertingToResolved) {
+        if (
+          sidebarTabRef.current === "unassigned" ||
+          sidebarTabRef.current === "waiting_customer"
+        ) {
+          scheduleSidebarRefresh(sidebarTabRef.current);
+        } else {
+          setNotification("Có hội thoại vừa được chuyển về hàng chờ.");
+          if (notificationTimerRef.current) {
+            clearTimeout(notificationTimerRef.current);
+          }
+          notificationTimerRef.current = setTimeout(() => setNotification(null), 4000);
+        }
       }
     };
     const onLockExpired = (payload: { conversationId: string }) => {
-      if (payload.conversationId !== conv()?.id) return;
-      setStaffCanReply(false);
-      setStaffLockError("Phiên trả lời đã hết hạn.");
-      void refreshLockStatus();
+      if (payload.conversationId === conv()?.id) {
+        setStaffCanReply(false);
+        setStaffLockError("Phiên trả lời đã hết hạn.");
+        void refreshLockStatus();
+      }
+      // Hết lock thì hội thoại không còn thuộc "Chờ phản hồi" nữa, kể cả khi
+      // staff đang mở một hội thoại khác.
+      if (sidebarTabRef.current === "awaiting_reply") {
+        scheduleSidebarRefresh("awaiting_reply");
+      }
     };
     const onConversationResolved = (payload: { conversationId: string; status?: string }) => {
       setConversations((prev) =>
@@ -407,6 +473,10 @@ export default function ChatPage() {
       if (notificationTimerRef.current) {
         clearTimeout(notificationTimerRef.current);
       }
+      if (unassignedRefreshTimerRef.current) {
+        clearTimeout(unassignedRefreshTimerRef.current);
+        unassignedRefreshTimerRef.current = null;
+      }
     };
   }, [socket, isStaff]);
 
@@ -511,27 +581,46 @@ export default function ChatPage() {
   };
   }, [socket, isStaff, session, authSignOut, refreshUser]);
 
-  async function loadConversations(tab?: string) {
+  async function loadConversations(tab?: string, options?: { silent?: boolean }) {
     if (!session) return;
-    setLoadingConversations(true);
-
-    if (isStaff) {
-      const result = await getChatConversations(tab);
-      if (result.success && result.data) {
-        setConversations(result.data);
-      }
-    } else {
-      // Customer: POST to create or get existing conversation
-      const result = await getMyChatConversation();
-      if (result.success && result.data) {
-        setConversations([result.data]);
-        setSelectedConversation(result.data);
-        void joinConversation(result.data.id);
-        // Emit open_conversation will be handled by the connect handler
-      }
+    if (!options?.silent) {
+      setLoadingConversations(true);
     }
 
-    setLoadingConversations(false);
+    try {
+      if (isStaff) {
+        const result = await getChatConversations(tab);
+        if (result.success && result.data) {
+          setConversations(result.data);
+        }
+      } else {
+        // Customer: POST to create or get existing conversation
+        const result = await getMyChatConversation();
+        if (result.success && result.data) {
+          setConversations([result.data]);
+          setSelectedConversation(result.data);
+          void joinConversation(result.data.id);
+          // Emit open_conversation will be handled by the connect handler
+        }
+      }
+    } finally {
+      if (!options?.silent) {
+        setLoadingConversations(false);
+      }
+    }
+  }
+
+  function scheduleSidebarRefresh(tab = sidebarTabRef.current) {
+    if (unassignedRefreshTimerRef.current) {
+      clearTimeout(unassignedRefreshTimerRef.current);
+    }
+    // Gộp nhiều sự kiện unlock liên tiếp thành một request.
+    unassignedRefreshTimerRef.current = setTimeout(() => {
+      unassignedRefreshTimerRef.current = null;
+      if (sidebarTabRef.current === tab) {
+        void loadConversations(tab, { silent: true });
+      }
+    }, 300);
   }
 
   async function joinConversation(conversationId: string, isManual = false, convOverride?: ChatConversation) {
@@ -654,7 +743,10 @@ export default function ChatPage() {
       return;
     }
     if (!selectedConversation) return;
-    isAcceptingConversationRef.current = selectedConversation.staffId === null;
+    // Cả "Tiếp nhận" (chưa có staff) và "Tư vấn bổ sung" (mở lại hội thoại
+    // resolved) đều phải đưa hội thoại sang tab Cá nhân ngay khi thành công.
+    isAcceptingConversationRef.current =
+      selectedConversation.staffId === null || selectedConversation.status === "resolved";
 
     const doEmit = () => {
       socket!.emit("open_conversation", { conversationId: selectedConversation!.id });
@@ -733,7 +825,7 @@ export default function ChatPage() {
     socket.emit("typing", { conversationId: selectedConversation.id, isTyping });
   }
 
-  function handleSetSidebarTab(tab: "needs_reply" | "awaiting_reply" | "unassigned" | "resolved") {
+  function handleSetSidebarTab(tab: StaffConversationTab) {
   hasManuallyInteractedRef.current = true;
   setSidebarTab(tab);
   }
@@ -786,6 +878,7 @@ const chatContent = (
       onLoadOlderMessages={loadOlderMessages} 
       messagesContainerRef={messagesContainerRef}
       onDeleteMessage={deleteMessage}
+      canDeleteMessages={staffCanReply}
       failedMessages={failedMessages}
       onRetryMessage={retrySendMessage}
     />
