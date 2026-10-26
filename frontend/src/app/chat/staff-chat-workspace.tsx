@@ -1,11 +1,12 @@
 "use client";
 
 import { useRef, useEffect, useState, type RefObject } from "react";
-import type { ChatConversation, ChatMessage, ConversationLockStatus } from "@/lib/chat";
-import { getBookingCardData, getProductCardData, uploadChatFile, getProductAdvisor, sendProductCardMessage, getChatConversationCounts, type AIAdvisorTopic } from "@/lib/chat";
+import type { ChatConversation, ChatMessage, ConversationLockStatus, StaffConversationTab } from "@/lib/chat";
+import { buildAdvisorHistory, getBookingCardData, getProductCardData, uploadChatFile, getProductAdvisor, sendProductCardMessage, getChatConversationCounts, type AIAdvisorTopic } from "@/lib/chat";
 import { Paperclip, Sparkles, Send, Loader2, CheckCircle2, Bot, X, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
+import { ChatTextarea } from "@/components/chat/chat-textarea";
 import { ProductCard } from "@/components/chat/product-card";
 
 function formatVND(amount: number) {
@@ -27,8 +28,8 @@ interface StaffChatWorkspaceProps {
   lockStatus: ConversationLockStatus | null;
   staffCanReply: boolean;
   staffLockError: string | null;
-  sidebarTab: "needs_reply" | "awaiting_reply" | "unassigned" | "resolved";
-  setSidebarTab: (tab: "needs_reply" | "awaiting_reply" | "unassigned" | "resolved") => void;
+  sidebarTab: StaffConversationTab;
+  setSidebarTab: (tab: StaffConversationTab) => void;
   notification: string | null;
   session: AuthSession | null;
   onJoinConversation: (conversationId: string) => void;
@@ -42,6 +43,8 @@ interface StaffChatWorkspaceProps {
   onLoadOlderMessages: () => void;
   messagesContainerRef: RefObject<HTMLDivElement | null>;
   onDeleteMessage: (messageId: string) => void;
+  /** Staff chỉ xoá được tin của mình khi đang giữ lock trả lời hội thoại. */
+  canDeleteMessages: boolean;
   failedMessages?: Set<string>;
   onRetryMessage?: (content: string) => void;
 }
@@ -73,6 +76,7 @@ export function StaffChatWorkspace({
   onLoadOlderMessages,
   messagesContainerRef,
   onDeleteMessage,
+  canDeleteMessages,
   failedMessages,
   onRetryMessage,
 }: StaffChatWorkspaceProps) {
@@ -86,7 +90,13 @@ export function StaffChatWorkspace({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [tabCounts, setTabCounts] = useState({ needsReply: 0, awaitingReply: 0, unassigned: 0, resolved: 0 });
+  const [tabCounts, setTabCounts] = useState({
+    needsReply: 0,
+    awaitingReply: 0,
+    unassigned: 0,
+    waitingCustomer: 0,
+    resolved: 0,
+  });
 
   useEffect(() => {
     getChatConversationCounts().then((res) => {
@@ -103,7 +113,10 @@ export function StaffChatWorkspace({
     error: string | null;
   }>({ loading: false, topics: [], error: null });
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiRetryNonce, setAiRetryNonce] = useState(0);
   const lastSuggestedMsgIdRef = useRef<string | null>(null);
+  // Tăng mỗi khi đổi hội thoại / bắt đầu request mới để bỏ qua response cũ.
+  const aiRequestIdRef = useRef(0);
   const [aiToast, setAiToast] = useState<string | null>(null);
   const aiToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showResolveConfirm, setShowResolveConfirm] = useState(false);
@@ -137,6 +150,16 @@ export function StaffChatWorkspace({
 
   const displayedConversations = conversations;
 
+  const generalTabs: Array<{ key: StaffConversationTab; label: string; count: number }> = [
+    { key: "unassigned", label: "Chờ tiếp nhận", count: tabCounts.unassigned },
+    { key: "resolved", label: "Đã tư vấn", count: tabCounts.resolved },
+    { key: "waiting_customer", label: "Chờ khách", count: tabCounts.waitingCustomer },
+  ];
+  const personalTabs: Array<{ key: StaffConversationTab; label: string; count: number }> = [
+    { key: "awaiting_reply", label: "Chờ phản hồi", count: tabCounts.awaitingReply },
+    { key: "needs_reply", label: "Cần trả lời", count: tabCounts.needsReply },
+  ];
+
   // Determine the viewing mode
   const isUnassignedPreview = selectedConversation && selectedConversation.staffId === null;
   const isAssignedToOther = selectedConversation && selectedConversation.staffId !== null && selectedConversation.staffId !== session?.user.id;
@@ -144,52 +167,69 @@ export function StaffChatWorkspace({
 
   useEffect(() => {
     const container = messagesContainerRef.current;
-    const endEl = messagesEndRef.current;
-    if (!container || !endEl || !endEl.scrollIntoView) return;
+    if (!container) return;
 
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     if (isNearBottom) {
-      endEl.scrollIntoView({ block: "end", behavior: "smooth" });
+      // Chỉ cuộn khung tin nhắn, tránh scrollIntoView làm nhảy thanh cuộn trang.
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages]);
+
+  // Đổi hội thoại: xoá gợi ý của hội thoại trước để tránh hiển thị lẫn chủ đề.
+  useEffect(() => {
+    aiRequestIdRef.current += 1;
+    lastSuggestedMsgIdRef.current = null;
+    setAiSuggestion({ loading: false, topics: [], error: null });
+    setAiPanelOpen(false);
+  }, [selectedConversation?.id]);
+
+  function requestAiSuggestion() {
+    if (!selectedConversation) return;
+    setAiPanelOpen(true);
+    // Xoá mốc tin nhắn đã gợi ý + tăng nonce để effect chạy lại.
+    lastSuggestedMsgIdRef.current = null;
+    setAiRetryNonce((value) => value + 1);
+  }
 
   // AI suggestion: auto-call when customer sends a new message
   useEffect(() => {
     if (isUnassignedPreview || isAssignedToOther || isResolved || !selectedConversation || !session) return;
 
+    // Chỉ tin nhắn thật của khách mới kích hoạt gợi ý.
+    // Trước đây điều kiện sender_id !== staff cũng bắt cả tin AI, khiến panel
+    // gọi model trên chính câu trả lời của AI và map AI thành "customer".
     const lastCustomerMsg = [...messages].reverse().find(
-      (m) => m.sender_id !== session.user.id && !m.deleted_at && (!m.message_type || m.message_type === "text"),
+      (m) =>
+        m.sender_id === selectedConversation.customerId &&
+        !m.deleted_at &&
+        (!m.message_type || m.message_type === "text") &&
+        /[\p{L}\p{N}]/u.test(m.content ?? ""),
     );
     if (!lastCustomerMsg || lastSuggestedMsgIdRef.current === lastCustomerMsg.id) return;
     if (aiSuggestion.loading) return;
 
+    // Response của request cũ (hội thoại khác / lần gợi ý trước) bị bỏ qua.
+    const requestId = ++aiRequestIdRef.current;
     lastSuggestedMsgIdRef.current = lastCustomerMsg.id;
     setAiSuggestion({ loading: true, topics: [], error: null });
     setAiPanelOpen(true);
 
-    // Collect last 10 messages (excluding the last customer msg) as history
-    const historyMessages = messages
-      .filter((m) => !m.deleted_at && (!m.message_type || m.message_type === "text" || m.message_type === "product_card"))
-      .slice(-10)
-      .map((m) => {
-        let content = m.content;
-        if (m.message_type === "product_card" && m.metadata?.product) {
-          const p = m.metadata.product as Record<string, unknown>;
-          const price = typeof p.price === "number" ? p.price.toLocaleString() : "";
-          content = `[Đã gửi sản phẩm] ${p.name ?? ""} | Size: ${p.size ?? "N/A"} | Giá: ${price}đ/ngày`;
-        }
-        return {
-          role: (m.sender_id === session.user.id ? "staff" : "customer") as "customer" | "staff",
-          content,
-          createdAt: m.created_at,
-        };
-      });
+    // 10 tin trước đó làm ngữ cảnh; tin mới nhất được gửi riêng ở `message`
+    // nên loại khỏi history để model không đọc lặp.
+    const historyMessages = buildAdvisorHistory({
+      messages,
+      customerId: selectedConversation.customerId,
+      excludeMessageId: lastCustomerMsg.id,
+      limit: 10,
+    });
 
     getProductAdvisor({
       message: lastCustomerMsg.content,
       history: historyMessages,
     })
       .then((res) => {
+        if (aiRequestIdRef.current !== requestId) return;
         if (res.success && res.data) {
           setAiSuggestion({ loading: false, topics: res.data.topics, error: null });
         } else {
@@ -199,10 +239,11 @@ export function StaffChatWorkspace({
         }
       })
       .catch(() => {
+        if (aiRequestIdRef.current !== requestId) return;
         setAiSuggestion({ loading: false, topics: [], error: "Lỗi kết nối AI" });
         showAiToast("Lỗi kết nối AI, vui lòng thử lại.");
       });
-  }, [messages, selectedConversation, session, isUnassignedPreview, isAssignedToOther, isResolved]);
+  }, [messages, selectedConversation, session, isUnassignedPreview, isAssignedToOther, isResolved, aiSuggestion.loading, aiRetryNonce]);
 
   async function handleInsertProductCard(productId: string) {
     if (!selectedConversation) return;
@@ -241,79 +282,68 @@ export function StaffChatWorkspace({
           <h2 className="font-semibold text-lg text-ink">Cuộc trò chuyện</h2>
         </div>
 
-        <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg bg-parchment p-3 text-sm text-stone-700">
-          <button
-            type="button"
-            onClick={() => setSidebarTab("needs_reply")}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
-              sidebarTab === "needs_reply" ? "bg-oxblood text-white" : "bg-white text-stone-700 hover:bg-sand"
-            }`}
-          >
-            Cần trả lời
-            <span
-              className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full px-1.5 text-[11px] font-bold leading-none ${
-                sidebarTab === "needs_reply"
-                  ? "bg-white/20 text-white"
-                  : "bg-lotus/10 text-lotus"
-              }`}
-            >
-              {tabCounts.needsReply}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSidebarTab("awaiting_reply")}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
-              sidebarTab === "awaiting_reply" ? "bg-oxblood text-white" : "bg-white text-stone-700 hover:bg-sand"
-            }`}
-          >
-            Chờ phản hồi
-            <span
-              className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full px-1.5 text-[11px] font-bold leading-none ${
-                sidebarTab === "awaiting_reply"
-                  ? "bg-white/20 text-white"
-                  : "bg-stone-200 text-stone-600"
-              }`}
-            >
-              {tabCounts.awaitingReply}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSidebarTab("unassigned")}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
-              sidebarTab === "unassigned" ? "bg-oxblood text-white" : "bg-white text-stone-700 hover:bg-sand"
-            }`}
-          >
-            Chờ tiếp nhận
-            <span
-              className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full px-1.5 text-[11px] font-bold leading-none ${
-                sidebarTab === "unassigned"
-                  ? "bg-white/20 text-white"
-                  : "bg-amber-100 text-amber-800"
-              }`}
-            >
-              {tabCounts.unassigned}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSidebarTab("resolved")}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
-              sidebarTab === "resolved" ? "bg-oxblood text-white" : "bg-white text-stone-700 hover:bg-sand"
-            }`}
-          >
-            Đã tư vấn
-            <span
-              className={`inline-flex items-center justify-center min-w-[20px] h-5 rounded-full px-1.5 text-[11px] font-bold leading-none ${
-                sidebarTab === "resolved"
-                  ? "bg-white/20 text-white"
-                  : "bg-stone-200 text-stone-600"
-              }`}
-            >
-              {tabCounts.resolved}
-            </span>
-          </button>
+        <div className="mb-5 rounded-lg bg-parchment p-3 text-sm text-stone-700">
+          <div>
+            <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Chung
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {generalTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setSidebarTab(tab.key)}
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
+                    sidebarTab === tab.key
+                      ? "bg-oxblood text-white"
+                      : "bg-white text-stone-700 hover:bg-sand"
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-bold leading-none ${
+                      sidebarTab === tab.key
+                        ? "bg-white/20 text-white"
+                        : "bg-stone-200 text-stone-600"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-sand/70 pt-3">
+            <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Cá nhân
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {personalTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setSidebarTab(tab.key)}
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 transition ${
+                    sidebarTab === tab.key
+                      ? "bg-oxblood text-white"
+                      : "bg-white text-stone-700 hover:bg-sand"
+                  }`}
+                >
+                  {tab.label}
+                  <span
+                    className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-bold leading-none ${
+                      sidebarTab === tab.key
+                        ? "bg-white/20 text-white"
+                        : "bg-stone-200 text-stone-600"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -537,16 +567,33 @@ export function StaffChatWorkspace({
                 <div className="space-y-3">
                   {messages.map((message) => {
                     const isMine = message.sender_id === session?.user.id;
+                    const isAi = message.sender_type === "ai";
+                    // AI trả lời thay staff nên xếp cùng phía bên phải, nhưng dùng
+                    // nền jade để staff phân biệt được đâu là tin do AI soạn.
+                    const alignRight = isMine || isAi;
+                    const bubbleClass = isAi
+                      ? "bg-jade/10 text-ink border-jade/30"
+                      : isMine
+                        ? "bg-lotus/10 text-ink border-sand/70"
+                        : "bg-white text-stone-900 border-sand/70";
+                    const senderLabel = isMine
+                      ? "Bạn"
+                      : isAi
+                        ? "Trợ lý AI"
+                        : message.user_accounts?.profile?.fullName ?? message.user_accounts?.email ?? message.sender_id;
                     return (
                       <div
                         key={message.id}
-                        className={`group relative ${isMine ? "ml-auto" : "mr-auto"} max-w-[85%]`}
+                        className={`group relative ${alignRight ? "ml-auto" : "mr-auto"} max-w-[85%]`}
                         onMouseEnter={() => setHoveredMessageId(message.id)}
                         onMouseLeave={() => setHoveredMessageId(null)}
                       >
-                        <div className={`${isMine ? "bg-lotus/10 text-ink" : "bg-white text-stone-900"} rounded-lg border border-sand/70 px-4 py-3 shadow-sm`}>
+                        <div className={`${bubbleClass} rounded-lg border px-4 py-3 shadow-sm`}>
                           <div className="mb-2 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-stone-400">
-                            <span>{isMine ? "Bạn" : message.user_accounts?.profile?.fullName ?? message.user_accounts?.email ?? message.sender_id}</span>
+                            <span className="inline-flex items-center gap-1.5">
+                              {isAi && <Bot className="h-3.5 w-3.5 text-jade" />}
+                              {senderLabel}
+                            </span>
                             <span>{new Date(message.created_at).toLocaleTimeString("vi-VN")}</span>
                           </div>
                           {message.deleted_at ? (
@@ -584,18 +631,13 @@ export function StaffChatWorkspace({
                               );
                             })()
                           ) : message.sender_type === "ai" ? (
-                            <div className="rounded-xl border border-sand/70 bg-stone-50 px-4 py-3 shadow-sm">
-                              <p className="flex items-center gap-1.5 text-xs font-semibold text-stone-600 mb-1">
-                                <Bot className="h-3.5 w-3.5 text-lotus" /> Trợ lý AI
-                              </p>
-                              <p className="text-sm leading-6 text-stone-800">{message.content}</p>
-                            </div>
+                            <p className="text-sm leading-6 text-stone-800">{message.content}</p>
                           ) : (
                             <p className="text-sm leading-6">{message.content}</p>
                           )}
                         </div>
-                        {/* Delete button - only show for own messages on hover, not for already-deleted */}
-                        {isMine && !message.deleted_at && hoveredMessageId === message.id && (
+                        {/* Delete button - only for own messages while holding the reply lock */}
+                        {isMine && canDeleteMessages && !message.deleted_at && hoveredMessageId === message.id && (
                           <button
                             type="button"
                             onClick={() => onDeleteMessage(message.id)}
@@ -654,13 +696,35 @@ export function StaffChatWorkspace({
 
                 {aiPanelOpen && (
                   <div className="border-t border-sand/70 px-4 py-3 space-y-3 max-h-[400px] overflow-y-auto">
+                    <div className="flex items-center justify-between gap-2 border-b border-sand/60 pb-2">
+                      <span className="text-[11px] uppercase tracking-wider text-stone-400">
+                        Dựa trên tin nhắn mới nhất của khách
+                      </span>
+                      <button
+                        type="button"
+                        onClick={requestAiSuggestion}
+                        disabled={aiSuggestion.loading}
+                        className="rounded-full border border-sand px-3 py-1 text-[11px] font-semibold text-stone-600 transition hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Gợi ý lại
+                      </button>
+                    </div>
                     {aiSuggestion.loading ? (
                       <div className="flex items-center gap-2 text-sm text-stone-500 py-2">
                         <span className="inline-block w-4 h-4 border-2 border-lotus border-t-transparent rounded-full animate-spin" />
                         AI đang phân tích nhu cầu khách hàng...
                       </div>
                     ) : aiSuggestion.error ? (
-                      <div className="text-sm text-rose-600 py-2">{aiSuggestion.error}</div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-rose-600 py-2">
+                        <span>{aiSuggestion.error}</span>
+                        <button
+                          type="button"
+                          onClick={requestAiSuggestion}
+                          className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                        >
+                          Thử lại
+                        </button>
+                      </div>
                     ) : aiSuggestion.topics.length === 0 ? (
                       <div className="text-sm text-stone-500 py-2">Không có gợi ý sản phẩm nào.</div>
                     ) : (
@@ -755,12 +819,12 @@ export function StaffChatWorkspace({
 
             <div className="flex flex-col gap-3 shrink-0">
               <div className="relative">
-                <textarea
+                <ChatTextarea
                   rows={4}
                   value={messageText}
-                  onChange={(event) => {
+                  onValueChange={(next) => {
                     if (!isUnassignedPreview) {
-                      setMessageText(event.currentTarget.value);
+                      setMessageText(next);
                     }
                   }}
                   onFocus={() => {
@@ -770,7 +834,9 @@ export function StaffChatWorkspace({
                     if (!isUnassignedPreview) onTyping(false);
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    // Enter dùng để chốt chữ đang ghép của bộ gõ tiếng Việt
+                    // không được kích hoạt gửi tin.
+                    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
                       onSendMessage();
                     }

@@ -13,6 +13,7 @@ import { GarmentsModule } from "./modules/garments/garments.module";
 import { HealthModule } from "./modules/health/health.module";
 import { InspectionsModule } from "./modules/inspections/inspections.module";
 import { AiModule } from "./modules/ai/ai.module";
+import { RedisThrottlerStorage } from "./modules/ai/redis-throttler.storage";
 import { LocationsModule } from "./modules/locations/locations.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { PricingModule } from "./modules/pricing/pricing.module";
@@ -26,6 +27,7 @@ import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { RedisModule } from "./modules/redis/redis.module";
+import { RedisService } from "./modules/redis/redis.service";
 
 import { WishlistModule } from "./modules/wishlist/wishlist.module";
 
@@ -36,13 +38,22 @@ import { WishlistModule } from "./modules/wishlist/wishlist.module";
     // [SECURITY FIX] Đăng ký ThrottlerModule toàn cục — giới hạn rate cho toàn bộ API
     // Mặc định: 60 requests / 1 phút / IP (cho các endpoint thông thường)
     // Auth endpoints được áp dụng giới hạn nghiêm ngặt hơn qua @Throttle() decorator
-    ThrottlerModule.forRoot([
-      {
-        name: "default",
-        ttl: 60_000, // 1 phút
-        limit: 60,   // 60 requests/phút cho endpoint thông thường
-      },
-    ]),
+    // Storage dùng Redis để giới hạn được chia sẻ giữa nhiều instance; khi Redis
+    // không khả dụng, RedisService tự fallback sang bộ nhớ.
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule],
+      inject: [RedisService],
+      useFactory: (redis: RedisService) => ({
+        storage: new RedisThrottlerStorage(redis),
+        throttlers: [
+          {
+            name: "default",
+            ttl: 60_000, // 1 phút
+            limit: 60,   // 60 requests/phút cho endpoint thông thường
+          },
+        ],
+      }),
+    }),
     RedisModule,
     PrismaModule,
     AdminModule,

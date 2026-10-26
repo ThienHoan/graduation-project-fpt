@@ -206,5 +206,16 @@ describe("FilterExtractor", () => {
       const result = extractFilters("áo dài tím");
       expect(result.keyword).toBeUndefined();
     });
+
+    it("does not treat generic clothing words as a product keyword", () => {
+      expect(extractFilters("shop còn có trang phục gì").keyword).toBeUndefined();
+      expect(extractFilters("Ngoài áo dài shop còn có trang phục gì").keyword).toBeUndefined();
+      expect(extractFilters("Sản phẩm ngoài cổ phục").keyword).toBeUndefined();
+    });
+
+    it("does not treat comparison words as a product keyword", () => {
+      expect(extractFilters("áo dài khác").keyword).toBeUndefined();
+      expect(extractFilters("còn gì khác không").keyword).toBeUndefined();
+    });
   });
 });

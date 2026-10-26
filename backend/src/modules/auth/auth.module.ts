@@ -5,6 +5,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { OptionalJwtAuthGuard } from "./guards/optional-jwt-auth.guard";
 import { RolesGuard } from "./guards/roles.guard";
 
 @Module({
@@ -20,7 +21,7 @@ import { RolesGuard } from "./guards/roles.guard";
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, RolesGuard],
-  exports: [JwtAuthGuard, RolesGuard, JwtModule],
+  providers: [AuthService, JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard],
+  exports: [JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard, JwtModule],
 })
 export class AuthModule {}

@@ -1,4 +1,5 @@
 import type { IntentResult } from "../interfaces/ai-response.interface";
+import { isBrowseQuestion } from "./browse-detector";
 //import type {  IntentType } from "../interfaces/ai-response.interface";
 // \b does not work with Vietnamese characters (non-ASCII \W).
 // Use (?:^|(?<=\s)) as left-boundary and (?=\s|$|[.,;:!?]) as right-boundary.
@@ -32,6 +33,7 @@ export function detectIntent(message: string): IntentResult {
 
   if (SEARCH_QUESTION.test(text)) searchScore += 2;
   if (PRODUCT_KEYWORDS.test(text)) searchScore += 3;
+  if (isBrowseQuestion(text)) searchScore += 3;
   if (COLOR_WORDS.test(text) && CATEGORY_REFERENCE.test(text)) searchScore += 3;
   if (BUDGET_PATTERN.test(text) && PRODUCT_KEYWORDS.test(text)) searchScore += 2;
   if (SIZE_PATTERN.test(text)) searchScore += 2;

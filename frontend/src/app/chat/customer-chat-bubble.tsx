@@ -5,6 +5,7 @@ import type { ChatConversation, ChatMessage } from "@/lib/chat";
 import { getBookingCardData, getProductCardData, uploadChatFile } from "@/lib/chat";
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
+import { ChatTextarea } from "@/components/chat/chat-textarea";
 import { ProductCard } from "@/components/chat/product-card";
 import { Paperclip, X, RotateCcw, Minus, MessageCircle, Send, Bot, Loader2 } from "lucide-react";
 
@@ -27,6 +28,8 @@ interface CustomerChatBubbleProps {
   onDeleteMessage: (messageId: string) => void;
   failedMessages?: Set<string>;
   onRetryMessage?: (content: string) => void;
+  unreadCount?: number;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function CustomerChatBubble({
@@ -46,8 +49,12 @@ export function CustomerChatBubble({
   onDeleteMessage,
   failedMessages,
   onRetryMessage,
+  unreadCount = 0,
+  onOpenChange,
 }: CustomerChatBubbleProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
   // const [isOpen, setIsOpen] = useState(() => {
   //   // Restore open state from localStorage on page load
   //   if (typeof window === "undefined") return false;
@@ -92,16 +99,22 @@ export function CustomerChatBubble({
 
   // Cho phép các màn khác (vd dashboard khách) ra hiệu mở khung chat.
   useEffect(() => {
-    const openChat = () => setIsOpen(true);
+    const openChat = () => {
+      setIsOpen(true);
+      onOpenChangeRef.current?.(true);
+    };
     window.addEventListener("chat:open", openChat);
     return () => window.removeEventListener("chat:open", openChat);
   }, []);
 
   useEffect(() => {
-    if (messagesEndRef.current?.scrollIntoView) {
-      messagesEndRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
-    }
-  }, [messages]);
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    // Chỉ cuộn khung tin nhắn, không dùng scrollIntoView vì nó có thể
+    // kéo cả thanh cuộn của trang lên đầu.
+    container.scrollTop = container.scrollHeight;
+  }, [messages, messagesContainerRef]);
 
   // Handle scroll to top to load older messages
   function handleMessagesScroll() {
@@ -118,6 +131,7 @@ export function CustomerChatBubble({
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      onOpenChangeRef.current?.(false);
     };
   }, []);
 
@@ -127,10 +141,10 @@ export function CustomerChatBubble({
   if (!mounted) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col">
+    <div className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-2rem)] flex-col">
       {/* Chat Widget */}
       {isOpen && (
-        <div className="mb-3 flex h-[600px] w-88 flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
+        <div className="mb-3 flex h-[600px] max-h-[calc(100dvh-7rem)] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-r from-oxblood to-lotus px-4 py-3.5 text-white">
             <div className="flex-1">
@@ -139,7 +153,10 @@ export function CustomerChatBubble({
             </div>
             <button
               type="button"
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                setIsOpen(false);
+                onOpenChange?.(false);
+              }}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
               aria-label="Đóng chat"
             >
@@ -151,7 +168,7 @@ export function CustomerChatBubble({
           <div
             ref={messagesContainerRef}
             onScroll={handleMessagesScroll}
-            className="flex-1 overflow-y-auto p-3 space-y-3 bg-parchment"
+            className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 bg-parchment"
           >
             {/* Loading older indicator */}
             {loadingOlderMessages && (
@@ -180,7 +197,7 @@ export function CustomerChatBubble({
                       onMouseEnter={() => setHoveredMessageId(message.id)}
                       onMouseLeave={() => setHoveredMessageId(null)}
                     >
-                      <div className={`${isMine ? "" : ""} max-w-[90%]`}>
+                      <div className="min-w-0 max-w-[90%]">
                         {message.deleted_at ? (
                           <div className="italic text-stone-400 text-xs px-3 py-2">Tin nhắn đã bị xóa</div>
                         ) : message.message_type === "booking_card" ? (
@@ -230,7 +247,7 @@ export function CustomerChatBubble({
                             <p className="flex items-center gap-1 text-[10px] font-semibold text-stone-500 mb-1">
                               <Bot className="h-3 w-3 text-lotus" /> Trợ lý Cổ Phục AI
                             </p>
-                            <p className="leading-5 text-stone-800">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words leading-5 text-stone-800">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70 text-stone-500">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                             </span>
@@ -241,7 +258,7 @@ export function CustomerChatBubble({
                               isMine ? "bg-lotus text-white" : "bg-white border border-sand/70 text-stone-900"
                             } rounded-xl px-3.5 py-2 text-xs shadow-xs`}
                           >
-                            <p className="leading-5">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words leading-5">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                             </span>
@@ -313,16 +330,16 @@ export function CustomerChatBubble({
               >
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin text-lotus" /> : <Paperclip className="w-4 h-4" />}
               </button>
-              <textarea
+              <ChatTextarea
                 rows={2}
                 value={messageText}
-                onChange={(event) => setMessageText(event.currentTarget.value)}
+                onValueChange={setMessageText}
                 onFocus={() => onTyping(true)}
                 onBlur={() => onTyping(false)}
                 className="flex-1 rounded-xl border border-sand bg-mist px-3 py-2 text-xs outline-none focus:border-lotus focus:bg-white resize-none"
                 placeholder="Nhập tin nhắn..."
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
                     onSendMessage();
                   }
@@ -351,18 +368,33 @@ export function CustomerChatBubble({
       {/* Toggle Button - always visible */}
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`inline-flex items-center justify-center w-14 h-14 rounded-full shadow-xl font-semibold text-white transition transform active:scale-95 ${
+        onClick={() => {
+          const nextOpen = !isOpen;
+          setIsOpen(nextOpen);
+          onOpenChange?.(nextOpen);
+        }}
+        className={`relative inline-flex items-center justify-center w-14 h-14 rounded-full shadow-xl font-semibold text-white transition transform active:scale-95 ${
           isOpen
             ? "bg-stone-500 hover:bg-stone-600"
             : "bg-oxblood hover:bg-lotus"
         }`}
-        aria-label={isOpen ? "Đóng chat" : "Mở chat"}
+        aria-label={
+          isOpen
+            ? "Đóng chat"
+            : unreadCount > 0
+              ? `Mở chat (${unreadCount} tin nhắn chưa đọc)`
+              : "Mở chat"
+        }
       >
         {isOpen ? (
           <Minus className="h-6 w-6" />
         ) : (
           <MessageCircle className="h-6 w-6" />
+        )}
+        {!isOpen && unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-md ring-2 ring-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
         )}
       </button>
     </div>

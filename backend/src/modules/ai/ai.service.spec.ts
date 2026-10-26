@@ -40,6 +40,70 @@ const MOCK_CATALOG = [
   },
 ];
 
+function makeGarment(
+  id: string,
+  name: string,
+  categoryId: string,
+  categoryName: string,
+  color: string,
+  size = "M",
+) {
+  return {
+    id,
+    name,
+    color,
+    category: { id: categoryId, name: categoryName },
+    images: [{ id: `i-${id}`, imageUrl: `https://example.com/${id}.jpg`, sortOrder: 0, garmentId: id, altText: null, createdAt: new Date() }],
+    garment_sizes: [{ id: `s-${id}`, garment_id: id, size_label: size, daily_price: 300000, deposit_amount: 400000, is_active: true, created_at: new Date() }],
+    assets: [{ id: `a-${id}` }],
+    isActive: true,
+    deletedAt: null,
+    categoryId,
+    description: name,
+    tryonReferenceUrl: null,
+    createdAt: new Date(),
+    bookingItems: [],
+    assets_full: [],
+    tryonRequests: [],
+  };
+}
+
+const MOCK_BROWSE_CATALOG = [
+  makeGarment("g-1", "Áo dài đỏ thêu sen", "c-1", "Áo dài truyền thống", "đỏ"),
+  makeGarment("g-2", "Áo dài xanh ngọc", "c-2", "Áo dài cách tân", "xanh"),
+  makeGarment("g-3", "Cổ phục hoàng yến", "c-3", "Cổ phục", "vàng"),
+  makeGarment("g-4", "Váy cưới trắng", "c-4", "Váy cưới", "trắng"),
+  makeGarment("g-5", "Vest đen", "c-5", "Vest & Suit", "đen"),
+  makeGarment("g-6", "Áo dài A", "c-2", "Áo dài cách tân", "hồng"),
+];
+
+const DEFAULT_AI_RESPONSE = {
+  topics: [
+    {
+      title: "Gợi ý sản phẩm",
+      assistantReply: "Em gợi ý các mẫu sau.",
+      recommendedProductIds: ["g-2"],
+      reasons: { "g-2": "Phù hợp" },
+    },
+  ],
+};
+
+function mockOpenRouter(aiResponse: unknown = DEFAULT_AI_RESPONSE) {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify(createMockOpenRouterResponse(JSON.stringify(aiResponse)))),
+  } as Response);
+  global.fetch = fetchMock as unknown as typeof global.fetch;
+  return fetchMock;
+}
+
+function getSystemPrompt(fetchMock: ReturnType<typeof vi.fn>): string {
+  const init = fetchMock.mock.calls[0][1] as RequestInit;
+  const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+  return body.messages[0].content;
+}
+
+
 function createMockPrisma() {
   const prisma = {
     garment: {
@@ -170,6 +234,29 @@ describe("AiService", () => {
       expect(result.data?.topics[0].products).toEqual([]);
     });
 
+    it("only treats a pure greeting as small talk, not a greeting inside a product question", async () => {
+      const greeting = await service.productAdvisor({ message: "chào shop" });
+      expect(greeting.data?.topics[0].title).toBe("Chào hỏi");
+
+      prisma.garment.findMany.mockResolvedValue(MOCK_CATALOG as any);
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(createMockOpenRouterResponse(JSON.stringify({
+          topics: [{
+            title: "Áo dài đỏ",
+            assistantReply: "Dạ shop còn mẫu áo dài đỏ ạ.",
+            recommendedProductIds: ["g-1"],
+            reasons: {},
+          }],
+        })))),
+      } as Response);
+
+      const result = await service.productAdvisor({ message: "chào shop, còn áo dài đỏ không?" });
+
+      expect(result.data?.topics[0].title).toBe("Áo dài đỏ");
+      expect(global.fetch).toHaveBeenCalledOnce();
+    });
+
     it("limits topics to 3", async () => {
       prisma.garment.findMany.mockResolvedValue(MOCK_CATALOG as any);
 
@@ -215,6 +302,153 @@ describe("AiService", () => {
       await expect(
         service.productAdvisor({ message: "Có gì đẹp?" }),
       ).rejects.toThrow("OpenRouter API");
+    });
+
+    it("excludes cổ phục instead of locking the query to it", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Sản phẩm ngoài cổ phục" });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.notIn).toEqual(["Cổ phục"]);
+      expect(where.category.name.in).toBeUndefined();
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("KHÁCH MUỐN XEM NGOÀI");
+      expect(prompt).toContain("Cổ phục");
+      expect(prompt).toContain("Các danh mục hiện có");
+    });
+
+    it("does not lock to áo dài when asking what else the shop has", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Ngoài áo dài shop còn có trang phục gì?" });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.notIn).toEqual(expect.arrayContaining(["Áo dài truyền thống", "Áo dài cách tân"]));
+      expect(where.category.name.in).toBeUndefined();
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("Áo dài truyền thống");
+      expect(prompt).toContain("KHÁCH MUỐN DUYỆT / HỎI MỞ RỘNG");
+    });
+
+    it("keeps áo dài but excludes the red color", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Áo dài khác ngoài áo dài đỏ" });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.in).toEqual(["Áo dài truyền thống", "Áo dài cách tân"]);
+      expect(where.AND).toEqual([
+        { NOT: { OR: [{ color: { contains: "đỏ", mode: "insensitive" } }] } },
+      ]);
+
+      expect(getSystemPrompt(fetchMock)).toContain("màu đỏ");
+    });
+
+    it("keeps áo dài and excludes the last product card from history", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({
+        message: "Áo dài khác ngoài áo dài trên",
+        history: [
+          {
+            role: "staff",
+            content: "[Thẻ sản phẩm] Áo dài đỏ thêu sen | Size: M",
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+          },
+          {
+            role: "customer",
+            content: "Mẫu này còn size khác không?",
+            createdAt: new Date(Date.now() - 30_000).toISOString(),
+          },
+        ],
+      });
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("ID: g-1");
+      expect(prompt).toContain("Áo dài đỏ thêu sen");
+      expect(prompt).toContain("KHÁCH MUỐN XEM NGOÀI");
+    });
+
+    it("keeps áo dài and excludes a product matched by name", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Áo dài khác ngoài áo dài A" });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.in).toEqual(["Áo dài truyền thống", "Áo dài cách tân"]);
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("ID: g-6");
+      expect(prompt).toContain("Áo dài A");
+      expect(prompt).toContain("ID: g-2");
+    });
+
+    it("excludes the last shown cổ phục when asking for another one", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({
+        message: "Cổ phục còn mẫu nào khác",
+        history: [
+          {
+            role: "ai",
+            content: "[Thẻ sản phẩm] Cổ phục hoàng yến | Size: M",
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+          },
+        ],
+      });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.in).toEqual(["Cổ phục"]);
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("ID: g-3");
+    });
+
+    it("keeps only váy when the customer says not to show áo dài", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Không cần áo dài, xem váy" });
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(where.category.name.in).toEqual(["Váy cưới"]);
+      expect(where.category.name.notIn).toEqual(expect.arrayContaining(["Áo dài truyền thống", "Áo dài cách tân"]));
+      expect(getSystemPrompt(fetchMock).length).toBeGreaterThan(0);
+    });
+
+    it("drops the category when the requested category has no products", async () => {
+      prisma.garment.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({ message: "Áo dài đỏ" });
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("KHÔNG CÓ SẢN PHẨM THUỘC LOẠI NÀY");
+      expect(prisma.garment.findMany).toHaveBeenCalledTimes(3);
+    });
+
+    it("says clearly when there is nothing left outside the excluded items", async () => {
+      prisma.garment.findMany.mockResolvedValue([]);
+
+      const result = await service.productAdvisor({
+        message: "Ngoài áo dài shop còn có trang phục gì?",
+      });
+
+      expect(result.data?.topics[0].title).toBe("Chưa có mẫu khác");
+      expect(result.data?.topics[0].assistantReply).toContain("ngoài");
+      expect(result.data?.topics[0].products).toEqual([]);
     });
   });
 
