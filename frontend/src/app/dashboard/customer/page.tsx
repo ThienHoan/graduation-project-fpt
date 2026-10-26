@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   getMyBookings,
   cancelBooking,
@@ -114,6 +115,20 @@ export default function CustomerDashboardPage() {
   const [inspectionSessions, setInspectionSessions] = useState<InspectionSessionResponse[]>([]);
   const [loadingInspections, setLoadingInspections] = useState(false);
   const [customerLightboxUrl, setCustomerLightboxUrl] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!inspectingBooking && !customerLightboxUrl) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [inspectingBooking, customerLightboxUrl]);
 
   // Review modal & confirm modal & toast
   const [reviewingItem, setReviewingItem] = useState<{ bookingId: string; garmentId: string; garmentName: string } | null>(null);
@@ -528,7 +543,7 @@ export default function CustomerDashboardPage() {
                 <Award className="h-3.5 w-3.5 text-lotus" />
                 <span>Thành viên Cổ Phục Rental</span>
               </span>
-              <span className="text-xs text-stone-400 font-sans">
+              <span className="text-xs text-stone-400 font-sans" suppressHydrationWarning>
                 • {new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
               </span>
             </div>
@@ -1376,13 +1391,21 @@ export default function CustomerDashboardPage() {
       />
 
       {/* Inspection & Deposit Breakdown Modal */}
-      {inspectingBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl border border-stone-200">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-sand pb-4">
+      {mounted && inspectingBooking && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 sm:p-4 md:p-6 backdrop-blur-sm animate-in fade-in duration-200"
+          data-lenis-prevent
+          onClick={() => setInspectingBooking(null)}
+        >
+          <div
+            className="relative flex flex-col max-h-[92vh] w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-stone-200 overflow-hidden"
+            data-lenis-prevent
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header (Cố định ở đỉnh) */}
+            <div className="flex shrink-0 items-start justify-between border-b border-sand bg-white p-5 sm:p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
                   <ClipboardCheck className="h-6 w-6" />
                 </div>
                 <div>
@@ -1403,18 +1426,20 @@ export default function CustomerDashboardPage() {
               </button>
             </div>
 
-            {/* Financial summary calculations */}
-            {(() => {
-              const deposit = Number(inspectingBooking.depositTotal ?? 0);
-              const penalty = Number(inspectingBooking.penaltyTotal ?? 0);
-              const remaining = Math.max(0, deposit - penalty);
-              const excess = penalty > deposit ? penalty - deposit : 0;
+            {/* Scrollable Body Container */}
+            <div className="flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-6" data-lenis-prevent>
+              {/* Financial summary calculations */}
+              {(() => {
+                const deposit = Number(inspectingBooking.depositTotal ?? 0);
+                const penalty = Number(inspectingBooking.penaltyTotal ?? 0);
+                const remaining = Math.max(0, deposit - penalty);
+                const excess = penalty > deposit ? penalty - deposit : 0;
 
-              return (
-                <div className={`my-5 rounded-xl border p-4 ${excess > 0 ? "border-red-300 bg-red-50/50" : "border-sand bg-mist/60"}`}>
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
-                    Bảng chiết tính cọc & hoàn trả
-                  </h4>
+                return (
+                  <div className={`rounded-xl border p-4 ${excess > 0 ? "border-red-300 bg-red-50/50" : "border-sand bg-mist/60"}`}>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
+                      Bảng chiết tính cọc & hoàn trả
+                    </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
                       <span className="text-xs text-stone-500 block">Tiền cọc ban đầu</span>
@@ -1734,28 +1759,30 @@ export default function CustomerDashboardPage() {
                 })
               )}
             </div>
+            </div>
 
-            {/* Footer */}
-            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-sand pt-4">
+            {/* Modal Footer (Cố định ở đáy) */}
+            <div className="flex shrink-0 flex-col sm:flex-row items-center justify-between gap-3 border-t border-sand bg-stone-50/80 px-5 sm:px-6 py-4">
               <p className="text-xs text-stone-500">
                 Mọi thắc mắc về tiền cọc, vui lòng liên hệ bộ phận hỗ trợ khách hàng.
               </p>
               <button
                 type="button"
                 onClick={() => setInspectingBooking(null)}
-                className="w-full sm:w-auto rounded-lg bg-stone-100 px-5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-200 transition"
+                className="w-full sm:w-auto rounded-lg bg-stone-200/80 px-5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-300 transition"
               >
                 Đóng biên bản
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Lightbox Modal */}
-      {customerLightboxUrl && (
+      {mounted && customerLightboxUrl && createPortal(
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200"
           onClick={() => setCustomerLightboxUrl(null)}
         >
           <div className="relative max-h-[90vh] max-w-4xl" onClick={(e) => e.stopPropagation()}>
@@ -1773,7 +1800,8 @@ export default function CustomerDashboardPage() {
               <X className="h-5 w-5" />
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

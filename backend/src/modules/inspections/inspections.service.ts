@@ -15,6 +15,8 @@ import type { ManagerApproveDto, ManagerRejectDto } from "./dto/manager-review.d
 
 /** Ngưỡng phạt/cọc để tự động chuyển sang chờ duyệt manager */
 const MANAGER_APPROVAL_THRESHOLD = 0.3;
+/** Ngưỡng phạt/giá trị trang phục (>= 70% giá trị đồ) để tự động chuyển sang chờ duyệt manager */
+const MANAGER_APPROVAL_GARMENT_THRESHOLD = 0.7;
 
 const ACTIVE_REFUND_STATUSES: PaymentStatus[] = [
   PaymentStatus.pending,
@@ -524,9 +526,25 @@ export class InspectionsService {
           : 0;
         const cappedPenalty = garmentValue > 0 ? Math.min(garmentValue, rawPenalty) : rawPenalty;
 
-        // ── Kiểm tra ngưỡng phạt / cọc → nếu > 30% thì chờ manager duyệt ──
-        const penaltyRatio = depositAmount > 0 ? cappedPenalty / depositAmount : (cappedPenalty > 0 ? 1 : 0);
-        const needsManagerApproval = cappedPenalty > 0 && penaltyRatio > MANAGER_APPROVAL_THRESHOLD;
+        // ── Kiểm tra điều kiện cần Quản lý duyệt ──
+        // 1. Phạt > 30% tiền cọc (hoặc cọc = 0 mà có phạt)
+        // 2. Phạt >= 70% giá trị thực của món đồ (hỏng nặng hoặc đền đứt món đồ)
+        // 3. Có lỗi hư hỏng nghiêm trọng (severe) do AI hoặc nhân viên ghi nhận
+        const findings = await tx.inspectionFinding.findMany({
+          where: { inspectionSessionId: id },
+          select: { severity: true },
+        });
+        const hasSevereIssue = findings.some((f) => f.severity === "severe");
+        const penaltyToDepositRatio = depositAmount > 0 ? cappedPenalty / depositAmount : (cappedPenalty > 0 ? 1 : 0);
+        const penaltyToGarmentRatio = garmentValue > 0 ? cappedPenalty / garmentValue : 0;
+
+        const needsManagerApproval =
+          cappedPenalty > 0 &&
+          (
+            penaltyToDepositRatio > MANAGER_APPROVAL_THRESHOLD ||
+            penaltyToGarmentRatio >= MANAGER_APPROVAL_GARMENT_THRESHOLD ||
+            hasSevereIssue
+          );
 
         if (needsManagerApproval) {
           // Chuyển sang trạng thái chờ duyệt — CHƯA trừ tiền / ghi nợ

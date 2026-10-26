@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import Lenis from "lenis";
 
 /**
@@ -11,11 +12,19 @@ import Lenis from "lenis";
  * - Đồng bộ requestAnimationFrame với nhịp quét màn hình (120fps trên ProMotion)
  * - Tôn trọng prefers-reduced-motion: tự động tắt khi hệ thống yêu cầu giảm chuyển động
  * - Hỗ trợ data-lenis-prevent trên các phần tử có scroll riêng (modal, dropdown)
+ * - Tự động tắt trên /dashboard để đảm bảo native scroll ổn định cho bảng và modal
  */
 export function SmoothScrollProvider({ children }: { children: React.ReactNode }) {
   const lenisRef = useRef<Lenis | null>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
+    // Không chạy Lenis trên các trang dashboard (customer, staff, manager, admin)
+    // để tránh xung đột với sticky headers, sidebars, và modals
+    if (pathname?.startsWith("/dashboard")) {
+      return;
+    }
+
     // Tôn trọng thiết lập giảm chuyển động của hệ điều hành
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (prefersReducedMotion) return;
@@ -60,7 +69,7 @@ export function SmoothScrollProvider({ children }: { children: React.ReactNode }
       lenis.destroy();
       lenisRef.current = null;
     };
-  }, []);
+  }, [pathname]);
 
   return <>{children}</>;
 }
