@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, RotateCcw, X, AlertCircle, Sparkles } from "lucide-react";
+import { BodySilhouetteGuide } from "./body-silhouette-guide";
 
 type CameraCaptureProps = {
   onCapture: (base64: string) => void;
@@ -245,44 +246,10 @@ export function CameraCapture({ onCapture }: CameraCaptureProps) {
 
         {/* Pose Silhouette Overlay Guide */}
         {isCameraReady && !previewUrl && showGuide && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between p-4">
-            <div className="rounded-full bg-black/60 px-3 py-1 text-[11px] font-medium text-white backdrop-blur-sm shadow-sm">
-              Khung căn chỉnh dáng AI: Hãy đứng khớp với đường viền
-            </div>
-
-            {/* SVG Silhouette */}
-            <svg
-              className="h-full w-full max-w-[280px] text-lotus/50 drop-shadow-md transition-opacity duration-300"
-              viewBox="0 0 200 300"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeDasharray="4 3"
-            >
-              {/* Head oval */}
-              <ellipse cx="100" cy="50" rx="22" ry="28" />
-              {/* Neck & Shoulders */}
-              <path d="M92 78 L92 90 L60 106 L45 150" />
-              <path d="M108 78 L108 90 L140 106 L155 150" />
-              {/* Torso & Waist line */}
-              <path d="M60 106 C65 140 68 175 62 210 L58 290" />
-              <path d="M140 106 C135 140 132 175 138 210 L142 290" />
-              {/* Center guide line */}
-              <line x1="100" y1="20" x2="100" y2="295" strokeWidth="0.8" stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" />
-              {/* Shoulder horizontal guide */}
-              <line x1="45" y1="106" x2="155" y2="106" strokeWidth="1" stroke="rgba(255,255,255,0.6)" strokeDasharray="2 2" />
-              {/* Waist horizontal guide */}
-              <line x1="60" y1="170" x2="140" y2="170" strokeWidth="1" stroke="rgba(255,255,255,0.6)" strokeDasharray="2 2" />
-            </svg>
-
-            <div className="flex items-center gap-3 text-[11px] font-medium text-white/90 drop-shadow">
-              <span>Vai ngang</span>
-              <span>•</span>
-              <span>Đứng thẳng lưng</span>
-              <span>•</span>
-              <span>Thấy rõ eo</span>
-            </div>
-          </div>
+          <BodySilhouetteGuide
+            label="Lùi lại một chút (Step back)"
+            subLabel="Căn chỉnh đầu và vai khớp với khung viền để AI mặc áo chuẩn dáng nhất"
+          />
         )}
 
         {countdown !== null && (

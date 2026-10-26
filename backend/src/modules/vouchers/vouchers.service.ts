@@ -191,7 +191,33 @@ export class VouchersService {
    */
   async evaluate(db: Db, rawCode: string, customerId: string, lines: VoucherOrderLine[], now = new Date()): Promise<VoucherEvaluation> {
     const code = rawCode.trim().toUpperCase();
-    const voucher = await db.vouchers.findUnique({ where: { code } });
+    let voucher = await db.vouchers.findUnique({ where: { code } });
+
+    // Tự động nhận diện & khởi tạo mã ưu đãi từ trải nghiệm Gương soi Live AI (LIVE-XXXX hoặc COPHUC-LIVE10)
+    if (!voucher && (code.startsWith("LIVE-") || code === "COPHUC-LIVE10")) {
+      try {
+        voucher = await db.vouchers.create({
+          data: {
+            code,
+            name: `Ưu đãi Thử đồ Live 10% (${code})`,
+            description: "Voucher giảm 10% độc quyền khi trải nghiệm Gương soi Live AI (Hạn dùng 24h)",
+            discount_type: "percentage",
+            discount_value: 10,
+            min_order_value: 0,
+            usage_limit: code === "COPHUC-LIVE10" ? 10000 : 1,
+            per_user_limit: 1,
+            start_at: new Date(now.getTime() - 5 * 60 * 1000),
+            end_at: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+            category_ids: [],
+            garment_ids: [],
+            is_active: true,
+          },
+        });
+      } catch {
+        voucher = await db.vouchers.findUnique({ where: { code } });
+      }
+    }
+
     if (!voucher || !voucher.is_active) throw new BadRequestException("Mã voucher không tồn tại hoặc đã bị vô hiệu hoá.");
     if (now < voucher.start_at) throw new BadRequestException("Voucher chưa đến thời gian sử dụng.");
     if (now > voucher.end_at) throw new BadRequestException("Voucher đã hết hạn.");
