@@ -136,36 +136,65 @@ export function ManagerSidebar({
 }: ManagerSidebarProps) {
   const router = useRouter();
 
-  // Accordion open/close state for expanded sidebar
+  // Accordion open/close state for expanded sidebar: Mặc định mở tất cả các nhóm
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    // Automatically open group that contains active item
-    const initial: Record<string, boolean> = {};
-    MANAGER_NAV_GROUPS.forEach((group) => {
-      const hasActive = group.items.some((item) => item.key === active);
-      initial[group.id] = hasActive;
-    });
-    // If none has active (e.g. overview), keep first group or none
-    return initial;
+    return {
+      operations: true,
+      inventory: true,
+      finance: true,
+      business: true,
+      services: true,
+    };
   });
 
-  // Keep active group open when active changes
+  // Khôi phục tùy chọn đóng/mở của người dùng từ localStorage sau khi mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("co_phuc_manager_open_groups");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setOpenGroups((prev) => ({
+          ...prev,
+          ...parsed,
+        }));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Luôn đảm bảo nhóm chứa mục active được mở, đồng thời giữ nguyên các nhóm khác
   useEffect(() => {
     const activeGroup = MANAGER_NAV_GROUPS.find((group) =>
       group.items.some((item) => item.key === active)
     );
     if (activeGroup) {
-      setOpenGroups((prev) => ({
-        ...prev,
-        [activeGroup.id]: true,
-      }));
+      setOpenGroups((prev) => {
+        if (prev[activeGroup.id]) return prev;
+        const next = { ...prev, [activeGroup.id]: true };
+        try {
+          localStorage.setItem("co_phuc_manager_open_groups", JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
     }
   }, [active]);
 
   const toggleGroup = useCallback((groupId: string) => {
-    setOpenGroups((prev) => ({
-      ...prev,
-      [groupId]: !prev[groupId],
-    }));
+    setOpenGroups((prev) => {
+      const next = {
+        ...prev,
+        [groupId]: !prev[groupId],
+      };
+      try {
+        localStorage.setItem("co_phuc_manager_open_groups", JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   }, []);
 
   // Flyout state when collapsed

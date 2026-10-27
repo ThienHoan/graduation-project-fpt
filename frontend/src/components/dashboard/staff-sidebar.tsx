@@ -96,34 +96,63 @@ export function StaffSidebar({
 }: StaffSidebarProps) {
   const router = useRouter();
 
-  // Accordion state
+  // Accordion state: Mặc định tất cả các nhóm của Staff đều mở
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    const initial: Record<string, boolean> = {};
-    STAFF_NAV_GROUPS.forEach((group) => {
-      const hasActive = group.items.some((item) => item.key === active);
-      initial[group.id] = hasActive;
-    });
-    return initial;
+    return {
+      operations: true,
+      logistics: true,
+      services: true,
+    };
   });
 
-  // Keep active group open
+  // Khôi phục tùy chọn đóng/mở của người dùng từ localStorage sau khi mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("co_phuc_staff_open_groups");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setOpenGroups((prev) => ({
+          ...prev,
+          ...parsed,
+        }));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Luôn đảm bảo nhóm chứa mục active được mở, đồng thời giữ nguyên các nhóm khác
   useEffect(() => {
     const activeGroup = STAFF_NAV_GROUPS.find((group) =>
       group.items.some((item) => item.key === active)
     );
     if (activeGroup) {
-      setOpenGroups((prev) => ({
-        ...prev,
-        [activeGroup.id]: true,
-      }));
+      setOpenGroups((prev) => {
+        if (prev[activeGroup.id]) return prev;
+        const next = { ...prev, [activeGroup.id]: true };
+        try {
+          localStorage.setItem("co_phuc_staff_open_groups", JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
     }
   }, [active]);
 
   const toggleGroup = useCallback((groupId: string) => {
-    setOpenGroups((prev) => ({
-      ...prev,
-      [groupId]: !prev[groupId],
-    }));
+    setOpenGroups((prev) => {
+      const next = {
+        ...prev,
+        [groupId]: !prev[groupId],
+      };
+      try {
+        localStorage.setItem("co_phuc_staff_open_groups", JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   }, []);
 
   // Flyout state when collapsed
