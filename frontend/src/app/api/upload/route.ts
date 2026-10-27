@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import sharp from "sharp";
 
 type AppRole = "customer" | "staff" | "manager_owner" | "admin";
 type UploadPurpose = "catalog" | "accessories" | "reviews" | "handover" | "refund-proof";
@@ -15,8 +14,8 @@ type UploadPolicy = {
   deletable: boolean;
 };
 
-const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const VIDEO_TYPES = new Set(["video/mp4", "video/webm"]);
+const IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 10 * 1024 * 1024;
 
@@ -42,7 +41,7 @@ function policies(): Record<UploadPurpose, UploadPolicy> {
     },
     reviews: {
       bucket: "reviews",
-      roles: ["customer"],
+      roles: ["customer", "admin", "manager_owner"],
       maxBytes: MAX_VIDEO_BYTES,
       allowVideo: true,
       deletable: false,
@@ -120,16 +119,19 @@ function requestedPurpose(data: FormData): UploadPurpose | null {
 
 async function hasValidSignature(file: File, mimeType: string) {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
-  if (mimeType === "image/jpeg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (mimeType === "image/png") return bytes.length >= 8 && bytes.slice(0, 8).every((value, index) => value === [137, 80, 78, 71, 13, 10, 26, 10][index]);
   if (mimeType === "image/webp") return bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0, 4)) === "RIFF" && new TextDecoder().decode(bytes.slice(8, 12)) === "WEBP";
   if (mimeType === "video/mp4") return bytes.length >= 12 && new TextDecoder().decode(bytes.slice(4, 8)) === "ftyp";
   if (mimeType === "video/webm") return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+  if (mimeType === "video/quicktime") return bytes.length >= 8;
   return false;
 }
 
 function extensionFor(mimeType: string) {
-  return mimeType === "image/jpeg" ? "jpg" : mimeType.split("/")[1];
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return "jpg";
+  if (mimeType === "video/quicktime") return "mov";
+  return mimeType.split("/")[1] || "bin";
 }
 
 function isResponse(value: Identity | NextResponse): value is NextResponse {
@@ -163,6 +165,8 @@ export async function POST(req: NextRequest) {
     if (isImage) {
       try {
         // Tự động tối ưu hoá: Chuyển đổi sang WebP chất lượng 82%, giới hạn tối đa 2048px
+        const sharpModule = await import("sharp");
+        const sharp = sharpModule.default || sharpModule;
         uploadBuffer = await sharp(uploadBuffer)
           .rotate()
           .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
