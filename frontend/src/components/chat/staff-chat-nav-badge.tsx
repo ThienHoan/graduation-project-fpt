@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getChatConversations } from "@/lib/chat";
+import { getChatConversationCounts } from "@/lib/chat";
 import { readStoredSession } from "@/lib/auth";
 
 const POLL_INTERVAL_MS = 30_000;
 
 /**
- * Badge cạnh mục CSKH trên navbar, đếm đúng số cuộc trò chuyện của tab
+ * Badge cạnh mục CSKH trên navbar, đếm đúng số hội thoại của tab
  * "Chờ tiếp nhận" (khách mới nhắn, chưa có staff nào tiếp nhận).
  */
 export function StaffChatNavBadge() {
@@ -20,11 +20,10 @@ export function StaffChatNavBadge() {
       const session = readStoredSession();
       if (!session || (session.user.role !== "staff" && session.user.role !== "manager_owner")) return;
 
-      const res = await getChatConversations("unassigned");
+      const res = await getChatConversationCounts();
       if (cancelled || !res.success || !res.data) return;
 
-      const unassigned = res.data?.length ?? 0;
-      setCount(unassigned);
+      setCount(res.data.unassigned ?? 0);
     }
 
     void load();

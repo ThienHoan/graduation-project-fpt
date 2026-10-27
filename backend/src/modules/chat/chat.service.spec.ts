@@ -13,11 +13,16 @@ describe("ChatService", () => {
         findFirst: vi.fn(),
         findUnique: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
       },
       messages: {
         create: vi.fn(),
+        findFirst: vi.fn(),
         findUnique: vi.fn(),
         update: vi.fn(),
+      },
+      userAccount: {
+        findUnique: vi.fn(),
       },
     };
     aiService = { productAdvisor: vi.fn() };
@@ -682,7 +687,12 @@ describe("ChatService", () => {
       expect(result.map((c) => c.id)).toEqual(["assigned-own"]);
       expect(prisma.conversations.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { staff_id: "staff-1", status: "open" },
+          where: {
+            OR: [
+              { staff_id: "staff-1", status: "open" },
+              { manager_support_by: "staff-1" },
+            ],
+          },
         }),
       );
     });
@@ -838,6 +848,167 @@ describe("ChatService", () => {
       topic: "product_advice",
       garmentId: "garment-1",
       garmentName: "Ao dai sen",
+    });
+  });
+
+  describe("manager support", () => {
+    const manager = {
+      id: "manager-1",
+      email: "manager@example.com",
+      role: "manager_owner" as const,
+      isActive: true,
+      fullName: "Manager One",
+      phone: null,
+    };
+    const baseConversation = {
+      id: "conv-manager",
+      customer_id: "customer-1",
+      staff_id: "staff-a",
+      status: "resolved",
+      manager_support_by: null as string | null,
+      manager_support_state: null as string | null,
+      manager_support_expires_at: null as Date | null,
+    };
+
+    function activeConversation(state = "active") {
+      return {
+        ...baseConversation,
+        manager_support_by: manager.id,
+        manager_support_state: state,
+        manager_support_expires_at: new Date(Date.now() + 60 * 60 * 1000),
+      };
+    }
+
+    it("rejects accounts that are not managers", async () => {
+      await expect(
+        service.startManagerSupport("conv-manager", {
+          ...manager,
+          role: "staff",
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("starts a support session without changing status or staff_id", async () => {
+      prisma.conversations.findUnique.mockResolvedValue({ ...baseConversation });
+      prisma.conversations.update.mockImplementation(({ data }: any) => ({
+        ...baseConversation,
+        ...data,
+      }));
+
+      const result = await service.startManagerSupport("conv-manager", manager);
+
+      const data = prisma.conversations.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        manager_support_by: manager.id,
+        manager_support_state: "active",
+      });
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("staff_id");
+      expect(result.manager_support_state).toBe("active");
+    });
+
+    it("lets the manager send while keeping resolved status and original staff", async () => {
+      prisma.conversations.findUnique.mockResolvedValue(activeConversation());
+      prisma.messages.create.mockResolvedValue({ id: "msg-stk" });
+
+      await service.sendMessage("manager-1", "manager_owner", "conv-manager", "Cho em xin STK");
+
+      expect(prisma.messages.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            sender_id: manager.id,
+            metadata: expect.objectContaining({
+              managerSupport: true,
+              managerId: manager.id,
+              originalStaffId: "staff-a",
+            }),
+          }),
+        }),
+      );
+      const data = prisma.conversations.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({ manager_support_state: "waiting_customer" });
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("staff_id");
+    });
+
+    it("keeps the conversation resolved while the customer replies during support", async () => {
+      prisma.conversations.findFirst.mockResolvedValue(
+        activeConversation("waiting_customer"),
+      );
+      prisma.messages.create.mockResolvedValue({ id: "msg-stk-reply" });
+
+      await service.sendMessage("customer-1", "customer", "conv-manager", "STK 123");
+
+      const data = prisma.conversations.updateMany.mock.calls[0][0].data;
+      expect(data).toMatchObject({ manager_support_state: "waiting_manager" });
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("staff_id");
+    });
+
+    it("reopens to the shared queue when the customer replies after support expired", async () => {
+      prisma.conversations.findFirst.mockResolvedValue({
+        ...activeConversation("waiting_customer"),
+        manager_support_expires_at: new Date(Date.now() - 1000),
+      });
+      prisma.messages.create.mockResolvedValue({ id: "msg-late" });
+
+      await service.sendMessage("customer-1", "customer", "conv-manager", "Còn ai không?");
+
+      const data = prisma.conversations.updateMany.mock.calls[0][0].data;
+      expect(data).toMatchObject({ status: "open", staff_id: null });
+      expect(data.manager_support_by).toBeNull();
+    });
+
+    it("keeps resolved and the original staff when support ends on a customer message", async () => {
+      prisma.conversations.findUnique.mockResolvedValue(activeConversation("waiting_manager"));
+      prisma.conversations.update.mockResolvedValue({
+        ...baseConversation,
+        manager_support_by: null,
+        manager_support_state: null,
+      });
+
+      const result = await service.endManagerSupport("conv-manager", manager.id);
+
+      const data = prisma.conversations.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("staff_id");
+      expect(data.manager_support_by).toBeNull();
+      expect(result).toMatchObject({
+        status: "resolved",
+        staffId: "staff-a",
+        released: false,
+      });
+    });
+
+    it("keeps resolved status when support ends after the manager replied", async () => {
+      prisma.conversations.findUnique.mockResolvedValue(activeConversation("waiting_customer"));
+      prisma.conversations.update.mockResolvedValue({
+        ...baseConversation,
+        manager_support_by: null,
+        manager_support_state: null,
+      });
+
+      const result = await service.endManagerSupport("conv-manager", manager.id);
+
+      const data = prisma.conversations.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty("status");
+      expect(data).not.toHaveProperty("staff_id");
+      expect(result).toMatchObject({ status: "resolved", released: false });
+    });
+
+    it("classifies an active support session into the manager's personal tabs", async () => {
+      prisma.conversations.findMany = vi.fn().mockResolvedValue([
+        {
+          ...activeConversation("waiting_manager"),
+          messages: [{ sender_id: "customer-1", sender_type: "customer" }],
+        },
+      ]);
+
+      await expect(service.getConversationCounts(manager)).resolves.toMatchObject({
+        needsReply: 1,
+        awaitingReply: 0,
+        resolved: 0,
+      });
     });
   });
 

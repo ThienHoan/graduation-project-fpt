@@ -37,6 +37,9 @@ const POST_RELEASE_AI_DELAY_MS = 20_000;
 //   CHAT_STAFF_LOCK_TIMEOUT_MINUTES=30
 const DEFAULT_STAFF_LOCK_TIMEOUT_MINUTES = 20;
 
+// Chu kỳ quét phiên quản lý hỗ trợ đã hết hạn.
+const MANAGER_SUPPORT_SWEEP_MS = 60 * 1000;
+
 // Đọc tại thời điểm dùng (không phải lúc import module) để chắc chắn
 // ConfigModule đã nạp backend/.env xong.
 export function getStaffLockTimeoutMs(): number {
@@ -63,11 +66,15 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     await this.chatService.resolveAllReopenedConversations();
     await this.chatService.releaseStaleStaffAssignments();
     this.rateLimitCleanupInterval = setInterval(() => this.cleanupRateLimits(), ChatGateway.RATE_LIMIT_WINDOW_MS);
+    this.managerSupportSweepInterval = setInterval(() => void this.sweepManagerSupport(), MANAGER_SUPPORT_SWEEP_MS);
   }
 
   onModuleDestroy() {
     if (this.rateLimitCleanupInterval) {
       clearInterval(this.rateLimitCleanupInterval);
+    }
+    if (this.managerSupportSweepInterval) {
+      clearInterval(this.managerSupportSweepInterval);
     }
     for (const timeout of this.postReleaseAiTimeouts.values()) {
       clearTimeout(timeout);
@@ -84,6 +91,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
   private readonly postReleaseAiTimeouts = new Map<string, NodeJS.Timeout>();
   private readonly messageRateLimits = new Map<string, number[]>();
   private rateLimitCleanupInterval?: NodeJS.Timeout;
+  private managerSupportSweepInterval?: NodeJS.Timeout;
   private readonly aiReplyCounters = new Map<string, number>();
   private static readonly MAX_MESSAGE_LENGTH = 2000;
   private static readonly RATE_LIMIT_MAX = 5;
@@ -182,6 +190,9 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     } else {
       client.join("customers");
     }
+    // Phòng riêng để gửi thông báo đúng người (vd khách trả lời trong phiên
+    // quản lý hỗ trợ chỉ cần báo cho quản lý đang hỗ trợ).
+    client.join(`user:${user.id}`);
 
     // Auto-join user to their active conversation rooms
     try {
@@ -202,6 +213,33 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
 
   hasOnlineStaff(): boolean {
     return this.onlineStaffCount > 0;
+  }
+
+  /**
+   * Hết TTL của phiên quản lý hỗ trợ: chỉ cập nhật UI để hội thoại trở lại
+   * trạng thái resolved + staff phụ trách. Việc mở lại hàng chờ chỉ xảy ra
+   * khi khách gửi tin mới sau khi phiên đã kết thúc.
+   */
+  private async sweepManagerSupport() {
+    try {
+      const expired = (await this.chatService.expireManagerSupportSessions?.()) ?? [];
+      for (const conversationId of expired) {
+        this.server?.to(conversationId).emit("manager_support_updated", {
+          conversationId,
+          status: "resolved",
+          managerSupportBy: null,
+          managerSupportState: null,
+          managerSupportExpiresAt: null,
+        });
+        this.server?.to(conversationId).emit("manager_support_ended", {
+          conversationId,
+          status: "resolved",
+          released: false,
+        });
+      }
+    } catch {
+      // Sweep chạy nền, lỗi tạm thời sẽ được thử lại ở chu kỳ sau.
+    }
   }
 
   // Staff và Quản lý/Chủ cửa hàng đều thao tác phía "nhân viên" trong chat
@@ -280,6 +318,10 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     }
 
     let existingLock = this.activeReplier.get(body.conversationId);
+    // Phiên quản lý hỗ trợ đang mở: không cho bất kỳ ai reopen/gán lại hội
+    // thoại, kể cả khi họ vô tình gọi open_conversation.
+    const hasManagerSupport =
+      this.chatService.isManagerSupportActive?.(conversation) ?? false;
 
     // Tài khoản được gán không còn tồn tại hoặc đã bị vô hiệu hoá (mất acc,
     // admin khoá tài khoản): trả hội thoại về "Chờ tiếp nhận" ngay, bất kể
@@ -304,11 +346,28 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     // restart). The assignment is stale even if staff sent the last message;
     // release it so the conversation can move to "Chờ khách" and be picked up.
     // Don't clear reopened conversations — keep original staff assigned.
-    if (conversation.staff_id && conversation.staff_id !== user.userId && !existingLock && !conversation.reopened_from_resolved) {
+    if (conversation.staff_id && conversation.staff_id !== user.userId && !existingLock && !hasManagerSupport && !conversation.reopened_from_resolved) {
       const released = await this.chatService.releaseStaffAssignmentIfStale(body.conversationId, conversation.staff_id);
       if (released) {
         conversation = await this.chatService.getConversationById(body.conversationId);
       }
+    }
+
+    // Đang có phiên quản lý hỗ trợ: không reopen/gán lại hội thoại để tránh
+    // chồng chéo với quản lý. Chỉ quản lý đang hỗ trợ mới được gửi tin, và
+    // quyền đó do composer của họ tự bật — không cần cấp staff lock.
+    if (hasManagerSupport) {
+      client.emit("open_conversation_result", {
+        conversationId: body.conversationId,
+        canReply: false,
+        lockedBy:
+          conversation.manager_support_by === user.userId
+            ? "phiên hỗ trợ quản lý"
+            : "quản lý",
+        status: conversation.status,
+        staffId: conversation.staff_id ?? null,
+      });
+      return;
     }
 
     // Reopen resolved conversation when staff clicks it
@@ -451,26 +510,37 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
 
     if (this.isStaffSide(user.role)) {
       const conversation = await this.chatService.getConversationById(body.conversationId);
-      if (conversation.staff_id !== user.userId) {
-        client.emit("send_error", { conversationId: body.conversationId, reason: "conversation_locked", tempId: body.tempId });
-        return { success: false, error: "conversation_locked" };
-      }
+      const managerSupportActive =
+        user.role === "manager_owner" &&
+        (this.chatService.isManagerSupportActiveFor?.(conversation, user.userId) ?? false);
+      if (!managerSupportActive) {
+        if (conversation.staff_id !== user.userId) {
+          client.emit("send_error", { conversationId: body.conversationId, reason: "conversation_locked", tempId: body.tempId });
+          return { success: false, error: "conversation_locked" };
+        }
 
-      this.clearPostReleaseAiTimer(body.conversationId);
-      this.activeReplier.set(body.conversationId, {
-        staffId: user.userId,
-        name: user.fullName,
-        socketId: client.id,
-        lockedAt: new Date(),
-      });
-      this.scheduleLockExpiration(body.conversationId);
+        this.clearPostReleaseAiTimer(body.conversationId);
+        this.activeReplier.set(body.conversationId, {
+          staffId: user.userId,
+          name: user.fullName,
+          socketId: client.id,
+          lockedAt: new Date(),
+        });
+        this.scheduleLockExpiration(body.conversationId);
+      }
     }
 
     const message = await this.chatService.sendMessage(user.userId, user.role, body.conversationId, body.content);
 
     const updatedConv = await this.prisma.conversations.findUnique({
       where: { id: body.conversationId },
-      select: { staff_id: true, status: true },
+      select: {
+        staff_id: true,
+        status: true,
+        manager_support_by: true,
+        manager_support_state: true,
+        manager_support_expires_at: true,
+      },
     });
     if (!client.rooms.has(body.conversationId)) {
       client.join(body.conversationId);
@@ -480,6 +550,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       message,
       staffId: updatedConv?.staff_id ?? null,
       status: updatedConv?.status ?? "open",
+      ...(updatedConv ? (this.chatService.getManagerSupportFields?.(updatedConv) ?? {}) : {}),
     });
 
     if (user.role === "customer") {
@@ -488,6 +559,20 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
           conversationId: body.conversationId,
           customerName: user.fullName,
           content: body.content,
+        });
+      }
+
+      // Khách trả lời trong phiên quản lý hỗ trợ: chỉ báo cho đúng quản lý,
+      // không đẩy thông báo cho staff phụ trách.
+      if (
+        updatedConv?.manager_support_by &&
+        updatedConv.manager_support_state === "waiting_manager"
+      ) {
+        this.server.to(`user:${updatedConv.manager_support_by}`).emit("manager_support_reply", {
+          conversationId: body.conversationId,
+          customerName: user.fullName,
+          content: body.content,
+          ...(this.chatService.getManagerSupportFields?.(updatedConv) ?? {}),
         });
       }
 

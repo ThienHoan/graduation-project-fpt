@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, type RefObject } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import type { ChatConversation, ChatMessage } from "@/lib/chat";
 import { getBookingCardData, getProductCardData, uploadChatFile } from "@/lib/chat";
 import type { AuthSession } from "@/lib/auth";
@@ -8,6 +8,8 @@ import { BookingCard } from "@/components/chat/booking-card";
 import { ChatTextarea } from "@/components/chat/chat-textarea";
 import { ProductCard } from "@/components/chat/product-card";
 import { Paperclip, X, RotateCcw, Minus, MessageCircle, Send, Bot, Loader2 } from "lucide-react";
+
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const CHAT_BUBBLE_OPEN_KEY = "co_phuc_chat_bubble_open";
 
@@ -67,6 +69,29 @@ export function CustomerChatBubble({
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const prevMessagesRef = useRef<ChatMessage[]>(messages);
+  const prevConversationIdRef = useRef<string | null>(conversation?.id ?? null);
+  const scrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  // true = khung chat đang bám đáy; chỉ đổi thành false khi người dùng chủ
+  // động cuộn lên xem tin cũ.
+  const stickToBottomRef = useRef(true);
+
+  function scrollToBottom() {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function handleMediaLoad() {
+    if (stickToBottomRef.current) scrollToBottom();
+  }
+
+  if (conversation?.id !== prevConversationIdRef.current) {
+    prevConversationIdRef.current = conversation?.id ?? null;
+    prevMessagesRef.current = [];
+    scrollSnapshotRef.current = null;
+  }
+
   function showToast(msg: string) {
     setToast(msg);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -107,22 +132,105 @@ export function CustomerChatBubble({
     return () => window.removeEventListener("chat:open", openChat);
   }, []);
 
+  // Khi mở khung chat, cuộn xuống tin mới nhất. Chờ thêm 2 frame để khung đã
+  // có kích thước đầy đủ (trước đây đôi khi mở ra vẫn nằm ở đầu).
   useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!isOpen) {
+      scrollSnapshotRef.current = null;
+      return;
+    }
+    stickToBottomRef.current = true;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      scrollToBottom();
+      raf2 = requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [isOpen, messagesContainerRef]);
 
-    // Chỉ cuộn khung tin nhắn, không dùng scrollIntoView vì nó có thể
-    // kéo cả thanh cuộn của trang lên đầu.
-    container.scrollTop = container.scrollHeight;
-  }, [messages, messagesContainerRef]);
+  useIsomorphicLayoutEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !isOpen) return;
+
+    const prevMessages = prevMessagesRef.current;
+    prevMessagesRef.current = messages;
+
+    // Kiểm tra xem có phải tin nhắn cũ hơn vừa được tải (prepended) hay không
+    const isPrepended =
+      prevMessages.length > 0 &&
+      messages.length > prevMessages.length &&
+      messages[messages.length - 1]?.id === prevMessages[prevMessages.length - 1]?.id &&
+      messages[0]?.id !== prevMessages[0]?.id;
+
+    if (isPrepended) {
+      stickToBottomRef.current = false;
+      const snapshot = scrollSnapshotRef.current;
+      if (snapshot && snapshot.scrollHeight > 0) {
+        // Giữ nguyên vị trí đọc của người dùng bằng độ chênh lệch chiều cao cuộn
+        const delta = container.scrollHeight - snapshot.scrollHeight;
+        container.scrollTop = delta + snapshot.scrollTop;
+      }
+      scrollSnapshotRef.current = null;
+      return;
+    }
+
+    // Lần đầu tải tin nhắn khi khung chat mở
+    const isInitialLoad = prevMessages.length === 0 && messages.length > 0;
+
+    // Tin nhắn mới được thêm vào cuối
+    const lastMsg = messages[messages.length - 1];
+    const prevLastMsg = prevMessages[prevMessages.length - 1];
+    const isNewMsg =
+      messages.length > prevMessages.length && lastMsg?.id !== prevLastMsg?.id;
+    const isMyMessage =
+      isNewMsg &&
+      (lastMsg?.sender_id === session?.user.id || lastMsg?.id?.startsWith("temp-"));
+
+    // Kiểm tra xem người dùng có đang ở sát đáy để tự động cuộn theo tin mới hay không
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+
+    if (isInitialLoad || isMyMessage || isNearBottom || stickToBottomRef.current) {
+      stickToBottomRef.current = true;
+      scrollToBottom();
+    }
+  }, [messages, isOpen, loadingMessages, messagesContainerRef, session?.user.id]);
 
   // Handle scroll to top to load older messages
   function handleMessagesScroll() {
     const container = messagesContainerRef.current;
-    if (!container || !hasMoreMessages || loadingOlderMessages) return;
+    if (!container) return;
+
+    // Trong lúc nội dung đang được thay thế (spinner ↔ danh sách tin) trình
+    // duyệt có thể tự đẩy scrollTop về 0; bỏ qua các sự kiện đó.
+    if (!loadingMessages) {
+      const distance =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      stickToBottomRef.current = distance < 120;
+    }
+
+    // Khi đang trong quá trình tải tin cũ, liên tục lưu lại snapshot vị trí cuộn
+    if (loadingOlderMessages) {
+      scrollSnapshotRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+      return;
+    }
+
+    if (!hasMoreMessages) return;
 
     // If scrolled near the top (within 50px), load older messages
     if (container.scrollTop <= 50) {
+      scrollSnapshotRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
       onLoadOlderMessages();
     }
   }
@@ -190,6 +298,19 @@ export function CustomerChatBubble({
               <>
                 {messages.map((message) => {
                   const isMine = message.sender_id === session?.user.id;
+                  // Tin nhắn do quản lý gửi trong phiên hỗ trợ có metadata
+                  // managerSupport; ngoài ra dựa vào role tài khoản gửi.
+                  const isManagerMessage =
+                    message.metadata?.managerSupport === true ||
+                    message.user_accounts?.role === "manager_owner";
+                  const senderRoleLabel =
+                    !isMine &&
+                    !message.deleted_at &&
+                    message.sender_type !== "ai"
+                      ? isManagerMessage
+                        ? "Quản lý"
+                        : "Nhân viên"
+                      : null;
                   return (
                     <div
                       key={message.id}
@@ -198,6 +319,15 @@ export function CustomerChatBubble({
                       onMouseLeave={() => setHoveredMessageId(null)}
                     >
                       <div className="min-w-0 max-w-[90%]">
+                        {senderRoleLabel && (
+                          <p
+                            className={`mb-1 text-[10px] font-semibold ${
+                              isManagerMessage ? "text-oxblood" : "text-stone-500"
+                            }`}
+                          >
+                            {senderRoleLabel}
+                          </p>
+                        )}
                         {message.deleted_at ? (
                           <div className="italic text-stone-400 text-xs px-3 py-2">Tin nhắn đã bị xóa</div>
                         ) : message.message_type === "booking_card" ? (
@@ -216,6 +346,7 @@ export function CustomerChatBubble({
                               alt=""
                               className="rounded-lg border border-sand/70 shadow-sm w-full h-auto object-cover"
                               loading="lazy"
+                              onLoad={handleMediaLoad}
                             />
                             <span className="block text-[10px] mt-1 opacity-70 text-right">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
@@ -228,6 +359,7 @@ export function CustomerChatBubble({
                               controls
                               className="rounded-lg border border-sand/70 shadow-sm w-full h-auto max-h-[320px] object-contain bg-black"
                               preload="metadata"
+                              onLoadedMetadata={handleMediaLoad}
                             />
                             <span className="block text-[10px] mt-1 opacity-70 text-right">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}

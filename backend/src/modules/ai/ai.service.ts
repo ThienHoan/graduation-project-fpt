@@ -1242,9 +1242,9 @@ export class AiService implements OnModuleInit {
     // thay cho giá cơ sở khi hiển thị/lọc budget.
     const effectivePrices = onDate
       ? await this.pricing.effectiveDailyPriceMap(
-          garments.flatMap((g) => g.garment_sizes.map((s) => s.id)),
-          onDate,
-        )
+        garments.flatMap((g) => g.garment_sizes.map((s) => s.id)),
+        onDate,
+      )
       : null;
 
     return garments.map((g) => {
@@ -1845,11 +1845,11 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
       const maxPenalty = garmentValue > 0 ? garmentValue : 10000000;
       let rawIssues = Array.isArray(parsed.detectedIssues)
         ? parsed.detectedIssues.map((issue: any) => ({
-            findingType: String(issue.findingType || "Lỗi kiểm tra"),
-            severity: ["low", "medium", "high", "severe"].includes(issue.severity) ? issue.severity : "low",
-            description: String(issue.description || ""),
-            suggestedPenalty: Math.max(0, Math.round(Number(issue.suggestedPenalty) || 0)),
-          }))
+          findingType: String(issue.findingType || "Lỗi kiểm tra"),
+          severity: ["low", "medium", "high", "severe"].includes(issue.severity) ? issue.severity : "low",
+          description: String(issue.description || ""),
+          suggestedPenalty: Math.max(0, Math.round(Number(issue.suggestedPenalty) || 0)),
+        }))
         : [];
 
       // ── BẢO VỆ TRẦN GIÁ TRỊ TRANG PHỤC (1 BỘ ĐỒ ĐỀN TỐI ĐA 100% GIÁ TRỊ) ──

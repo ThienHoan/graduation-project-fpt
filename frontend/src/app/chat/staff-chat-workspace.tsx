@@ -15,6 +15,11 @@ function formatVND(amount: number) {
 
 const DEFAULT_PRODUCT_IMAGE = "https://dep.com.vn/wp-content/uploads/2020/11/ao-dai-9.jpg";
 
+// Thông điệp thân thiện khi trợ lý AI không trả được kết quả (model lỗi,
+// timeout, quá tải, dữ liệu không hợp lệ...). Tránh hiển thị "Bad Request".
+const AI_UNAVAILABLE_MESSAGE =
+  "Trợ lý AI hiện không thể hỗ trợ vấn đề này. Vui lòng thử lại sau hoặc trả lời khách trực tiếp.";
+
 interface StaffChatWorkspaceProps {
   conversations: ChatConversation[];
   selectedConversation: ChatConversation | null;
@@ -36,6 +41,9 @@ interface StaffChatWorkspaceProps {
   onSendMessage: () => void;
   onOpenConversation: () => void;
   onResolveConversation: () => void;
+  onStartManagerSupport: () => void;
+  onEndManagerSupport: () => void;
+  managerSupportLoading: boolean;
 
   onTyping: (isTyping: boolean) => void;
   hasMoreMessages: boolean;
@@ -70,6 +78,9 @@ export function StaffChatWorkspace({
   onSendMessage,
   onOpenConversation,
   onResolveConversation,
+  onStartManagerSupport,
+  onEndManagerSupport,
+  managerSupportLoading,
   onTyping,
   hasMoreMessages,
   loadingOlderMessages,
@@ -100,7 +111,9 @@ export function StaffChatWorkspace({
 
   useEffect(() => {
     getChatConversationCounts().then((res) => {
-      if (res.success && res.data) setTabCounts(res.data);
+      if (res.success && res.data) {
+        setTabCounts(res.data);
+      }
     });
   }, [conversations]);
   const [uploading, setUploading] = useState(false);
@@ -113,13 +126,12 @@ export function StaffChatWorkspace({
     error: string | null;
   }>({ loading: false, topics: [], error: null });
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [aiRetryNonce, setAiRetryNonce] = useState(0);
-  const lastSuggestedMsgIdRef = useRef<string | null>(null);
   // Tăng mỗi khi đổi hội thoại / bắt đầu request mới để bỏ qua response cũ.
   const aiRequestIdRef = useRef(0);
   const [aiToast, setAiToast] = useState<string | null>(null);
   const aiToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showResolveConfirm, setShowResolveConfirm] = useState(false);
+  const isManager = session?.user.role === "manager_owner";
 
   function showAiToast(msg: string) {
     setAiToast(msg);
@@ -151,19 +163,48 @@ export function StaffChatWorkspace({
   const displayedConversations = conversations;
 
   const generalTabs: Array<{ key: StaffConversationTab; label: string; count: number }> = [
-    { key: "unassigned", label: "Chờ tiếp nhận", count: tabCounts.unassigned },
-    { key: "resolved", label: "Đã tư vấn", count: tabCounts.resolved },
-    { key: "waiting_customer", label: "Chờ khách", count: tabCounts.waitingCustomer },
+    { key: "unassigned", label: "Chờ tiếp nhận", count: tabCounts.unassigned ?? 0 },
+    { key: "resolved", label: "Đã tư vấn", count: tabCounts.resolved ?? 0 },
+    { key: "waiting_customer", label: "Chờ khách", count: tabCounts.waitingCustomer ?? 0 },
   ];
   const personalTabs: Array<{ key: StaffConversationTab; label: string; count: number }> = [
-    { key: "awaiting_reply", label: "Chờ phản hồi", count: tabCounts.awaitingReply },
-    { key: "needs_reply", label: "Cần trả lời", count: tabCounts.needsReply },
+    { key: "awaiting_reply", label: "Chờ phản hồi", count: tabCounts.awaitingReply ?? 0 },
+    { key: "needs_reply", label: "Cần trả lời", count: tabCounts.needsReply ?? 0 },
   ];
 
   // Determine the viewing mode
   const isUnassignedPreview = selectedConversation && selectedConversation.staffId === null;
   const isAssignedToOther = selectedConversation && selectedConversation.staffId !== null && selectedConversation.staffId !== session?.user.id;
   const isResolved = selectedConversation?.status === "resolved";
+  const managerSupportExpired = selectedConversation?.managerSupportExpiresAt
+    ? new Date(selectedConversation.managerSupportExpiresAt).getTime() <= Date.now()
+    : false;
+  const managerSupportActive = Boolean(
+    selectedConversation?.managerSupportBy &&
+      !managerSupportExpired,
+  );
+  const managerSupportByMe =
+    managerSupportActive && selectedConversation?.managerSupportBy === session?.user.id;
+  const managerSupportByOther =
+    managerSupportActive && selectedConversation?.managerSupportBy !== session?.user.id;
+  // Quản lý đang hỗ trợ dùng chung composer nhưng không cần staff lock.
+  const canReplyNow = staffCanReply || managerSupportByMe;
+  // Chỉ gợi ý AI khi hội thoại thuộc quyền trả lời của người đang xem:
+  // hội thoại đang mở của mình, hoặc hội thoại resolved do chính mình hỗ trợ.
+  const canUseAiSuggestion =
+    Boolean(selectedConversation) &&
+    !isUnassignedPreview &&
+    !isAssignedToOther &&
+    (!isResolved || managerSupportByMe);
+  // Panel chỉ mở khi đã có kết quả/lỗi hoặc đang chờ AI trả lời.
+  const hasAiSuggestion =
+    aiSuggestion.loading || aiSuggestion.topics.length > 0 || Boolean(aiSuggestion.error);
+
+  function hasActiveManagerSupport(conversation: ChatConversation | null | undefined) {
+    if (!conversation?.managerSupportBy) return false;
+    if (!conversation.managerSupportExpiresAt) return true;
+    return new Date(conversation.managerSupportExpiresAt).getTime() > Date.now();
+  }
 
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -177,28 +218,20 @@ export function StaffChatWorkspace({
   }, [messages]);
 
   // Đổi hội thoại: xoá gợi ý của hội thoại trước để tránh hiển thị lẫn chủ đề.
+  // Không tự gọi AI khi mở hội thoại — chỉ gọi khi người dùng bấm nút gợi ý.
   useEffect(() => {
     aiRequestIdRef.current += 1;
-    lastSuggestedMsgIdRef.current = null;
     setAiSuggestion({ loading: false, topics: [], error: null });
     setAiPanelOpen(false);
   }, [selectedConversation?.id]);
 
-  function requestAiSuggestion() {
-    if (!selectedConversation) return;
+  async function handleRequestAiSuggestion() {
+    if (!selectedConversation || !session || aiSuggestion.loading) return;
+    if (!canUseAiSuggestion) return;
+
     setAiPanelOpen(true);
-    // Xoá mốc tin nhắn đã gợi ý + tăng nonce để effect chạy lại.
-    lastSuggestedMsgIdRef.current = null;
-    setAiRetryNonce((value) => value + 1);
-  }
 
-  // AI suggestion: auto-call when customer sends a new message
-  useEffect(() => {
-    if (isUnassignedPreview || isAssignedToOther || isResolved || !selectedConversation || !session) return;
-
-    // Chỉ tin nhắn thật của khách mới kích hoạt gợi ý.
-    // Trước đây điều kiện sender_id !== staff cũng bắt cả tin AI, khiến panel
-    // gọi model trên chính câu trả lời của AI và map AI thành "customer".
+    // Chỉ tin nhắn thật của khách mới dùng làm nội dung gợi ý.
     const lastCustomerMsg = [...messages].reverse().find(
       (m) =>
         m.sender_id === selectedConversation.customerId &&
@@ -206,14 +239,16 @@ export function StaffChatWorkspace({
         (!m.message_type || m.message_type === "text") &&
         /[\p{L}\p{N}]/u.test(m.content ?? ""),
     );
-    if (!lastCustomerMsg || lastSuggestedMsgIdRef.current === lastCustomerMsg.id) return;
-    if (aiSuggestion.loading) return;
+    if (!lastCustomerMsg) {
+      const noMessage = "Chưa có tin nhắn văn bản nào từ khách để gợi ý.";
+      setAiSuggestion({ loading: false, topics: [], error: noMessage });
+      showAiToast(noMessage);
+      return;
+    }
 
     // Response của request cũ (hội thoại khác / lần gợi ý trước) bị bỏ qua.
     const requestId = ++aiRequestIdRef.current;
-    lastSuggestedMsgIdRef.current = lastCustomerMsg.id;
     setAiSuggestion({ loading: true, topics: [], error: null });
-    setAiPanelOpen(true);
 
     // 10 tin trước đó làm ngữ cảnh; tin mới nhất được gửi riêng ở `message`
     // nên loại khỏi history để model không đọc lặp.
@@ -224,26 +259,28 @@ export function StaffChatWorkspace({
       limit: 10,
     });
 
-    getProductAdvisor({
-      message: lastCustomerMsg.content,
-      history: historyMessages,
-    })
-      .then((res) => {
-        if (aiRequestIdRef.current !== requestId) return;
-        if (res.success && res.data) {
-          setAiSuggestion({ loading: false, topics: res.data.topics, error: null });
-        } else {
-          const errMsg = res.error ?? "Không thể phân tích";
-          setAiSuggestion({ loading: false, topics: [], error: errMsg });
-          showAiToast(errMsg);
-        }
-      })
-      .catch(() => {
-        if (aiRequestIdRef.current !== requestId) return;
-        setAiSuggestion({ loading: false, topics: [], error: "Lỗi kết nối AI" });
-        showAiToast("Lỗi kết nối AI, vui lòng thử lại.");
+    try {
+      const res = await getProductAdvisor({
+        message: lastCustomerMsg.content,
+        history: historyMessages,
       });
-  }, [messages, selectedConversation, session, isUnassignedPreview, isAssignedToOther, isResolved, aiSuggestion.loading, aiRetryNonce]);
+      if (aiRequestIdRef.current !== requestId) return;
+
+      if (res.success && res.data) {
+        setAiSuggestion({ loading: false, topics: res.data.topics, error: null });
+        return;
+      }
+
+      // Mọi lỗi từ phía AI (Bad Request, hết hạn mức, model lỗi...) đều hiển
+      // thị một thông điệp thân thiện thay vì mã lỗi kỹ thuật.
+      setAiSuggestion({ loading: false, topics: [], error: AI_UNAVAILABLE_MESSAGE });
+      showAiToast(AI_UNAVAILABLE_MESSAGE);
+    } catch {
+      if (aiRequestIdRef.current !== requestId) return;
+      setAiSuggestion({ loading: false, topics: [], error: AI_UNAVAILABLE_MESSAGE });
+      showAiToast(AI_UNAVAILABLE_MESSAGE);
+    }
+  }
 
   async function handleInsertProductCard(productId: string) {
     if (!selectedConversation) return;
@@ -365,6 +402,11 @@ export function StaffChatWorkspace({
                   <div>
                     <p className="text-sm font-semibold text-ink">Khách hàng: {conversation.customerName}</p>
                     <p className="mt-1 text-xs text-stone-500">Nhân viên: {conversation.staffName ?? "Chưa có"}</p>
+                    {hasActiveManagerSupport(conversation) && (
+                      <span className="mt-1 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-indigo-700">
+                        {conversation.managerSupportBy === session?.user.id ? "Bạn đang hỗ trợ" : "Quản lý đang hỗ trợ"}
+                      </span>
+                    )}
                     {conversation.topic && (
                       <div className="mt-1.5 flex items-center gap-1.5">
                         {conversation.topic === "product_advice" && conversation.garmentName ? (
@@ -484,7 +526,29 @@ export function StaffChatWorkspace({
                 >
                   Tiếp nhận hỗ trợ
                 </button>
-              ) : isResolved && selectedConversation.staffId === session?.user.id ? (
+              ) : isManager && isResolved && managerSupportByMe ? (
+                <button
+                  type="button"
+                  onClick={onEndManagerSupport}
+                  disabled={managerSupportLoading}
+                  className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {managerSupportLoading ? "Đang kết thúc..." : "Kết thúc hỗ trợ"}
+                </button>
+              ) : isResolved && managerSupportByOther ? (
+                <div className="rounded-full px-5 py-2 text-sm font-semibold text-indigo-700">
+                  Quản lý đang hỗ trợ
+                </div>
+              ) : isManager && isResolved ? (
+                <button
+                  type="button"
+                  onClick={onStartManagerSupport}
+                  disabled={managerSupportLoading}
+                  className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {managerSupportLoading ? "Đang mở..." : "Nhắn khách với tư cách quản lý"}
+                </button>
+              ) : isResolved && !managerSupportActive && selectedConversation.staffId === session?.user.id ? (
                 <button
                   type="button"
                   onClick={onOpenConversation}
@@ -514,6 +578,20 @@ export function StaffChatWorkspace({
               </div>
             )}
 
+            {managerSupportByMe && (
+              <div className="mb-5 rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 text-sm text-indigo-800 shrink-0">
+                Bạn đang hỗ trợ với tư cách quản lý. Hội thoại vẫn ở trạng thái{" "}
+                <strong>Đã tư vấn</strong> và vẫn thuộc{" "}
+                <strong>{selectedConversation.staffName ?? "staff phụ trách"}</strong>. Khách trả lời sẽ chỉ báo cho bạn.
+              </div>
+            )}
+
+            {managerSupportByOther && (
+              <div className="mb-5 rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 text-sm text-indigo-800 shrink-0">
+                Quản lý đang hỗ trợ hội thoại này. Bạn chỉ xem lịch sử; không gửi tin để tránh chồng chéo.
+              </div>
+            )}
+
             <div className="mb-5 grid gap-3 sm:grid-cols-2 shrink-0">
               <div className="rounded-lg bg-parchment p-4 text-sm text-stone-700">
                 <div className="font-semibold text-stone-900">Tình trạng</div>
@@ -535,6 +613,10 @@ export function StaffChatWorkspace({
                 <div className="mt-2">
                   {isUnassignedPreview ? (
                     <p className="text-sm text-amber-700">Xem trước — chưa có quyền trả lời</p>
+                  ) : managerSupportByOther ? (
+                    <p className="text-sm text-indigo-700">Quản lý đang hỗ trợ — tạm khoá gửi tin</p>
+                  ) : managerSupportByMe ? (
+                    <p className="text-sm text-jade">Bạn đang hỗ trợ với tư cách quản lý</p>
                   ) : staffCanReply ? (
                     <p className="text-sm text-jade">Bạn hiện có quyền trả lời</p>
                   ) : (
@@ -580,7 +662,9 @@ export function StaffChatWorkspace({
                       ? "Bạn"
                       : isAi
                         ? "Trợ lý AI"
-                        : message.user_accounts?.profile?.fullName ?? message.user_accounts?.email ?? message.sender_id;
+                        : `${message.user_accounts?.profile?.fullName ?? message.user_accounts?.email ?? message.sender_id}${
+                            message.metadata?.managerSupport ? " (Quản lý)" : ""
+                          }`;
                     return (
                       <div
                         key={message.id}
@@ -673,42 +757,49 @@ export function StaffChatWorkspace({
               </div>
             )}
 
-            {/* AI Suggestion Panel */}
-            {(aiSuggestion.loading || aiSuggestion.topics.length > 0 || aiSuggestion.error) && !isUnassignedPreview && !isResolved && (
+            {/* AI Suggestion Panel — chỉ gọi AI khi người dùng bấm nút */}
+            {canUseAiSuggestion && (
               <div className="rounded-lg border border-sand/70 bg-white shadow-sm shrink-0 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setAiPanelOpen(!aiPanelOpen)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-ink transition hover:bg-parchment"
-                >
-                  <span className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-lotus" />
-                    Gợi ý AI
-                    {aiSuggestion.loading && (
+                <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setAiPanelOpen((open) => !open)}
+                    disabled={!hasAiSuggestion}
+                    className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink disabled:cursor-default"
+                  >
+                    <Sparkles className="h-4 w-4 shrink-0 text-lotus" />
+                    <span className="truncate">Gợi ý AI</span>
+                    {aiSuggestion.loading ? (
                       <span className="inline-flex items-center gap-1 text-xs font-normal text-stone-500">
                         <span className="inline-block w-3 h-3 border-2 border-stone-400 border-t-transparent rounded-full animate-spin" />
                         Đang phân tích...
                       </span>
+                    ) : hasAiSuggestion ? (
+                      aiPanelOpen ? <ChevronUp className="h-4 w-4 shrink-0 text-stone-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-stone-400" />
+                    ) : (
+                      <span className="truncate text-xs font-normal text-stone-400">Nhấn để nhận gợi ý</span>
                     )}
-                  </span>
-                  {aiPanelOpen ? <ChevronUp className="h-4 w-4 text-stone-400" /> : <ChevronDown className="h-4 w-4 text-stone-400" />}
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRequestAiSuggestion()}
+                    disabled={aiSuggestion.loading}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-lotus/10 px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-lotus/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {aiSuggestion.loading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    {hasAiSuggestion ? "Gợi ý lại" : "Gợi ý"}
+                  </button>
+                </div>
 
-                {aiPanelOpen && (
+                {aiPanelOpen && hasAiSuggestion && (
                   <div className="border-t border-sand/70 px-4 py-3 space-y-3 max-h-[400px] overflow-y-auto">
-                    <div className="flex items-center justify-between gap-2 border-b border-sand/60 pb-2">
-                      <span className="text-[11px] uppercase tracking-wider text-stone-400">
-                        Dựa trên tin nhắn mới nhất của khách
-                      </span>
-                      <button
-                        type="button"
-                        onClick={requestAiSuggestion}
-                        disabled={aiSuggestion.loading}
-                        className="rounded-full border border-sand px-3 py-1 text-[11px] font-semibold text-stone-600 transition hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Gợi ý lại
-                      </button>
-                    </div>
+                    <p className="border-b border-sand/60 pb-2 text-[11px] uppercase tracking-wider text-stone-400">
+                      Dựa trên tin nhắn mới nhất của khách
+                    </p>
                     {aiSuggestion.loading ? (
                       <div className="flex items-center gap-2 text-sm text-stone-500 py-2">
                         <span className="inline-block w-4 h-4 border-2 border-lotus border-t-transparent rounded-full animate-spin" />
@@ -719,7 +810,7 @@ export function StaffChatWorkspace({
                         <span>{aiSuggestion.error}</span>
                         <button
                           type="button"
-                          onClick={requestAiSuggestion}
+                          onClick={() => void handleRequestAiSuggestion()}
                           className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
                         >
                           Thử lại
@@ -823,15 +914,15 @@ export function StaffChatWorkspace({
                   rows={4}
                   value={messageText}
                   onValueChange={(next) => {
-                    if (!isUnassignedPreview) {
+                    if (!isUnassignedPreview && !managerSupportByOther) {
                       setMessageText(next);
                     }
                   }}
                   onFocus={() => {
-                    if (!isUnassignedPreview) onTyping(true);
+                    if (!isUnassignedPreview && !managerSupportByOther && canReplyNow) onTyping(true);
                   }}
                   onBlur={() => {
-                    if (!isUnassignedPreview) onTyping(false);
+                    if (!isUnassignedPreview && !managerSupportByOther) onTyping(false);
                   }}
                   onKeyDown={(e) => {
                     // Enter dùng để chốt chữ đang ghép của bộ gõ tiếng Việt
@@ -841,9 +932,17 @@ export function StaffChatWorkspace({
                       onSendMessage();
                     }
                   }}
-                  disabled={isUnassignedPreview || !staffCanReply}
+                  disabled={isUnassignedPreview || managerSupportByOther || !canReplyNow}
                   className="min-h-[140px] w-full rounded-xl border border-sand bg-white px-4 py-3 pb-10 text-sm outline-none focus:border-lotus disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed"
-                  placeholder={isUnassignedPreview ? "Tiếp nhận cuộc trò chuyện để trả lời..." : "Nhập tin nhắn..."}
+                  placeholder={
+                    isUnassignedPreview
+                      ? "Tiếp nhận cuộc trò chuyện để trả lời..."
+                      : managerSupportByOther
+                        ? "Quản lý đang hỗ trợ hội thoại này..."
+                        : !canReplyNow
+                          ? "Chưa có quyền trả lời..."
+                          : "Nhập tin nhắn..."
+                  }
                 />
                 <div className="absolute bottom-2 left-3 flex items-center gap-1">
                   <input
@@ -856,7 +955,7 @@ export function StaffChatWorkspace({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading || isUnassignedPreview || !staffCanReply}
+                    disabled={uploading || isUnassignedPreview || managerSupportByOther || !canReplyNow}
                     className="inline-flex items-center justify-center rounded-xl w-8 h-8 border border-sand bg-white text-stone-400 transition hover:bg-sand/50 hover:text-stone-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label="Đính kèm file"
                   >
@@ -868,14 +967,16 @@ export function StaffChatWorkspace({
                 <button
                   type="button"
                   onClick={onSendMessage}
-                  disabled={isUnassignedPreview || !staffCanReply}
+                  disabled={isUnassignedPreview || managerSupportByOther || !canReplyNow}
                   className={`inline-flex items-center gap-2 justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition ${
-                    isUnassignedPreview || !staffCanReply ? "bg-sand/70 cursor-not-allowed" : "bg-lotus hover:bg-oxblood shadow-sm"
+                    isUnassignedPreview || managerSupportByOther || !canReplyNow
+                      ? "bg-sand/70 cursor-not-allowed"
+                      : "bg-lotus hover:bg-oxblood shadow-sm"
                   }`}
                 >
                   <Send className="h-4 w-4" /> Gửi tin nhắn
                 </button>
-                {!isUnassignedPreview && !isResolved && (
+                {!isUnassignedPreview && !isResolved && !managerSupportActive && (
                   <button
                     type="button"
                     onClick={() => setShowResolveConfirm(true)}

@@ -50,6 +50,8 @@ vi.mock("@/lib/chat", () => ({
   sendProductCardMessage: vi.fn(),
   uploadChatFile: vi.fn(),
   markConversationRead: vi.fn(),
+  startManagerSupport: vi.fn().mockResolvedValue({ success: false }),
+  endManagerSupport: vi.fn().mockResolvedValue({ success: false }),
 }));
 
 const mockSocket = {
@@ -130,7 +132,7 @@ describe("ChatPage", () => {
     expect(screen.getByText("Cá nhân")).toBeInTheDocument();
     expect(screen.getByText("Chờ khách")).toBeInTheDocument();
 
-    // Verify count badges are displayed ("Đang hỗ trợ" and "Đã tư vấn" both show 0)
+    // Verify count badges are displayed ("Chờ phản hồi" and "Đã tư vấn" both show 0)
     expect(screen.getAllByText("0").length).toBeGreaterThan(0); // assigned count
     expect(screen.getByText("1")).toBeInTheDocument(); // unassigned count
 
