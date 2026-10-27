@@ -18,4 +18,4 @@ import { TryonQueueService } from "./tryon-queue.service";
   providers: [AiService, TryonQueueService, PerUserThrottlerGuard],
   exports: [AiService, TryonQueueService],
 })
-export class AiModule {}
+export class AiModule { }

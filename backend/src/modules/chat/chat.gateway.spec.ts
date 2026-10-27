@@ -15,6 +15,16 @@ describe("ChatGateway (unit)", () => {
     resolveAllReopenedConversations: vi.fn().mockResolvedValue(undefined),
     releaseStaleStaffAssignments: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn(),
+    sendMessage: vi.fn(),
+    isManagerSupportActiveFor: vi.fn().mockReturnValue(false),
+    isManagerSupportActive: vi.fn().mockReturnValue(false),
+    getManagerSupportFields: vi.fn().mockReturnValue({
+      managerSupportBy: null,
+      managerSupportState: null,
+      managerSupportExpiresAt: null,
+    }),
+    markConversationRead: vi.fn(),
+    expireManagerSupportSessions: vi.fn().mockResolvedValue([]),
   } as any;
 
   const mockJwtService = {} as any;
@@ -45,6 +55,18 @@ describe("ChatGateway (unit)", () => {
     mockChatService.releaseStaleStaffAssignments.mockResolvedValue(undefined);
     mockChatService.deleteMessage.mockReset();
     mockChatService.deleteMessage.mockResolvedValue({ deleted_at: new Date("2026-01-01T00:00:00.000Z") });
+    mockChatService.isManagerSupportActiveFor.mockReset();
+    mockChatService.isManagerSupportActiveFor.mockReturnValue(false);
+    mockChatService.isManagerSupportActive.mockReset();
+    mockChatService.isManagerSupportActive.mockReturnValue(false);
+    mockChatService.getManagerSupportFields.mockReset();
+    mockChatService.getManagerSupportFields.mockReturnValue({
+      managerSupportBy: null,
+      managerSupportState: null,
+      managerSupportExpiresAt: null,
+    });
+    mockChatService.expireManagerSupportSessions.mockReset();
+    mockChatService.expireManagerSupportSessions.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -313,6 +335,51 @@ describe("ChatGateway (unit)", () => {
 
       expect(client.emit).not.toHaveBeenCalledWith("send_error", expect.objectContaining({ reason: "message_too_long" }));
       expect(result).toEqual({ success: true });
+    });
+
+    it("allows manager support messages on a resolved conversation owned by another staff", async () => {
+      const client = makeClient("manager-9", "manager_owner", "Manager Nine");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      mockChatService.getConversationById.mockResolvedValue({
+        id: "conv-manager",
+        customer_id: "customer-9",
+        staff_id: "staff-a",
+        status: "resolved",
+        manager_support_by: "manager-9",
+        manager_support_state: "active",
+        manager_support_expires_at: expiresAt,
+      });
+      mockChatService.isManagerSupportActiveFor.mockReturnValue(true);
+      mockChatService.sendMessage.mockResolvedValue({ id: "msg-manager" });
+      mockChatService.getManagerSupportFields.mockReturnValue({
+        managerSupportBy: "manager-9",
+        managerSupportState: "waiting_customer",
+        managerSupportExpiresAt: expiresAt,
+      });
+      mockPrisma.conversations.findUnique.mockResolvedValue({
+        staff_id: "staff-a",
+        status: "resolved",
+        manager_support_by: "manager-9",
+        manager_support_state: "waiting_customer",
+        manager_support_expires_at: expiresAt,
+      });
+
+      const result = await gateway.handleSendMessage(
+        { conversationId: "conv-manager", content: "Anh/chị cho em xin số tài khoản" },
+        client,
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(mockChatService.sendMessage).toHaveBeenCalledWith(
+        "manager-9",
+        "manager_owner",
+        "conv-manager",
+        "Anh/chị cho em xin số tài khoản",
+      );
+      expect(client.emit).not.toHaveBeenCalledWith(
+        "send_error",
+        expect.objectContaining({ reason: "conversation_locked" }),
+      );
     });
 
     it("rejects product_card payload from client", async () => {

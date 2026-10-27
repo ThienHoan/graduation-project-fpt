@@ -521,6 +521,13 @@ model conversations {
   locked_at                                              DateTime?    @db.Timestamptz(6)
   lock_expires_at                                        DateTime?    @db.Timestamptz(6)
   reopened_from_resolved                                 Boolean      @default(false)
+  // Phiên "quản lý hỗ trợ" tách khỏi staff_id: quản lý nhắn khách nhưng
+  // hội thoại vẫn resolved và vẫn thuộc staff phụ trách.
+  manager_support_by                                     String?      @db.Uuid
+  manager_support_state                                  String?
+  manager_support_started_at                             DateTime?    @db.Timestamptz(6)
+  manager_support_last_read_at                           DateTime?    @db.Timestamptz(6)
+  manager_support_expires_at                             DateTime?    @db.Timestamptz(6)
   user_accounts_conversations_customer_idTouser_accounts UserAccount  @relation("conversations_customer_idTouser_accounts", fields: [customer_id], references: [id], onDelete: Cascade)
   user_accounts_conversations_staff_idTouser_accounts    UserAccount? @relation("conversations_staff_idTouser_accounts", fields: [staff_id], references: [id])
   messages                                               messages[]

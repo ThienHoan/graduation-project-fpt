@@ -28,6 +28,8 @@ export type StaffConversationTab =
   | "awaiting_reply"
   | "needs_reply";
 
+export type ManagerSupportState = "active" | "waiting_customer" | "waiting_manager";
+
 export type ChatConversationCounts = {
   needsReply: number;
   awaitingReply: number;
@@ -51,6 +53,18 @@ export type ChatConversation = {
   garmentName?: string | null;
   bookingId?: string | null;
   reopenedFromResolved: boolean;
+  managerSupportBy?: string | null;
+  managerSupportState?: ManagerSupportState | null;
+  managerSupportExpiresAt?: string | null;
+};
+
+export type ManagerSupportSnapshot = {
+  conversationId: string;
+  status: string;
+  staffId: string | null;
+  managerSupportBy: string | null;
+  managerSupportState: ManagerSupportState | null;
+  managerSupportExpiresAt: string | null;
 };
 
 export type ConversationLockStatus = {
@@ -247,6 +261,23 @@ export async function getConversationMessages(conversationId: string, before?: s
 export async function markConversationRead(conversationId: string) {
   return apiRequest<{ id: string }>(`/chat/conversations/${conversationId}/read`, {
     method: "PATCH",
+  });
+}
+
+export async function startManagerSupport(conversationId: string) {
+  return apiRequest<ManagerSupportSnapshot>(
+    `/chat/conversations/${conversationId}/manager-support/start`,
+    { method: "POST" },
+  );
+}
+
+export async function endManagerSupport(conversationId: string) {
+  return apiRequest<{
+    status: string;
+    staffId: string | null;
+    released: boolean;
+  }>(`/chat/conversations/${conversationId}/manager-support/end`, {
+    method: "POST",
   });
 }
 

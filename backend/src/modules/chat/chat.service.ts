@@ -26,6 +26,35 @@ const AI_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 // chính + model dự phòng, nhưng vẫn tự mở nếu instance giữ lock bị crash.
 const AI_AUTO_REPLY_LOCK_TTL_SECONDS = 90;
 
+// Phiên quản lý hỗ trợ tự hết hạn sau khoảng này. Mỗi lần quản lý gửi/đọc tin
+// hoặc khách trả lời, thời hạn được gia hạn thêm.
+const DEFAULT_MANAGER_SUPPORT_TTL_MINUTES = 30;
+
+export type ManagerSupportState = "active" | "waiting_customer" | "waiting_manager";
+
+export type ManagerSupportFields = {
+  managerSupportBy: string | null;
+  managerSupportState: ManagerSupportState | null;
+  managerSupportExpiresAt: Date | null;
+};
+
+export function getManagerSupportTtlMs(): number {
+  const configured = Number(process.env.CHAT_MANAGER_SUPPORT_TTL_MINUTES);
+  const minutes =
+    Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_MANAGER_SUPPORT_TTL_MINUTES;
+  return minutes * 60 * 1000;
+}
+
+type ManagerSupportConversationFields = {
+  manager_support_by?: string | null;
+  manager_support_state?: string | null;
+  manager_support_started_at?: Date | null;
+  manager_support_last_read_at?: Date | null;
+  manager_support_expires_at?: Date | null;
+};
+
 type PendingAutoReply = {
   timer: NodeJS.Timeout;
   latestTrigger: AutoReplyTrigger;
@@ -85,6 +114,116 @@ export class ChatService {
     private readonly aiService: AiService,
     @Optional() private readonly redisService?: RedisService,
   ) { }
+
+  /**
+   * Phiên quản lý hỗ trợ chỉ còn hiệu lực khi chưa hết hạn. Field còn sót lại
+   * trong DB sau khi hết hạn được coi như không có để mọi luồng khác hoạt động
+   * như hội thoại resolved bình thường.
+   */
+  isManagerSupportActive(
+    conversation: ManagerSupportConversationFields,
+    now = new Date(),
+  ): boolean {
+    if (!conversation.manager_support_by || !conversation.manager_support_state) {
+      return false;
+    }
+    if (!conversation.manager_support_expires_at) {
+      return true;
+    }
+    return conversation.manager_support_expires_at.getTime() > now.getTime();
+  }
+
+  isManagerSupportActiveFor(
+    conversation: ManagerSupportConversationFields,
+    managerId: string,
+    now = new Date(),
+  ): boolean {
+    return (
+      conversation.manager_support_by === managerId &&
+      this.isManagerSupportActive(conversation, now)
+    );
+  }
+
+  /** Field trả về UI: hết hạn thì coi như không có phiên hỗ trợ. */
+  getManagerSupportFields(
+    conversation: ManagerSupportConversationFields,
+    now = new Date(),
+  ): ManagerSupportFields {
+    if (!this.isManagerSupportActive(conversation, now)) {
+      return {
+        managerSupportBy: null,
+        managerSupportState: null,
+        managerSupportExpiresAt: null,
+      };
+    }
+
+    return {
+      managerSupportBy: conversation.manager_support_by ?? null,
+      managerSupportState:
+        (conversation.manager_support_state as ManagerSupportState | null) ?? null,
+      managerSupportExpiresAt: conversation.manager_support_expires_at ?? null,
+    };
+  }
+
+  private nextManagerSupportExpiry(now: Date): Date {
+    return new Date(now.getTime() + getManagerSupportTtlMs());
+  }
+
+  /**
+   * Tin khách gửi vào hội thoại:
+   * - đang có phiên quản lý hỗ trợ: giữ nguyên resolved + staff_id, chỉ đánh
+   *   dấu chờ quản lý trả lời;
+   * - còn lại (kể cả phiên đã hết hạn): mở lại hội thoại và trả về hàng chờ
+   *   chung như mọi hội thoại resolved khác.
+   */
+  private buildCustomerReplyUpdate(
+    conversation: ManagerSupportConversationFields & { status: string },
+    now: Date,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    if (conversation.status !== "resolved") {
+      return {
+        customer_last_read_at: now,
+        updated_at: now,
+        reopened_from_resolved: false,
+        ...extra,
+      };
+    }
+
+    if (this.isManagerSupportActive(conversation, now)) {
+      return {
+        customer_last_read_at: now,
+        updated_at: now,
+        manager_support_state: "waiting_manager",
+        manager_support_expires_at: this.nextManagerSupportExpiry(now),
+        ...extra,
+      };
+    }
+
+    return {
+      status: "open",
+      staff_id: null,
+      customer_last_read_at: now,
+      updated_at: now,
+      reopened_from_resolved: false,
+      manager_support_by: null,
+      manager_support_state: null,
+      manager_support_started_at: null,
+      manager_support_last_read_at: null,
+      manager_support_expires_at: null,
+      ...extra,
+    };
+  }
+
+  private managerSupportClearedFields() {
+    return {
+      manager_support_by: null,
+      manager_support_state: null,
+      manager_support_started_at: null,
+      manager_support_last_read_at: null,
+      manager_support_expires_at: null,
+    };
+  }
 
   async sendProductCardMessage(
     userId: string,
@@ -157,18 +296,17 @@ export class ChatService {
     });
 
     // Update conversation timestamps and topic context
-    const productUpdateData: Record<string, unknown> =
-      role === "customer" && conversation.status === "resolved"
-        ? { status: "open", staff_id: null, topic: "product_advice", garment_id: garmentId, customer_last_read_at: now, updated_at: now }
-        : {
-            ...(role === "customer"
-              ? { customer_last_read_at: now, topic: "product_advice", garment_id: garmentId }
-              : { staff_last_read_at: now }),
-            updated_at: now,
-          };
-
+    let productUpdateData: Record<string, unknown>;
     if (role === "customer") {
-      productUpdateData.reopened_from_resolved = false;
+      productUpdateData = this.buildCustomerReplyUpdate(conversation, now, {
+        topic: "product_advice",
+        garment_id: garmentId,
+      });
+    } else {
+      productUpdateData = {
+        staff_last_read_at: now,
+        updated_at: now,
+      };
     }
 
     if (role === "customer" && conversation.status === "resolved") {
@@ -293,28 +431,28 @@ export class ChatService {
       },
     });
 
-    if (role === "customer" && conversation.status === "resolved") {
-      await this.prisma.conversations.updateMany({
-        where: { id: conversationId, status: "resolved" },
-        data: { status: "open", topic, booking_id: bookingId, garment_id: null, customer_last_read_at: now, updated_at: now, reopened_from_resolved: false },
-      });
-    } else {
-      const updateData: Record<string, unknown> = {
-        topic,
-        booking_id: bookingId,
-        garment_id: null,
-        updated_at: now,
-      };
-      if (role === "customer") {
-        updateData.customer_last_read_at = now;
-        updateData.reopened_from_resolved = false;
+    const cardContext = { topic, booking_id: bookingId, garment_id: null };
+    if (role === "customer") {
+      const updateData = this.buildCustomerReplyUpdate(conversation, now, cardContext);
+      if (conversation.status === "resolved") {
+        await this.prisma.conversations.updateMany({
+          where: { id: conversationId, status: "resolved" },
+          data: updateData,
+        });
       } else {
-        updateData.staff_last_read_at = now;
+        await this.prisma.conversations.update({
+          where: { id: conversationId },
+          data: updateData,
+        });
       }
-
+    } else {
       await this.prisma.conversations.update({
         where: { id: conversationId },
-        data: updateData,
+        data: {
+          ...cardContext,
+          staff_last_read_at: now,
+          updated_at: now,
+        },
       });
     }
 
@@ -384,31 +522,39 @@ export class ChatService {
       garmentName: null,
       bookingId: conversation.booking_id ?? null,
       reopenedFromResolved: conversation.reopened_from_resolved,
+      ...this.getManagerSupportFields(conversation),
     };
   }
 
   private async doGetOrCreateConversationForCustomer(customerId: string) {
     const existingConversation = await this.prisma.conversations.findFirst({
       where: { customer_id: customerId },
-      include: {
-        messages: {
-          orderBy: { created_at: "asc" },
-        },
-      },
     });
 
     if (existingConversation) {
-      // Khách cần thấy số tin nhắn chưa đọc ngay khi mở app, kể cả khi
-      // bubble chat đang đóng. Đếm các tin không phải do khách gửi
-      // (staff/AI) sau lần đọc gần nhất.
-      const unreadCount = await this.prisma.messages.count({
-        where: {
-          conversation_id: existingConversation.id,
-          sender_id: { not: customerId },
-          created_at: { gt: existingConversation.customer_last_read_at ?? new Date(0) },
-        },
-      });
-      return { ...existingConversation, unreadCount };
+      // Không nạp toàn bộ lịch sử tin nhắn ở đây: khách có thể đã chat rất
+      // nhiều, và màn chat còn gọi riêng API lấy 15 tin mới nhất. Chỉ lấy tin
+      // cuối để hiển thị preview + đếm chưa đọc, chạy song song cho nhanh.
+      const [unreadCount, lastMessage] = await Promise.all([
+        this.prisma.messages.count({
+          where: {
+            conversation_id: existingConversation.id,
+            sender_id: { not: customerId },
+            created_at: { gt: existingConversation.customer_last_read_at ?? new Date(0) },
+          },
+        }),
+        typeof this.prisma.messages.findFirst === "function"
+          ? this.prisma.messages.findFirst({
+              where: { conversation_id: existingConversation.id },
+              orderBy: { created_at: "desc" },
+            })
+          : null,
+      ]);
+      return {
+        ...existingConversation,
+        messages: lastMessage ? [lastMessage] : [],
+        unreadCount,
+      };
     }
 
     const created = await this.prisma.conversations.create({
@@ -466,21 +612,49 @@ export class ChatService {
       throw new ForbiddenException("Only the assigned staff can send messages in this conversation.");
     }
 
+    const now = new Date();
+    const managerSupportMessage =
+      role === "manager_owner" &&
+      conversation.status === "resolved" &&
+      this.isManagerSupportActiveFor(conversation, userId, now);
+    if (role === "manager_owner" && !managerSupportMessage && conversation.staff_id !== userId) {
+      throw new ForbiddenException(
+        "Start manager support before messaging this conversation.",
+      );
+    }
+
     const message = await this.prisma.messages.create({
-      data: { conversation_id: conversationId, sender_id: userId, content },
+      data: {
+        conversation_id: conversationId,
+        sender_id: userId,
+        content,
+        ...(managerSupportMessage
+          ? {
+              metadata: {
+                managerSupport: true,
+                managerId: userId,
+                originalStaffId: conversation.staff_id ?? null,
+              },
+            }
+          : {}),
+      },
       ...(typeof this.prisma.messages.findUnique === "function"
         ? { include: { user_accounts: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } } } }
         : {}),
     });
 
-    const now = new Date();
-    const updateData: Record<string, unknown> =
-      role === "customer" && conversation.status === "resolved"
-        ? { status: "open", staff_id: null, customer_last_read_at: now, updated_at: now }
-        : { ...(role === "customer" ? { customer_last_read_at: now } : { staff_last_read_at: now }), updated_at: now };
-
+    let updateData: Record<string, unknown>;
     if (role === "customer") {
-      updateData.reopened_from_resolved = false;
+      updateData = this.buildCustomerReplyUpdate(conversation, now);
+    } else if (managerSupportMessage) {
+      updateData = {
+        manager_support_state: "waiting_customer",
+        manager_support_last_read_at: now,
+        manager_support_expires_at: this.nextManagerSupportExpiry(now),
+        updated_at: now,
+      };
+    } else {
+      updateData = { staff_last_read_at: now, updated_at: now };
     }
 
     if (role === "customer" && conversation.status === "resolved") {
@@ -1177,6 +1351,42 @@ export class ChatService {
     });
   }
 
+  /**
+   * Dọn các phiên quản lý hỗ trợ đã hết hạn.
+   *
+   * Chỉ xoá field phiên hỗ trợ và giữ nguyên resolved + staff phụ trách. Khách
+   * gửi tin mới sau thời điểm này mới thực sự mở lại hội thoại (xem
+   * `buildCustomerReplyUpdate`).
+   *
+   * Trả về danh sách id vừa được dọn để gateway cập nhật UI.
+   */
+  async expireManagerSupportSessions(): Promise<string[]> {
+    const now = new Date();
+    const expired = await this.prisma.conversations.findMany({
+      where: {
+        manager_support_state: { not: null },
+        manager_support_expires_at: { lt: now },
+      },
+      select: { id: true },
+    });
+    if (expired.length === 0) return [];
+
+    const ids = expired.map((conversation) => conversation.id);
+    await this.prisma.conversations.updateMany({
+      where: {
+        id: { in: ids },
+        manager_support_state: { not: null },
+        manager_support_expires_at: { lt: now },
+      },
+      data: {
+        ...this.managerSupportClearedFields(),
+        updated_at: now,
+      },
+    });
+
+    return ids;
+  }
+
   async resolveConversation(conversationId: string, staffId: string) {
     const conversation = await this.findConversationForParticipant(staffId, conversationId);
     if (!conversation || conversation.staff_id !== staffId) {
@@ -1270,15 +1480,111 @@ export class ChatService {
     return { status: "open", released: result.count > 0 };
   }
 
+  /**
+   * Bắt đầu phiên "quản lý hỗ trợ" cho một hội thoại đã resolved.
+   * Không đụng tới status/staff_id — quản lý chỉ mượn quyền gửi tin tạm thời.
+   */
+  async startManagerSupport(conversationId: string, manager: AuthenticatedUser) {
+    if (manager.role !== "manager_owner") {
+      throw new ForbiddenException("Only managers can start manager support.");
+    }
+
+    const conversation = await this.getConversationById(conversationId);
+    if (conversation.status !== "resolved") {
+      throw new ForbiddenException("Manager support is only available for resolved conversations.");
+    }
+
+    const now = new Date();
+    if (
+      this.isManagerSupportActive(conversation, now) &&
+      conversation.manager_support_by &&
+      conversation.manager_support_by !== manager.id
+    ) {
+      throw new ForbiddenException("Another manager is already supporting this conversation.");
+    }
+
+    return this.prisma.conversations.update({
+      where: { id: conversationId },
+      data: {
+        manager_support_by: manager.id,
+        manager_support_state: "active",
+        manager_support_started_at: now,
+        manager_support_last_read_at: now,
+        manager_support_expires_at: this.nextManagerSupportExpiry(now),
+        updated_at: now,
+      },
+    });
+  }
+
+  /**
+   * Kết thúc phiên quản lý hỗ trợ.
+   *
+   * Luôn giữ nguyên status (resolved) và staff phụ trách. Chỉ khi khách gửi
+   * tin MỚI sau khi phiên kết thúc thì hội thoại mới được mở lại và đưa về
+   * hàng "Chờ tiếp nhận" chung.
+   */
+  async endManagerSupport(conversationId: string, managerId: string) {
+    const conversation = await this.getConversationById(conversationId);
+    if (conversation.manager_support_by !== managerId) {
+      throw new ForbiddenException("You are not supporting this conversation.");
+    }
+
+    const updated = await this.prisma.conversations.update({
+      where: { id: conversationId },
+      data: {
+        ...this.managerSupportClearedFields(),
+        updated_at: new Date(),
+      },
+    });
+
+    return {
+      status: updated.status,
+      staffId: updated.staff_id ?? null,
+      released: false,
+    };
+  }
+
+  async markManagerSupportRead(conversationId: string, managerId: string) {
+    const conversation = await this.getConversationById(conversationId);
+    const now = new Date();
+    if (!this.isManagerSupportActiveFor(conversation, managerId, now)) {
+      throw new ForbiddenException("You are not supporting this conversation.");
+    }
+
+    return this.prisma.conversations.update({
+      where: { id: conversationId },
+      data: {
+        manager_support_last_read_at: now,
+        manager_support_expires_at: this.nextManagerSupportExpiry(now),
+      },
+    });
+  }
+
   async markConversationRead(userId: string, role: AppRole, conversationId: string) {
-    const conversation = await this.findConversationForParticipant(userId, conversationId);
+    const conversation = role === "customer"
+      ? await this.findConversationForParticipant(userId, conversationId)
+      : await this.getConversationById(conversationId);
     if (!conversation) {
       throw new ForbiddenException("You are not part of this conversation.");
     }
 
+    const now = new Date();
+    if (role === "manager_owner" && this.isManagerSupportActiveFor(conversation, userId, now)) {
+      return this.prisma.conversations.update({
+        where: { id: conversationId },
+        data: {
+          manager_support_last_read_at: now,
+          manager_support_expires_at: this.nextManagerSupportExpiry(now),
+        },
+      });
+    }
+    if (role !== "customer" && conversation.staff_id !== userId) {
+      throw new ForbiddenException("You are not part of this conversation.");
+    }
+
     const updateData = role === "customer"
-      ? { customer_last_read_at: new Date() }
-      : { staff_last_read_at: new Date() };
+      ? { customer_last_read_at: now }
+      : { staff_last_read_at: now };
 
     return this.prisma.conversations.update({
       where: { id: conversationId },
@@ -1353,6 +1659,7 @@ export class ChatService {
    * phân loại duy nhất cho cả danh sách và badge số lượng.
    *
    * - hội thoại chưa có tin nhắn: không thuộc tab nào (ẩn khỏi phía staff)
+   * - quản lý đang hỗ trợ: Cần trả lời / Chờ phản hồi theo tin cuối (tab Cá nhân)
    * - resolved: Đã tư vấn
    * - chưa gán staff + tin cuối khách/AI: Chờ tiếp nhận
    * - chưa gán staff + tin cuối staff: Chờ khách
@@ -1360,7 +1667,7 @@ export class ChatService {
    * - staff hiện tại + còn lại: Cần trả lời
    */
   private getStaffConversationTab(
-    conversation: {
+    conversation: ManagerSupportConversationFields & {
       id: string;
       customer_id: string;
       staff_id: string | null;
@@ -1374,6 +1681,17 @@ export class ChatService {
     // Khách mới mở khung chat là hệ thống đã tạo conversation, chưa chắc đã
     // gửi tin nào. Các "vỏ" rỗng này không thuộc tab nào của staff.
     if (!lastMessage) return null;
+
+    // Quản lý đang hỗ trợ hội thoại này: dùng chung tab Cá nhân với staff
+    // (Chờ phản hồi / Cần trả lời) theo tin cuối, thay vì một tab riêng.
+    // Staff phụ trách vẫn thấy hội thoại ở tab Đã tư vấn.
+    if (this.isManagerSupportActiveFor(conversation, staffId)) {
+      const lastFromCustomerOrAi = this.isCustomerOrAiMessage(
+        lastMessage,
+        conversation.customer_id,
+      );
+      return lastFromCustomerOrAi ? "needs_reply" : "awaiting_reply";
+    }
 
     if (conversation.status === "resolved") return "resolved";
     if (conversation.status !== "open") return null;
@@ -1409,7 +1727,15 @@ export class ChatService {
           break;
         case "needs_reply":
         case "awaiting_reply":
-          where = { staff_id: user.id, status: "open" };
+          // Manager đang hỗ trợ vẫn giữ status resolved + staff phụ trách,
+          // nên phải gộp thêm các hội thoại manager_support_by = mình để
+          // chúng xuất hiện ở tab Cá nhân như hội thoại bình thường.
+          where = {
+            OR: [
+              { staff_id: user.id, status: "open" },
+              { manager_support_by: user.id },
+            ],
+          };
           break;
         case "resolved":
           where = { status: "resolved" };
@@ -1543,6 +1869,7 @@ export class ChatService {
         garmentName,
         bookingId: conversation.booking_id ?? null,
         reopenedFromResolved: conversation.reopened_from_resolved,
+        ...this.getManagerSupportFields(conversation),
       };
     })
     );
@@ -1559,6 +1886,9 @@ export class ChatService {
         customer_id: true,
         staff_id: true,
         status: true,
+        manager_support_by: true,
+        manager_support_state: true,
+        manager_support_expires_at: true,
         messages: {
           orderBy: { created_at: "desc" },
           take: 1,
@@ -1656,6 +1986,17 @@ export class ChatService {
       if (!conversation) throw new NotFoundException("Conversation not found.");
     }
 
+    // Quản lý khác đang hỗ trợ hội thoại: không cho staff/manager khác gửi
+    // media chen ngang (text đã bị chặn ở gateway và sendMessage).
+    if (
+      role !== "customer" &&
+      conversation.manager_support_by &&
+      conversation.manager_support_by !== userId &&
+      this.isManagerSupportActive(conversation)
+    ) {
+      throw new ForbiddenException("Another manager is supporting this conversation.");
+    }
+
     const bucket = process.env.SUPABASE_CHAT_BUCKET?.trim() || "chat-attachments";
 
     const mimeType = file.mimetype;
@@ -1700,28 +2041,47 @@ export class ChatService {
     };
 
     const now = new Date();
+    const managerSupportMessage =
+      role === "manager_owner" &&
+      this.isManagerSupportActiveFor(conversation, userId, now);
     const message = await this.prisma.messages.create({
       data: {
         conversation_id: conversationId,
         sender_id: userId,
         content: "",
         message_type: messageType,
-        metadata: meta,
+        metadata: managerSupportMessage
+          ? {
+              ...meta,
+              managerSupport: true,
+              managerId: userId,
+              originalStaffId: conversation.staff_id ?? null,
+            }
+          : meta,
       },
     });
 
-    const updateData: Record<string, unknown> = { updated_at: now };
     if (role === "customer") {
-      updateData.customer_last_read_at = now;
-      updateData.reopened_from_resolved = false;
-      if (conversation.status === "resolved") { updateData.status = "open"; updateData.staff_id = null; }
+      await this.prisma.conversations.update({
+        where: { id: conversationId },
+        data: this.buildCustomerReplyUpdate(conversation, now),
+      });
+    } else if (managerSupportMessage) {
+      await this.prisma.conversations.update({
+        where: { id: conversationId },
+        data: {
+          manager_support_state: "waiting_customer",
+          manager_support_last_read_at: now,
+          manager_support_expires_at: this.nextManagerSupportExpiry(now),
+          updated_at: now,
+        },
+      });
     } else {
-      updateData.staff_last_read_at = now;
+      await this.prisma.conversations.update({
+        where: { id: conversationId },
+        data: { staff_last_read_at: now, updated_at: now },
+      });
     }
-    await this.prisma.conversations.update({
-      where: { id: conversationId },
-      data: updateData,
-    });
 
     const fullMsg = await this.prisma.messages.findUnique({
       where: { id: message.id },

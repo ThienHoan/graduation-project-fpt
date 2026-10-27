@@ -61,6 +61,31 @@ export class ChatController {
     }
   }
 
+  /**
+   * Khách trả lời trong phiên quản lý hỗ trợ: chỉ báo cho đúng quản lý.
+   * Staff phụ trách không bị đẩy thông báo trong lúc quản lý đang xử lý.
+   */
+  private notifyManagerSupportReply(
+    conversationId: string,
+    conversation: Awaited<ReturnType<ChatService["getConversationById"]>>,
+    customerName: string | null,
+    content: string,
+  ) {
+    if (
+      !conversation.manager_support_by ||
+      conversation.manager_support_state !== "waiting_manager"
+    ) {
+      return;
+    }
+
+    this.chatGateway.server?.to(`user:${conversation.manager_support_by}`).emit("manager_support_reply", {
+      conversationId,
+      customerName,
+      content,
+      ...this.chatService.getManagerSupportFields(conversation),
+    });
+  }
+
   @Get("conversations/counts")
   async getConversationCounts(@CurrentUser() user: AuthenticatedUser) {
     return ok(
@@ -132,6 +157,61 @@ export class ChatController {
     return ok(await this.chatService.markConversationRead(user.id, user.role, conversationId));
   }
 
+  /**
+   * Manager bắt đầu phiên hỗ trợ riêng trên hội thoại đã resolved.
+   * Không gọi open_conversation vì luồng đó sẽ reopen/gán lại hội thoại.
+   */
+  @Post("conversations/:id/manager-support/start")
+  async startManagerSupport(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) conversationId: string,
+  ) {
+    const conversation = await this.chatService.startManagerSupport(conversationId, user);
+    const managerSupport = this.chatService.getManagerSupportFields(conversation);
+
+    this.chatGateway.server?.to(conversationId).emit("manager_support_updated", {
+      conversationId,
+      status: conversation.status,
+      staffId: conversation.staff_id,
+      ...managerSupport,
+    });
+
+    return ok({
+      conversationId,
+      status: conversation.status,
+      staffId: conversation.staff_id,
+      ...managerSupport,
+    });
+  }
+
+  /**
+   * Manager kết thúc phiên hỗ trợ. Hội thoại luôn giữ resolved + staff cũ;
+   * khách chỉ được đưa về hàng "Chờ tiếp nhận" khi gửi tin mới sau đó.
+   */
+  @Post("conversations/:id/manager-support/end")
+  async endManagerSupport(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) conversationId: string,
+  ) {
+    const result = await this.chatService.endManagerSupport(conversationId, user.id);
+
+    this.chatGateway.server?.to(conversationId).emit("manager_support_updated", {
+      conversationId,
+      status: result.status,
+      staffId: result.staffId,
+      managerSupportBy: null,
+      managerSupportState: null,
+      managerSupportExpiresAt: null,
+    });
+    this.chatGateway.server?.to(conversationId).emit("manager_support_ended", {
+      conversationId,
+      status: result.status,
+      released: false,
+    });
+
+    return ok(result);
+  }
+
   @Post("conversations/:id/product-card")
   async sendProductCard(
     @CurrentUser() user: AuthenticatedUser,
@@ -152,6 +232,7 @@ export class ChatController {
       message,
       staffId: updatedConv.staff_id,
       status: updatedConv.status,
+      ...this.chatService.getManagerSupportFields(updatedConv),
     });
 
     if (user.role === "customer") {
@@ -162,6 +243,7 @@ export class ChatController {
           content: message?.content ?? "",
         });
       }
+      this.notifyManagerSupportReply(conversationId, updatedConv, user.fullName, message?.content ?? "");
 
       // Trigger AI auto-reply for product card clicks (C6)
       void this.runAutoReply(conversationId, {
@@ -198,6 +280,7 @@ export class ChatController {
       message,
       staffId: updatedConv.staff_id,
       status: updatedConv.status,
+      ...this.chatService.getManagerSupportFields(updatedConv),
     });
 
     if (user.role === "customer") {
@@ -208,6 +291,7 @@ export class ChatController {
           content: message?.content ?? "",
         });
       }
+      this.notifyManagerSupportReply(conversationId, updatedConv, user.fullName, message?.content ?? "");
 
       // Booking card/complaint luôn được policy xử lý cố định (không gọi model)
       // để khách nhận phản hồi ngay và staff nhận đúng ngữ cảnh.
@@ -247,6 +331,7 @@ export class ChatController {
       message,
       staffId: updatedConv.staff_id,
       status: updatedConv.status,
+      ...this.chatService.getManagerSupportFields(updatedConv),
     });
 
     if (user.role === "customer") {
@@ -257,6 +342,7 @@ export class ChatController {
           content: message?.content ?? "",
         });
       }
+      this.notifyManagerSupportReply(conversationId, updatedConv, user.fullName, message?.content ?? "");
 
       // AI không đọc được nội dung ảnh/video: trả lời cố định để khách biết
       // đã nhận media, hoặc chuyển staff nếu hội thoại đang là đơn hàng/khiếu nại.

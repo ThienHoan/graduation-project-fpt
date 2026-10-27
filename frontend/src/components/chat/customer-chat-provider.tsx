@@ -21,6 +21,8 @@ import {
 } from "@/lib/chat";
 import { CustomerChatBubble } from "@/app/chat/customer-chat-bubble";
 
+const MESSAGES_FRESH_MS = 10_000;
+
 interface CustomerChatProviderProps {
   children?: ReactNode;
 }
@@ -65,6 +67,13 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
   const socketRef =
     useRef<ReturnType<typeof createChatSocket> | null>(null);
   const roomJoinedRef = useRef(false);
+  const hasConnectedOnceRef = useRef(false);
+  // Giữ lại thời điểm nạp tin nhắn gần nhất để không gọi lại API khi vừa mở
+  // bubble (dữ liệu còn mới) và để gộp các lần gọi trùng nhau.
+  const messagesLoadedAtRef = useRef(0);
+  const messagesLoadedConvRef = useRef<string | null>(null);
+  const loadMessagesInFlightRef = useRef<Promise<void> | null>(null);
+  const loadMessagesInFlightConvRef = useRef<string | null>(null);
 
   const refreshUnreadCount = useCallback(async () => {
     const result = await getMyChatConversation();
@@ -94,6 +103,8 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
 
     const onConnect = () => {
       setTypingUsers({});
+      const isReconnect = hasConnectedOnceRef.current;
+      hasConnectedOnceRef.current = true;
       const conv = selectedConversationRef.current;
       if (!conv) return;
 
@@ -101,7 +112,10 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         roomJoinedRef.current = true;
       });
       socket.emit("open_conversation", { conversationId: conv.id });
-      void loadMessages(conv.id);
+      void loadMessages(conv.id, {
+        force: isReconnect,
+        silent: !chatOpenRef.current,
+      });
       // Có thể đã lỡ tin nhắn trong lúc socket mất kết nối/đang kết nối.
       void refreshUnreadCount();
     };
@@ -127,7 +141,11 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         });
       }
       if (isCurrentConversation) {
-        setMessages((prev) => [...prev, payload.message]);
+        setMessages((prev) => {
+          // Socket có thể phát lại cùng một message sau khi reconnect.
+          if (prev.some((m) => m.id === payload.message.id)) return prev;
+          return [...prev, payload.message];
+        });
         if (!isOwnMessage) {
           if (chatOpenRef.current) {
             // Đang mở bubble: khách đã thấy tin, đánh dấu đã đọc ngay.
@@ -291,7 +309,9 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         socket.emit("open_conversation", { conversationId: conv.id });
       }
 
-      void loadMessages(conv.id);
+      // Nạp tin nhắn nền: không bật spinner khi bubble đang đóng để mở chat
+      // là thấy ngay nội dung đã có, không phải chờ.
+      void loadMessages(conv.id, { silent: !chatOpenRef.current });
 
       // Chỉ đánh dấu đã đọc khi bubble thực sự đang mở. Nếu đóng,
       // giữ unreadCount để hiện badge trên nút chat.
@@ -311,22 +331,55 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
     if (!conv) return;
 
     void markConversationRead(conv.id);
+    // Nếu vừa nạp xong (vd lúc mở app) thì bỏ qua; còn dữ liệu cũ mới refetch.
     void loadMessages(conv.id);
   }
 
-  async function loadMessages(conversationId: string) {
-    setLoadingMessages(true);
-    const result = await getConversationMessages(conversationId);
+  async function loadMessages(
+    conversationId: string,
+    options?: { silent?: boolean; force?: boolean },
+  ) {
+    const isSameConversation = messagesLoadedConvRef.current === conversationId;
+    const isFresh =
+      isSameConversation &&
+      Date.now() - messagesLoadedAtRef.current < MESSAGES_FRESH_MS;
+    if (!options?.force && isFresh) return;
 
-    if (result.success && result.data) {
-      setMessages(result.data);
-      // Trang mặc định trả 15 tin mới nhất. Chỉ khi đủ 15 mới có thể còn
-      // tin cũ hơn để cuộn lên tải tiếp; trước đây cờ này luôn false nên
-      // khách không bao giờ tải được lịch sử.
-      setHasMoreMessages(result.data.length >= 15);
+    const inFlight = loadMessagesInFlightRef.current;
+    if (inFlight && loadMessagesInFlightConvRef.current === conversationId) {
+      return inFlight;
     }
 
-    setLoadingMessages(false);
+    const silent = options?.silent ?? isSameConversation;
+    if (!silent) setLoadingMessages(true);
+
+    const request = (async () => {
+      try {
+        const result = await getConversationMessages(conversationId);
+        if (result.success && result.data) {
+          setMessages(result.data);
+          // Trang mặc định trả 15 tin mới nhất. Chỉ khi đủ 15 mới có thể còn
+          // tin cũ hơn để cuộn lên tải tiếp.
+          setHasMoreMessages(result.data.length >= 15);
+          messagesLoadedConvRef.current = conversationId;
+          messagesLoadedAtRef.current = Date.now();
+        }
+      } finally {
+        setLoadingMessages(false);
+      }
+    })();
+
+    loadMessagesInFlightRef.current = request;
+    loadMessagesInFlightConvRef.current = conversationId;
+    void request
+      .finally(() => {
+        if (loadMessagesInFlightRef.current === request) {
+          loadMessagesInFlightRef.current = null;
+          loadMessagesInFlightConvRef.current = null;
+        }
+      })
+      .catch(() => {});
+    return request;
   }
 
   async function loadOlderMessages() {
@@ -343,6 +396,7 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
 
     const container = messagesContainerRef.current;
     const prevScrollHeight = container?.scrollHeight ?? 0;
+    const prevScrollTop = container?.scrollTop ?? 0;
 
     try {
       const result = await getConversationMessages(
@@ -356,9 +410,12 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         setMessages((prev) => [...(result.data ?? []), ...prev]);
 
         requestAnimationFrame(() => {
-          if (container) {
-            container.scrollTop =
-              container.scrollHeight - prevScrollHeight;
+          if (container && prevScrollHeight > 0) {
+            // Dự phòng nếu CustomerChatBubble chưa điều chỉnh vị trí cuộn
+            if (container.scrollTop <= prevScrollTop + 50) {
+              container.scrollTop =
+                container.scrollHeight - prevScrollHeight + prevScrollTop;
+            }
           }
         });
       }

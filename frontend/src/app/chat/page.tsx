@@ -15,6 +15,8 @@ import {
   getProductCardData,
   getBookingTopic,
   markConversationRead,
+  startManagerSupport as startManagerSupportRequest,
+  endManagerSupport as endManagerSupportRequest,
   type ChatConversation,
   type ChatMessage,
   type ConversationLockStatus,
@@ -42,6 +44,7 @@ export default function ChatPage() {
   const [staffLockError, setStaffLockError] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<StaffConversationTab>("needs_reply");
   const [notification, setNotification] = useState<string | null>(null);
+  const [managerSupportLoading, setManagerSupportLoading] = useState(false);
 
 
   const previousConversationIdRef = useRef<string | null>(null);
@@ -74,6 +77,20 @@ export default function ChatPage() {
   }, [session?.accessToken]);
 
   const typingEntries = Object.entries(typingUsers).filter(([, isTyping]) => isTyping).map(([userId]) => userId);
+
+  function applyManagerSupportFields(
+    conversationId: string,
+    fields: Partial<Pick<ChatConversation, "managerSupportBy" | "managerSupportState" | "managerSupportExpiresAt" | "status" | "staffId" | "staffName">>,
+  ) {
+    setConversations((prev) =>
+      prev.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, ...fields } : conversation,
+      ),
+    );
+    setSelectedConversation((prev) =>
+      prev?.id === conversationId ? { ...prev, ...fields } : prev,
+    );
+  }
 
   const [isHydrated, setIsHydrated] = useState(false);
   const router = useRouter();
@@ -140,7 +157,7 @@ export default function ChatPage() {
 
     const conv = () => selectedConversationRef.current;
 
-    const onMessageReceived = (payload: { conversationId: string; message: ChatMessage; staffId?: string | null; status?: string }) => {
+    const onMessageReceived = (payload: { conversationId: string; message: ChatMessage; staffId?: string | null; status?: string; managerSupportBy?: string | null; managerSupportState?: ChatConversation["managerSupportState"]; managerSupportExpiresAt?: string | null }) => {
 
       const isOwnMessage = payload.message.sender_id === session?.user.id;
       const isSelectedConversation = payload.conversationId === conv()?.id;
@@ -205,6 +222,9 @@ export default function ChatPage() {
             unreadCount: payload.message.sender_id !== session?.user.id ? c.unreadCount + 1 : 0,
             ...(payload.staffId !== undefined ? { staffId: payload.staffId } : {}),
             ...(payload.status !== undefined ? { status: payload.status } : {}),
+            ...(payload.managerSupportBy !== undefined ? { managerSupportBy: payload.managerSupportBy } : {}),
+            ...(payload.managerSupportState !== undefined ? { managerSupportState: payload.managerSupportState } : {}),
+            ...(payload.managerSupportExpiresAt !== undefined ? { managerSupportExpiresAt: payload.managerSupportExpiresAt } : {}),
             ...(payload.message.sender_id === c.customerId ? topicExtras : {}),
           };
           if (payload.conversationId === conv()?.id && Object.keys(topicExtras).length > 0) {
@@ -221,9 +241,23 @@ export default function ChatPage() {
           const updates: Record<string, unknown> = {};
           if (payload.staffId !== undefined) updates.staffId = payload.staffId;
           if (payload.status !== undefined) updates.status = payload.status;
+          if (payload.managerSupportBy !== undefined) updates.managerSupportBy = payload.managerSupportBy;
+          if (payload.managerSupportState !== undefined) updates.managerSupportState = payload.managerSupportState;
+          if (payload.managerSupportExpiresAt !== undefined) updates.managerSupportExpiresAt = payload.managerSupportExpiresAt;
           if (updatedTopicFields) Object.assign(updates, updatedTopicFields);
           return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
         });
+      }
+
+      // Phiên quản lý hỗ trợ dùng chung tab Cá nhân: tin mới làm hội thoại
+      // chuyển giữa "Cần trả lời" và "Chờ phản hồi", nên làm mới danh sách.
+      const supportOwner = payload.managerSupportBy ?? conv()?.managerSupportBy ?? null;
+      if (
+        supportOwner === session?.user.id &&
+        (sidebarTabRef.current === "needs_reply" ||
+          sidebarTabRef.current === "awaiting_reply")
+      ) {
+        scheduleSidebarRefresh(sidebarTabRef.current);
       }
     };
     const onMessageDeleted = (payload: { conversationId: string; messageId: string; deletedBy: string; deletedAt: string }) => {
@@ -308,7 +342,15 @@ export default function ChatPage() {
           conversation.id === payload.conversationId
             ? {
                 ...conversation,
-                ...(shouldClearStaff ? { staffId: null, staffName: null } : {}),
+                ...(shouldClearStaff
+                  ? {
+                      staffId: null,
+                      staffName: null,
+                      managerSupportBy: null,
+                      managerSupportState: null,
+                      managerSupportExpiresAt: null,
+                    }
+                  : {}),
                 status: payload.status ?? conversation.status,
               }
             : conversation,
@@ -319,7 +361,15 @@ export default function ChatPage() {
           prev
             ? {
                 ...prev,
-                ...(shouldClearStaff ? { staffId: null, staffName: null } : {}),
+                ...(shouldClearStaff
+                  ? {
+                      staffId: null,
+                      staffName: null,
+                      managerSupportBy: null,
+                      managerSupportState: null,
+                      managerSupportExpiresAt: null,
+                    }
+                  : {}),
                 status: payload.status ?? prev.status,
               }
             : prev,
@@ -377,6 +427,63 @@ export default function ChatPage() {
         setStaffLockError("Cuộc trò chuyện đã được đánh dấu đã tư vấn.");
         void refreshLockStatus();
       }
+    };
+    const onManagerSupportUpdated = (payload: {
+      conversationId: string;
+      status?: string;
+      staffId?: string | null;
+      managerSupportBy?: string | null;
+      managerSupportState?: ChatConversation["managerSupportState"];
+      managerSupportExpiresAt?: string | null;
+    }) => {
+      const { conversationId, ...fields } = payload;
+      applyManagerSupportFields(conversationId, fields);
+      if (fields.managerSupportBy && fields.managerSupportBy === session?.user.id) {
+        setStaffCanReply(false);
+        setStaffLockError(null);
+      }
+      // Phiên hỗ trợ dùng chung tab Cá nhân: hội thoại có thể vừa chuyển
+      // giữa "Cần trả lời" / "Chờ phản hồi" nên làm mới danh sách đang xem.
+      if (
+        sidebarTabRef.current === "needs_reply" ||
+        sidebarTabRef.current === "awaiting_reply"
+      ) {
+        scheduleSidebarRefresh(sidebarTabRef.current);
+      }
+    };
+    const onManagerSupportReply = (payload: {
+      conversationId: string;
+      customerName?: string | null;
+      content?: string;
+      managerSupportBy?: string | null;
+      managerSupportState?: ChatConversation["managerSupportState"];
+      managerSupportExpiresAt?: string | null;
+    }) => {
+      applyManagerSupportFields(payload.conversationId, {
+        managerSupportBy: payload.managerSupportBy,
+        managerSupportState: payload.managerSupportState,
+        managerSupportExpiresAt: payload.managerSupportExpiresAt,
+      });
+      setNotification(`Khách hàng ${payload.customerName ?? ""} đã trả lời trong phiên hỗ trợ.`.trim());
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+      }
+      notificationTimerRef.current = setTimeout(() => setNotification(null), 5000);
+    };
+    const onManagerSupportEnded = (payload: { conversationId: string; status?: string; released?: boolean }) => {
+      // Server luôn giữ resolved + staff phụ trách khi kết thúc/hết hạn hỗ trợ.
+      // Hội thoại chỉ quay lại hàng "Chờ tiếp nhận" khi khách gửi tin mới.
+      applyManagerSupportFields(payload.conversationId, {
+        managerSupportBy: null,
+        managerSupportState: null,
+        managerSupportExpiresAt: null,
+        status: payload.status ?? "resolved",
+      });
+      if (payload.conversationId === conv()?.id) {
+        setStaffCanReply(false);
+        setStaffLockError("Đã kết thúc hỗ trợ.");
+      }
+      scheduleSidebarRefresh(sidebarTabRef.current);
     };
     const onNewUnassignedMessage = (payload: { conversationId: string; customerName: string; content: string }) => {
       setNotification(`Có tin nhắn mới từ khách hàng ${payload.customerName}`);
@@ -449,6 +556,9 @@ export default function ChatPage() {
     socket.on("new_unassigned_message", onNewUnassignedMessage);
     socket.on("send_error", onSendError);
     socket.on("conversation_resolved", onConversationResolved);
+    socket.on("manager_support_updated", onManagerSupportUpdated);
+    socket.on("manager_support_reply", onManagerSupportReply);
+    socket.on("manager_support_ended", onManagerSupportEnded);
 
     return () => {
       socket.off("message_received", onMessageReceived);
@@ -463,6 +573,9 @@ export default function ChatPage() {
       socket.off("new_unassigned_message", onNewUnassignedMessage);
       socket.off("send_error", onSendError);
       socket.off("conversation_resolved", onConversationResolved);
+      socket.off("manager_support_updated", onManagerSupportUpdated);
+      socket.off("manager_support_reply", onManagerSupportReply);
+      socket.off("manager_support_ended", onManagerSupportEnded);
     };
   }, [socket, isStaff, session]);
 
@@ -639,8 +752,16 @@ export default function ChatPage() {
     setStaffLockError(null);
     await loadMessages(conversationId);
 
-    // Mark read via REST when assigned staff opens a conversation
-    if (conv?.status !== "resolved" && conv?.staffId === session?.user.id) {
+    // Mark read via REST when assigned staff opens a conversation, or when the
+    // current manager is running a manager-support session on a resolved one.
+    const managerSupportMine =
+      conv?.managerSupportBy === session?.user.id &&
+      (!conv?.managerSupportExpiresAt ||
+        new Date(conv.managerSupportExpiresAt).getTime() > Date.now());
+    if (
+      managerSupportMine ||
+      (conv?.status !== "resolved" && conv?.staffId === session?.user.id)
+    ) {
       void markConversationRead(conversationId);
     }
 
@@ -820,6 +941,78 @@ export default function ChatPage() {
     socket.emit("resolve_conversation", { conversationId: selectedConversation.id });
   }
 
+  async function handleStartManagerSupport() {
+    if (!selectedConversation || !isManager || managerSupportLoading) return;
+    const conversationId = selectedConversation.id;
+    setManagerSupportLoading(true);
+    try {
+      const res = await startManagerSupportRequest(conversationId);
+      if (!res.success || !res.data) {
+        setNotification(res.error ?? "Không thể bắt đầu hỗ trợ hội thoại.");
+        return;
+      }
+      applyManagerSupportFields(conversationId, {
+        managerSupportBy: res.data.managerSupportBy,
+        managerSupportState: res.data.managerSupportState,
+        managerSupportExpiresAt: res.data.managerSupportExpiresAt,
+        status: res.data.status,
+        staffId: res.data.staffId,
+      });
+      // Phiên hỗ trợ dùng chung tab Cá nhân với staff: chuyển ngay sang tab
+      // đúng với tin cuối để quản lý thấy hội thoại vừa mở.
+      const lastMessage = selectedConversation.lastMessage;
+      const lastFromCustomer =
+        !lastMessage ||
+        lastMessage.sender_id === selectedConversation.customerId ||
+        lastMessage.sender_type === "ai";
+      setSidebarTab(lastFromCustomer ? "needs_reply" : "awaiting_reply");
+      setNotification("Đã bắt đầu hỗ trợ với tư cách quản lý.");
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+      }
+      notificationTimerRef.current = setTimeout(() => setNotification(null), 4000);
+    } catch {
+      setNotification("Không thể bắt đầu hỗ trợ hội thoại.");
+    } finally {
+      setManagerSupportLoading(false);
+    }
+  }
+
+  async function handleEndManagerSupport() {
+    if (!selectedConversation || !isManager || managerSupportLoading) return;
+    const conversationId = selectedConversation.id;
+    setManagerSupportLoading(true);
+    try {
+      const res = await endManagerSupportRequest(conversationId);
+      if (!res.success || !res.data) {
+        setNotification(res.error ?? "Không thể kết thúc hỗ trợ hội thoại.");
+        return;
+      }
+      // Kết thúc hỗ trợ luôn giữ hội thoại ở trạng thái resolved + staff cũ.
+      // Chỉ tin nhắn mới của khách sau thời điểm này mới đưa về hàng chờ.
+      applyManagerSupportFields(conversationId, {
+        managerSupportBy: null,
+        managerSupportState: null,
+        managerSupportExpiresAt: null,
+        status: res.data.status,
+        ...(res.data.staffId ? { staffId: res.data.staffId } : {}),
+      });
+      setStaffCanReply(false);
+      setStaffLockError("Đã kết thúc hỗ trợ.");
+      setNotification("Đã kết thúc hỗ trợ. Hội thoại vẫn thuộc nhân viên phụ trách.");
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+      }
+      notificationTimerRef.current = setTimeout(() => setNotification(null), 4000);
+      setSidebarTab("resolved");
+      scheduleSidebarRefresh("resolved");
+    } catch {
+      setNotification("Không thể kết thúc hỗ trợ hội thoại.");
+    } finally {
+      setManagerSupportLoading(false);
+    }
+  }
+
   function setTyping(isTyping: boolean) {
     if (!socket || !selectedConversation) return;
     socket.emit("typing", { conversationId: selectedConversation.id, isTyping });
@@ -872,6 +1065,9 @@ const chatContent = (
       onSendMessage={sendMessage}
       onOpenConversation={openConversation}
       onResolveConversation={resolveConversation}
+      onStartManagerSupport={() => void handleStartManagerSupport()}
+      onEndManagerSupport={() => void handleEndManagerSupport()}
+      managerSupportLoading={managerSupportLoading}
       onTyping={setTyping}
       hasMoreMessages={hasMoreMessages}
       loadingOlderMessages={loadingOlderMessages}
