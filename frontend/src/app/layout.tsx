@@ -3,6 +3,7 @@ import { Manrope, Cormorant_Garamond } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { CustomerChatProvider } from "@/components/chat/customer-chat-provider";
+import { SmoothScrollProvider } from "@/components/common/smooth-scroll-provider";
 
 const manrope = Manrope({
   subsets: ["latin", "vietnamese"],
@@ -28,9 +29,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="vi" className={`${manrope.variable} ${cormorantGaramond.variable}`}>
       <body className="text-ink font-sans" suppressHydrationWarning>
         <AuthProvider>
-          <CustomerChatProvider>
-            {children}
-          </CustomerChatProvider>
+          <SmoothScrollProvider>
+            <CustomerChatProvider>
+              {children}
+            </CustomerChatProvider>
+          </SmoothScrollProvider>
         </AuthProvider>
       </body>
     </html>

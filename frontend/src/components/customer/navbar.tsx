@@ -81,13 +81,13 @@ export function CustomerNavbar({
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-sand bg-white/95 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-sand bg-white shadow-2xs">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           {/* Logo */}
           <div className="flex items-center gap-8">
             <Link
               href="/"
-              className="font-display text-2xl font-bold tracking-wide text-lotus sm:text-3xl transition hover:opacity-95"
+              className="inline-flex items-center py-1 font-display text-2xl font-bold tracking-wide text-lotus sm:text-3xl leading-none transition hover:opacity-95"
             >
               Cổ Phục Rental
             </Link>

@@ -414,9 +414,13 @@ const garmentValue = useMemo(() => {
   return 0;
 }, [selectedItem, activeSession]);
 
-const isPenaltyHigh = currentDeposit > 0
-  ? (currentTotalPenalty / currentDeposit > 0.3 || currentTotalPenalty > currentDeposit)
-  : currentTotalPenalty > 0;
+const hasSevereIssue = activeSession?.findings?.some((f) => f.severity === "severe") ?? false;
+const garmentRatio = garmentValue > 0 ? currentTotalPenalty / garmentValue : 0;
+const isPenaltyHigh = currentTotalPenalty > 0 && (
+  (currentDeposit > 0 ? (currentTotalPenalty / currentDeposit > 0.3 || currentTotalPenalty > currentDeposit) : true) ||
+  (garmentValue > 0 && garmentRatio >= 0.7) ||
+  hasSevereIssue
+);
 const isPendingApproval = activeSession?.status === "pending_manager_approval";
 // Check toan bo sessions cua booking - neu con session nao cho manager duyet
 // thi booking chua the dong, hien canh bao thay vi de staff bam nut loi
@@ -1001,7 +1005,7 @@ async function handleComplete(finalAssetStatus: string) {
   if (isPenaltyHigh) {
     setFinalizeMsg({
       type: "success",
-      text: "⚠️ Tiền phạt vượt 30% tiền cọc. Biên bản đã gửi lên Quản lý để duyệt — chưa khấu tiền.",
+      text: "⚠️ Mức phạt cần Quản lý duyệt (vượt 30% cọc, đền từ 70% giá trị đồ hoặc hư hại nghiêm trọng). Biên bản đã gửi lên Quản lý — chưa khấu trừ cọc.",
     });
   }
 
@@ -2353,14 +2357,20 @@ async function handleComplete(finalAssetStatus: string) {
                   </div>
                 ) : (
                   <div className="sticky bottom-0 space-y-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
-                    {/* Cảnh báo khi phạt vượt 30% cọc */}
+                    {/* Cảnh báo khi cần Quản lý duyệt */}
                     {isPenaltyHigh && (
                       <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                         <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
                         <div>
-                          <p className="font-bold">Mức phạt vượt 30% tiền cọc (hoặc vượt cọc):</p>
+                          <p className="font-bold">Mức phạt cần Quản lý duyệt:</p>
                           <p className="mt-0.5">
-                            Tổng phạt ghi nhận: <strong>{currentTotalPenalty.toLocaleString("vi-VN")}đ</strong> / Cọc: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong>.
+                            Tổng phạt ghi nhận: <strong>{currentTotalPenalty.toLocaleString("vi-VN")}đ</strong>
+                            {garmentValue > 0 && (
+                              <> (chiếm <strong>{Math.min(100, Math.round((currentTotalPenalty / garmentValue) * 100))}%</strong> giá trị món đồ <strong>{garmentValue.toLocaleString("vi-VN")}đ</strong>)</>
+                            )}
+                            {currentDeposit > 0 && (
+                              <> / Cọc: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong></>
+                            )}.
                             Khi bạn bấm một trong các nút bên dưới, hệ thống sẽ <strong>tự động gửi biên bản sang Quản lý duyệt</strong> (chưa trừ cọc của khách hàng).
                           </p>
                         </div>

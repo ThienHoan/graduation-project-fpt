@@ -130,7 +130,7 @@ export function InspectionDetailModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4" data-lenis-prevent>
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm transition-opacity"
@@ -138,7 +138,7 @@ export function InspectionDetailModal({
       />
 
       {/* Modal Card */}
-      <div className="relative z-10 flex flex-col max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
+      <div className="relative z-10 flex flex-col max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl" data-lenis-prevent>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-sand bg-mist px-6 py-4">
           <div className="flex items-center gap-3">
@@ -222,7 +222,7 @@ export function InspectionDetailModal({
         )}
 
         {/* Body content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-6" data-lenis-prevent>
           {loading ? (
             <div className="py-20 text-center text-stone-400">
               <Clock className="mx-auto h-8 w-8 animate-spin text-lotus mb-2" />

@@ -23,6 +23,7 @@ import { addToCart, cartCount } from "@/lib/cart";
 import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
 import { OptimizedImage } from "@/components/common/optimized-image";
+import { RealtimeTryOnModal } from "@/components/try-on/realtime-tryon-modal";
 import {
   ChevronRight,
   ChevronLeft,
@@ -77,6 +78,7 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     fit?: string;
   }>({});
   const [showReviewModal, setShowReviewModal] = useState(false);
+  const [isRealtimeModalOpen, setIsRealtimeModalOpen] = useState(false);
 
   // Số đo người dùng & Smart Size Matching
   const [customerMeas, setCustomerMeas] = useState<CustomerMeasurement | null>(null);
@@ -207,10 +209,23 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
     getGarmentsGrouped().then((res) => {
       if (res.success && res.data) {
         for (const g of res.data) {
-          const found = g.sizes.find((s) => s.garmentSizeId === garmentId);
-          if (found) {
+          // 1. Kiểm tra nếu garmentId khớp với garmentSizeId hoặc garmentId của size
+          const foundSize = g.sizes.find(
+            (s) => s.garmentSizeId === garmentId || s.garmentId === garmentId
+          );
+          // 2. Hoặc garmentId khớp với ID sản phẩm mẹ (garmentId) hoặc slug URL
+          const matchesGroup =
+            g.garmentId === garmentId ||
+            g.slug === garmentId ||
+            encodeURIComponent(g.slug) === garmentId;
+
+          if (foundSize || matchesGroup) {
             setGroup(g);
-            setSelectedGarmentId(garmentId);
+            // Ưu tiên size tìm được, nếu không thì lấy size đầu tiên khả dụng
+            const initialSizeId = foundSize
+              ? foundSize.garmentSizeId
+              : g.sizes[0]?.garmentSizeId || null;
+            setSelectedGarmentId(initialSizeId);
             setLoading(false);
 
             if (g.garmentId) {
@@ -828,27 +843,47 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
               </div>
 
               {/* Khối Banner Trải Nghiệm Thử Đồ AI Virtual Try-On */}
-              <Link
-                href={`/try-on?garmentSizeId=${selectedGarmentId}`}
-                className="group relative flex items-center justify-between overflow-hidden rounded-2xl border border-emerald-300 bg-gradient-to-r from-emerald-50 via-mist to-white p-5 shadow-xs transition hover:border-emerald-500 hover:shadow-md"
-              >
-                <div className="flex items-start gap-3.5">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs">
-                    <Camera className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-display text-xl font-bold text-oxblood">
-                      Ướm Thử Y Phục Với AI
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-stone-600">
-                      Tải ảnh chân dung để kiểm tra phom dáng và sự hòa hợp màu sắc chỉ trong 3 giây.
-                    </p>
+              <div className="overflow-hidden rounded-2xl border border-sand bg-gradient-to-r from-amber-50/70 via-mist to-white p-5 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-start gap-3.5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-lotus text-white shadow-xs">
+                      <Sparkles className="h-5 w-5 text-amber-300" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-display text-lg font-bold text-ink">
+                          Ướm Thử Y Phục Với AI
+                        </h3>
+                        <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-500/20">
+                          Webcam Live AI
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-stone-600">
+                        Ướm thử bộ cổ phục này lên dáng người bạn qua Webcam thời gian thực hoặc tạo ảnh chân dung.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 transition group-hover:bg-emerald-600 group-hover:text-white">
-                  <ArrowRight className="h-4 w-4" />
+
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsRealtimeModalOpen(true)}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-lotus/90 transition"
+                  >
+                    <Camera className="h-3.5 w-3.5" />
+                    <span>Bật Gương Soi Live (Webcam)</span>
+                  </button>
+
+                  <Link
+                    href={`/try-on?garmentSizeId=${selectedGarmentId}`}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-sand bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 hover:border-lotus/40 hover:bg-parchment/60 transition"
+                  >
+                    <span>Tạo ảnh tĩnh / Ghép mặt</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-stone-400" />
+                  </Link>
                 </div>
-              </Link>
+              </div>
 
               {/* Lựa Chọn Khoảng Thời Gian Thuê (Date Range Picker) */}
               <div className="border-b border-sand pb-6">
@@ -1246,6 +1281,14 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
             }}
           />
         )}
+
+        {/* Realtime Decart Try-On Modal */}
+        <RealtimeTryOnModal
+          isOpen={isRealtimeModalOpen}
+          onClose={() => setIsRealtimeModalOpen(false)}
+          initialGarment={group}
+          garments={group ? [group] : []}
+        />
       </main>
 
       <CustomerFooter />

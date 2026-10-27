@@ -1,4 +1,5 @@
 @import "leaflet/dist/leaflet.css";
+@import "lenis/dist/lenis.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,9 +14,7 @@
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+/* Lenis smooth scroll quản lý cuộn mượt — không cần scroll-behavior CSS */
 
 body {
   margin: 0;
@@ -107,8 +106,18 @@ input:-webkit-autofill:focus {
   100% { transform: scale(2.2); opacity: 0; }
 }
 
-.animate-ping-subtle {
-  animation: ping-subtle 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+@keyframes soundwave {
+  0%, 100% { height: 4px; }
+  50% { height: 14px; }
+}
+
+.heritage-card-interactive {
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s ease;
+  will-change: transform, box-shadow;
+}
+
+.heritage-card-interactive:hover {
+  transform: translateY(-6px) scale(1.015);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -123,3 +132,4 @@ input:-webkit-autofill:focus {
     animation: none !important;
   }
 }
+
