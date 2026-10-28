@@ -108,26 +108,48 @@ describe("ChatService auto-reply", () => {
     expect(result[0].sender_type).toBe("ai");
   });
 
-  it("skips only when the assigned staff has replied recently", async () => {
-    prisma = createPrisma({ staffId: "staff-1", staffActiveAt: new Date() });
-    service = new ChatService(prisma as never, aiService as never);
-
-    const result = await service.maybeAutoReply(CONV, "áo dài đỏ size M");
-
-    expect(result).toEqual([]);
-    expect(aiService.productAdvisor).not.toHaveBeenCalled();
-  });
-
-  it("replies again when staff_id is set but the staff has been silent past the TTL", async () => {
-    prisma = createPrisma({ staffId: "staff-1", staffActiveAt: null });
-    service = new ChatService(prisma as never, aiService as never);
-
-    const promise = service.maybeAutoReply(CONV, "tư vấn giúp mình áo dài đỏ");
+  it("skips when the conversation is assigned to a staff (handled by controller/gateway lock; service trusts shouldAbort)", async () => {
+    // Service layer không còn dựa vào thời điểm tin nhắn staff nữa (STAFF_ACTIVE_TTL_MS đã xóa).
+    // Nếu staff đang giữ lock, caller (controller.runAutoReply) dùng `shouldAbort` để chặn.
+    let staffLocked = false;
+    const promise = service.maybeAutoReply(CONV, "áo dài đỏ size M", {
+      shouldAbort: () => staffLocked,
+    });
     await waitForDebounce();
     const result = await promise;
 
-    expect(aiService.productAdvisor).toHaveBeenCalledOnce();
     expect(result).toHaveLength(1);
+    expect(aiService.productAdvisor).toHaveBeenCalledOnce();
+
+    aiService.productAdvisor.mockClear();
+
+    // Với requireUnassigned: true thì AI chỉ reply khi chưa có staff_id
+    prisma = createPrisma({ staffId: "staff-1", conversationStatus: "open" });
+    service = new ChatService(prisma as never, aiService as never);
+    const result2 = await service.maybeAutoReply(CONV, "áo dài đỏ size M", { requireUnassigned: true });
+    expect(result2).toEqual([]);
+    expect(aiService.productAdvisor).not.toHaveBeenCalled();
+  });
+
+  it("does not skip based on staff silence anymore — staff lock is handled upstream", async () => {
+    // Logic TTL "staff im lặng bao lâu thì AI reply" đã được loại bỏ; service không
+    // còn kiểm tra thời điểm tin nhắn staff nữa. AI vẫn trả lời cho hội thoại có
+    // staff_id (requireUnassigned = false) — việc chặn do caller dùng shouldAbort.
+    // Nếu requireUnassigned = true thì AI chỉ reply khi chưa có staff_id.
+    prisma = createPrisma({ staffId: "staff-1", conversationStatus: "open" });
+    service = new ChatService(prisma as never, aiService as never);
+
+    // requireUnassigned = false: vẫn reply (AI gọi) — staff silence không còn là lý do skip
+    const result = await service.maybeAutoReply(CONV, "tư vấn giúp mình áo dài đỏ");
+    expect(result).toHaveLength(1);
+    expect(aiService.productAdvisor).toHaveBeenCalledOnce();
+
+    aiService.productAdvisor.mockClear();
+
+    // requireUnassigned = true + staff_id khác null: bị chặn sớm
+    const result2 = await service.maybeAutoReply(CONV, "chào shop", { requireUnassigned: true });
+    expect(result2).toEqual([]);
+    expect(aiService.productAdvisor).not.toHaveBeenCalled();
   });
 
   it("aborts before calling AI when staff claims during the debounce window", async () => {

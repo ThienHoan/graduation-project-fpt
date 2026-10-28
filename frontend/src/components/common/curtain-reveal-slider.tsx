@@ -119,12 +119,33 @@ export function CurtainRevealSlider({
       onTouchStart={(e) => {
         if (e.touches.length > 0) handleStart(e.touches[0].clientX);
       }}
+      onKeyDown={(e) => {
+        // Hỗ trợ điều khiển bằng bàn phím (mũi tên trái/phải, Home/End)
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setHasInteracted(true);
+          setSliderPosition((p) => Math.max(5, p - 5));
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setHasInteracted(true);
+          setSliderPosition((p) => Math.min(95, p + 5));
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          setHasInteracted(true);
+          setSliderPosition(5);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          setHasInteracted(true);
+          setSliderPosition(95);
+        }
+      }}
       role="slider"
       aria-valuenow={Math.round(sliderPosition)}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label="Kéo thanh trượt để so sánh ảnh gốc và ảnh AI Cổ Phục"
       tabIndex={0}
+      style={{ touchAction: "pan-y", cursor: "ew-resize" }}
     >
       {/* 1. Lớp ảnh gốc (Hiện đại - Bên trái) */}
       <img

@@ -16,9 +16,6 @@ import {
 const AI_USER_ID = "00000000-0000-0000-0000-000000000000";
 // Gộp các tin nhắn liên tiếp của khách thành 1 lượt trả lời duy nhất.
 const AI_DEBOUNCE_MS = 1500;
-// Staff được coi là đang xử lý hội thoại nếu họ đã gửi tin trong khoảng này.
-// Quá khoảng này thì AI tự trả lời lại, tránh việc hội thoại bị "kẹt" staff_id.
-const STAFF_ACTIVE_TTL_MS = 15 * 60 * 1000;
 const AI_FALLBACK_REPLY =
   "Em đã ghi nhận câu hỏi của bạn. Nhân viên sẽ phản hồi bạn trong ít phút ạ.";
 const AI_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
@@ -507,22 +504,45 @@ export class ChatService {
     const conversation = await this.getOrCreateConversationForCustomer(customerId);
     const lastMessage = conversation.messages.length > 0 ? conversation.messages[conversation.messages.length - 1] : null;
 
+    // Khi mở một hội thoại đã resolved (vd khách đã tư vấn xong nhưng manager
+    // cần liên hệ để xin thông tin chuyển khoản hoàn cọc): tự động khởi động
+    // phiên quản lý hỗ trợ nếu người gọi là manager và chưa có manager nào khác
+    // đang hỗ trợ. Như vậy manager có thể gửi tin ngay mà không cần bấm thêm
+    // nút "Bắt đầu hỗ trợ". Nếu manager khác đang hỗ trợ hoặc có lỗi xảy ra,
+    // chỉ trả về hội thoại hiện tại mà không làm gián đoạn.
+    if (
+      user.role === "manager_owner" &&
+      conversation.status === "resolved" &&
+      !this.isManagerSupportActive(conversation)
+    ) {
+      try {
+        await this.startManagerSupport(conversation.id, user);
+      } catch {
+        // Có thể manager khác vừa khởi động phiên, hoặc hội thoại không đủ
+        // điều kiện — chỉ trả về như bình thường, UI sẽ hiển thị trạng thái thực tế.
+      }
+    }
+
+    const refreshed = await this.getOrCreateConversationForCustomer(customerId);
+
     return {
-      id: conversation.id,
+      id: refreshed.id,
       customerId,
       customerName: customer.profile?.fullName ?? customer.email ?? null,
-      staffId: conversation.staff_id ?? null,
+      staffId: refreshed.staff_id ?? null,
       staffName: null,
-      status: conversation.status,
-      updatedAt: conversation.updated_at,
-      lastMessage,
+      status: refreshed.status,
+      updatedAt: refreshed.updated_at,
+      lastMessage: refreshed.messages.length > 0
+        ? refreshed.messages[refreshed.messages.length - 1]
+        : null,
       unreadCount: 0,
-      topic: conversation.topic ?? "general",
-      garmentId: conversation.garment_id ?? null,
+      topic: refreshed.topic ?? "general",
+      garmentId: refreshed.garment_id ?? null,
       garmentName: null,
-      bookingId: conversation.booking_id ?? null,
-      reopenedFromResolved: conversation.reopened_from_resolved,
-      ...this.getManagerSupportFields(conversation),
+      bookingId: refreshed.booking_id ?? null,
+      reopenedFromResolved: refreshed.reopened_from_resolved,
+      ...this.getManagerSupportFields(refreshed),
     };
   }
 
@@ -690,12 +710,9 @@ export class ChatService {
     if (!conversation || conversation.status === "resolved") return [];
     if (requireUnassigned && (conversation.status !== "open" || conversation.staff_id !== null)) return [];
 
-    // Chỉ nhường cho staff khi chính staff của hội thoại này vừa trả lời.
+    // Chỉ nhường cho staff khi chính staff của hội thoại này đang giữ reply lock.
     // Không dùng cờ "có staff online" toàn cục: staff mở dashboard ở tab khác
     // không được làm AI im lặng với mọi khách hàng.
-    if (await this.isStaffActivelyHandling(conversation)) return [];
-
-    // Tính lại policy với topic hội thoại (media trong hội thoại đơn hàng/
     // khiếu nại phải chuyển staff thay vì chỉ nhận ảnh).
     const plan = planAutoReply(trigger, conversation.topic);
     if (plan.kind === "skip") {
@@ -765,32 +782,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Staff chỉ "giữ" hội thoại trong STAFF_ACTIVE_TTL_MS kể từ tin nhắn gần nhất.
-   * Hết hạn thì AI trả lời lại, dù staff_id vẫn còn (tránh hội thoại chết).
-   */
-  private async isStaffActivelyHandling(conversation: {
-    id: string;
-    customer_id: string;
-    staff_id: string | null;
-  }): Promise<boolean> {
-    if (!conversation.staff_id) return false;
-
-    const lastStaffMessage = await this.prisma.messages.findFirst({
-      where: {
-        conversation_id: conversation.id,
-        sender_id: { not: conversation.customer_id },
-        sender_type: { not: "ai" },
-        deleted_at: null,
-      },
-      orderBy: { created_at: "desc" },
-      select: { created_at: true },
-    });
-
-    if (!lastStaffMessage) return false;
-    return Date.now() - lastStaffMessage.created_at.getTime() < STAFF_ACTIVE_TTL_MS;
-  }
-
   private async performAutoReply(
     conversationId: string,
     trigger: AutoReplyTrigger,
@@ -842,7 +833,6 @@ export class ChatService {
     });
     if (!conversation || conversation.status === "resolved") return [];
     if (requireUnassigned && (conversation.status !== "open" || conversation.staff_id !== null)) return [];
-    if (await this.isStaffActivelyHandling(conversation)) return [];
 
     // Idempotency: chỉ trả lời khi tin cuối vẫn là của khách.
     // Nếu staff/AI vừa trả lời trong lúc debounce thì bỏ qua.
