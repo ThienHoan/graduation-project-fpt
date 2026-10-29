@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { OptimizedImage } from "@/components/common/optimized-image";
 import { HeritageBootLoader } from "@/components/common/heritage-boot-loader";
@@ -155,84 +156,8 @@ export default function HomePage() {
       {/* 0. Màn Chờ Khởi Động Hoàng Cung & Bộ Đếm % Thời Gian Thực */}
       <HeritageBootLoader />
 
-      {/* 1. Header Kính Mờ Đẳng Cấp Hoàng Cung (Dark Luxury Frosted Glass) */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#09090c]/85 backdrop-blur-xl transition-all duration-300">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-8">
-            <Link
-              href="/"
-              onClick={(e) => playWoodTap({ event: e })}
-              className="font-display text-2xl font-black tracking-wide text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-400 bg-clip-text sm:text-3xl drop-shadow-[0_2px_12px_rgba(251,191,36,0.3)]"
-            >
-              Cổ Phục Rental
-            </Link>
-            <nav className="hidden items-center gap-6 text-sm font-medium md:flex">
-              {publicNavItems.map((item) => {
-                const sectionId = item.href.split("#")[1] ?? "";
-                const isActive = activeSection === sectionId;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={
-                      isActive
-                        ? "border-b-2 border-amber-400 py-2 font-bold text-amber-300"
-                        : "border-b-2 border-transparent py-2 text-stone-400 transition hover:text-amber-200"
-                    }
-                    onClick={(e) => {
-                      playWoodTap({ event: e });
-                      setActiveSection(sectionId);
-                    }}
-                    onMouseEnter={(e) => playHoverTick({ event: e })}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-2.5 sm:gap-3">
-            {/* Nút bật/tắt âm thanh trên Header */}
-            <SoundToggle variant="compact" />
-
-            <Link
-              href="/catalog"
-              onClick={(e) => playWoodTap({ event: e })}
-              onMouseEnter={(e) => playHoverTick({ event: e })}
-              className="hidden items-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-rose-600 px-4 py-2 text-xs font-bold uppercase tracking-wider text-stone-950 shadow-md transition hover:opacity-90 active:scale-[0.98] sm:inline-flex"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Thuê Ngay</span>
-            </Link>
-
-            <Link
-              href="/booking/date-selection"
-              onClick={(e) => playWoodTap({ event: e })}
-              onMouseEnter={(e) => playHoverTick({ event: e })}
-              className="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/5 text-stone-200 transition hover:border-amber-400 hover:text-amber-300"
-              aria-label="Giỏ thuê đồ"
-            >
-              <ShoppingBag className="h-4 w-4" />
-              {cartCountVal > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white shadow-xs">
-                  {cartCountVal}
-                </span>
-              )}
-            </Link>
-
-            <Link
-              href="/login"
-              onClick={(e) => playWoodTap({ event: e })}
-              onMouseEnter={(e) => playHoverTick({ event: e })}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/5 text-stone-200 transition hover:border-amber-400 hover:text-amber-300"
-              aria-label="Tài khoản"
-            >
-              <User className="h-4 w-4" />
-            </Link>
-          </div>
-        </div>
-      </header>
+      {/* 1. Header Kính Mờ Đẳng Cấp Hoàng Cung (Đồng bộ với toàn bộ hệ thống) */}
+      <CustomerNavbar active="home" variant="dark" showSoundToggle={true} />
 
       {/* 2. Hero Cinematic Toàn Màn Hình Với Three.js 3D World (Scroll-Craft Layered Depth) */}
       <section className="relative min-h-[94vh] flex items-center overflow-hidden border-b border-white/10 py-16 lg:py-24">

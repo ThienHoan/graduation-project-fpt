@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="100%" height="100%" fill="none" role="img" aria-labelledby="a3Title">
+  <title id="a3Title">Cổ Phục Hoàng Thành - Monogram Hoàng Triều</title>
+  <defs>
+    <!-- Imperial Gold Gradient -->
+    <linearGradient id="imperialGold" x1="30" y1="30" x2="226" y2="226" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="25%" stop-color="#F59E0B" />
+      <stop offset="60%" stop-color="#D97706" />
+      <stop offset="100%" stop-color="#92400E" />
+    </linearGradient>
+
+    <!-- Crimson Ruby Button Accent -->
+    <radialGradient id="rubyGem" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FDA4AF" />
+      <stop offset="30%" stop-color="#E11D48" />
+      <stop offset="75%" stop-color="#991B1B" />
+      <stop offset="100%" stop-color="#4C0519" />
+    </radialGradient>
+  </defs>
+
+  <!-- Khung Kim Khánh Bát Giác Tinh Tế (Imperial Gold Octagon) -->
+  <path
+    d="M 88 20 L 168 20 L 236 88 L 236 168 L 168 236 L 88 236 L 20 168 L 20 88 Z"
+    stroke="url(#imperialGold)"
+    stroke-width="3"
+    stroke-linejoin="round"
+    opacity="0.3"
+  />
+
+  <!-- Vòng tròn di sản bên trong (Inner Royal Ring) -->
+  <circle cx="128" cy="128" r="98" stroke="url(#imperialGold)" stroke-width="1.5" stroke-dasharray="4 6" opacity="0.4" />
+
+  <!-- Chữ C (Cổ Phục) - Vạt áo giao lĩnh bên trái uốn lượn hình học hoàn hảo -->
+  <path
+    d="M 184 76 A 76 76 0 1 0 184 180"
+    stroke="url(#imperialGold)"
+    stroke-width="16"
+    stroke-linecap="round"
+  />
+
+  <!-- Thân đứng nẹp áo & Cột chữ P (Central Royal Placket) -->
+  <line
+    x1="112"
+    y1="64"
+    x2="112"
+    y2="192"
+    stroke="url(#imperialGold)"
+    stroke-width="16"
+    stroke-linecap="round"
+  />
+
+  <!-- Vành khuyên chữ P (Vạt chéo Cổ Phục bên phải ôm lấy thân áo) -->
+  <path
+    d="M 112 72 H 144 A 36 36 0 0 1 180 108 A 36 36 0 0 1 144 144 H 112"
+    stroke="url(#imperialGold)"
+    stroke-width="16"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Khuy ngọc Cung Đình (Royal Jade Button) - Điểm xuyết tại nút thắt trang phục -->
+  <circle cx="112" cy="108" r="12" fill="url(#rubyGem)" stroke="#FDE68A" stroke-width="3" />
+  <circle cx="109" cy="105" r="3.5" fill="#FFFFFF" opacity="0.9" />
+</svg>
