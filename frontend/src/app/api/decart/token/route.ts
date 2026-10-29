@@ -14,6 +14,83 @@ const BASE_DAILY_LIVE_SESSIONS = 2; // Mặc định 2 phiên (15s)/ngày cho m�
 const BONUS_MEASUREMENT_SESSIONS = 2; // Thưởng thêm +2 phiên nếu đã hoàn tất số đo cơ thể
 const SESSION_DURATION_SECONDS = 18; // Khống chế cứng trên Decart WebRTC (18s để buffer 3s handshake)
 
+type Identity = { id: string; role: string; isActive: boolean };
+
+/**
+ * [SECURITY FIX] Xác thực JWT bằng cách gọi backend /auth/me thay vì decode base64 thủ công.
+ * Bản cũ chỉ decode payload mà KHÔNG verify chữ ký → kẻ tấn công có thể giả mạo userId.
+ * Giờ backend NestJS xác thực signature và trả về thông tin identity đã được kiểm chứng.
+ */
+async function authenticate(req: NextRequest): Promise<Identity | NextResponse> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return NextResponse.json(
+      {
+        error: "UNAUTHORIZED",
+        message: "Bạn cần đăng nhập tài khoản để nhận lượt sử dụng Gương soi Thử đồ Live (Decart AI) miễn phí.",
+      },
+      { status: 401 }
+    );
+  }
+
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    return NextResponse.json(
+      { error: "UNAUTHORIZED", message: "Token không hợp lệ." },
+      { status: 401 }
+    );
+  }
+
+  const apiBase = (
+    process.env.BACKEND_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:4000/api"
+  ).replace(/\/$/, "");
+
+  try {
+    const response = await fetch(`${apiBase}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: "INVALID_TOKEN", message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại." },
+        { status: 401 }
+      );
+    }
+
+    const payload = (await response.json()) as { success?: boolean; data?: Partial<Identity> };
+    const identity = payload.data;
+
+    if (
+      !payload.success ||
+      !identity ||
+      typeof identity.id !== "string" ||
+      !["customer", "staff", "manager_owner", "admin"].includes(identity.role ?? "") ||
+      identity.isActive !== true
+    ) {
+      return NextResponse.json(
+        { error: "INVALID_TOKEN", message: "Tài khoản không hợp lệ hoặc đã bị khóa." },
+        { status: 401 }
+      );
+    }
+
+    return identity as Identity;
+  } catch {
+    // Không fail-open: từ chối khi service xác thực không phản hồi
+    return NextResponse.json(
+      { error: "AUTH_UNAVAILABLE", message: "Dịch vụ xác thực tạm thời không khả dụng. Vui lòng thử lại." },
+      { status: 503 }
+    );
+  }
+}
+
+function isNextResponse(value: Identity | NextResponse): value is NextResponse {
+  return value instanceof NextResponse;
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.DECART_API_KEY;
 
@@ -28,44 +105,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 1. Gatekeeper Tầng 1: Bắt buộc đăng nhập tài khoản
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json(
-      {
-        error: "UNAUTHORIZED",
-        message:
-          "Bạn cần đăng nhập tài khoản để nhận lượt sử dụng Gương soi Thử đồ Live (Decart AI) miễn phí.",
-      },
-      { status: 401 }
-    );
-  }
+  // 1. Gatekeeper Tầng 1: Xác thực danh tính người dùng qua NestJS backend (có verify JWT signature)
+  const identity = await authenticate(req);
+  if (isNextResponse(identity)) return identity;
 
-  const tokenString = authHeader.split(" ")[1];
-  let userId = "guest_user";
-  try {
-    const payloadBase64 = tokenString.split(".")[1];
-    if (!payloadBase64) {
-      throw new Error("Invalid JWT format");
-    }
-    const decoded = JSON.parse(Buffer.from(payloadBase64, "base64").toString("utf-8"));
-    userId = decoded.sub || decoded.id || decoded.userId;
-    if (!userId) {
-      throw new Error("Missing user identifier in token");
-    }
-  } catch {
-    return NextResponse.json(
-      {
-        error: "INVALID_TOKEN",
-        message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.",
-      },
-      { status: 401 }
-    );
-  }
+  const userId = identity.id;
 
   // 2. Kiểm tra phần thưởng nhiệm vụ: Đã lưu số đo cơ thể hay chưa
   let maxDailySessions = BASE_DAILY_LIVE_SESSIONS;
   let hasMeasurementsBonus = false;
+
+  const authHeader = req.headers.get("authorization") ?? "";
+  const tokenString = authHeader.slice("Bearer ".length).trim();
 
   try {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
