@@ -8,10 +8,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
+  Matches,
   Max,
   Min,
 } from "class-validator";
+import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export const PRICE_RULE_TYPES = [
   "tet",
@@ -68,12 +69,12 @@ export class CreatePriceRuleDto {
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in categoryIds must be a UUID" })
   categoryIds?: string[];
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentIds must be a UUID" })
   garmentIds?: string[];
 
   @IsOptional()
@@ -132,12 +133,12 @@ export class UpdatePriceRuleDto {
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in categoryIds must be a UUID" })
   categoryIds?: string[];
 
   @IsOptional()
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentIds must be a UUID" })
   garmentIds?: string[];
 
   @IsOptional()
@@ -152,7 +153,7 @@ export class UpdatePriceRuleDto {
 
 export class PreviewPriceDto {
   @IsArray()
-  @IsUUID("all", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in garmentSizeIds must be a UUID" })
   garmentSizeIds!: string[];
 
   @IsDateString()

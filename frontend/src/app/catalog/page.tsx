@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import {
+  getEffectivePrices,
   getGarmentCategories,
   getGarmentsGrouped,
   trackGarmentView,
+  type EffectivePrice,
   type GarmentCategory,
   type GarmentGrouped,
 } from "@/lib/api";
@@ -35,12 +37,14 @@ function CatalogGarmentCard({
   group,
   selectedGarmentId,
   selectedSize,
+  effectiveMap,
   onSelectSize,
   onAddToCart,
 }: {
   group: GarmentGrouped;
   selectedGarmentId: string;
   selectedSize: any;
+  effectiveMap: Record<string, EffectivePrice>;
   onSelectSize: (sizeId: string) => void;
   onAddToCart: () => void;
 }) {
@@ -131,10 +135,29 @@ function CatalogGarmentCard({
         <div className="mt-auto border-t border-sand pt-3 space-y-1">
           <div className="flex items-baseline justify-between text-xs">
             <span className="text-stone-500 font-medium">Giá thuê</span>
-            <span className="text-sm font-bold text-lotus">
-              {selectedSize ? formatVND(selectedSize.dailyPrice) : "—"}
-              <span className="text-xs font-normal text-stone-500">/ngày</span>
-            </span>
+            {(() => {
+              const eff = selectedSize ? effectiveMap[selectedSize.garmentSizeId] : undefined;
+              if (selectedSize == null) return <span>—</span>;
+              if (!eff?.hasOverride) {
+                return (
+                  <span className="text-sm font-bold text-lotus">
+                    {formatVND(selectedSize.dailyPrice)}
+                    <span className="text-xs font-normal text-stone-500">/ngày</span>
+                  </span>
+                );
+              }
+              return (
+                <span className="text-right">
+                  <span className="mr-1.5 text-xs font-normal text-stone-400 line-through">
+                    {formatVND(eff.basePrice)}
+                  </span>
+                  <span className="text-sm font-bold text-lotus">
+                    {formatVND(eff.effectivePrice)}
+                    <span className="text-xs font-normal text-stone-500">/ngày</span>
+                  </span>
+                </span>
+              );
+            })()}
           </div>
           <div className="flex items-center justify-between text-xs">
             <span className="text-stone-500">Cọc</span>
@@ -175,6 +198,7 @@ export default function CatalogPage() {
   const [categories, setCategories] = useState<string[]>(["all"]);
   const [cartCountVal, setCartCountVal] = useState(0);
   const [selectedSizes, setSelectedSizes] = useState<Record<string, string>>({});
+  const [effectiveMap, setEffectiveMap] = useState<Record<string, EffectivePrice>>({});
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -196,7 +220,17 @@ export default function CatalogPage() {
       category && category !== "all" ? category : undefined,
     )
       .then((res) => {
-        if (res.success && res.data) setGroups(res.data);
+        if (res.success && res.data) {
+          setGroups(res.data);
+          const sizeIds = res.data.flatMap((g) => g.sizes.map((s) => s.garmentSizeId));
+          getEffectivePrices(sizeIds).then((eff) => {
+            if (eff.success && eff.data) {
+              setEffectiveMap(
+                Object.fromEntries(eff.data.map((e) => [e.sizeId, e])),
+              );
+            }
+          });
+        }
       })
       .finally(() => setLoading(false));
   }
@@ -250,12 +284,13 @@ export default function CatalogPage() {
       group.sizes.find((sz) => sz.garmentSizeId === selectedGarmentId) ?? group.sizes[0];
     if (!s) return;
 
+    const eff = effectiveMap[s.garmentSizeId];
     addToCart({
       garmentSizeId: s.garmentSizeId,
       garmentId: group.garmentId,
       name: group.name + (s.sizeLabel ? ` (Size ${s.sizeLabel})` : ""),
       sizeLabel: s.sizeLabel,
-      dailyPrice: s.dailyPrice,
+      dailyPrice: eff ? eff.effectivePrice : s.dailyPrice,
       depositAmount: s.depositAmount,
       imageUrl: group.imageUrl,
     });
@@ -669,16 +704,33 @@ export default function CatalogPage() {
                 <div className="mt-6 flex flex-wrap items-baseline gap-6 border-t border-sand pt-4">
                   <div>
                     <span className="block text-xs text-stone-500">Giá thuê</span>
-                    <span className="font-display text-2xl font-bold text-lotus sm:text-3xl">
-                      {(() => {
-                        const sel =
-                          selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId;
-                        const sz =
-                          featured.sizes.find((s) => s.garmentSizeId === sel) ?? featured.sizes[0];
-                        return sz ? formatVND(sz.dailyPrice) : "—";
-                      })()}
-                      <span className="text-xs font-normal text-stone-600">/ngày</span>
-                    </span>
+                    {(() => {
+                      const sel =
+                        selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId;
+                      const sz =
+                        featured.sizes.find((s) => s.garmentSizeId === sel) ?? featured.sizes[0];
+                      if (!sz) return <span>—</span>;
+                      const eff = effectiveMap[sz.garmentSizeId];
+                      if (!eff?.hasOverride) {
+                        return (
+                          <span className="font-display text-2xl font-bold text-lotus sm:text-3xl">
+                            {formatVND(sz.dailyPrice)}
+                            <span className="text-xs font-normal text-stone-600">/ngày</span>
+                          </span>
+                        );
+                      }
+                      return (
+                        <span>
+                          <span className="mr-2 text-base font-normal text-stone-400 line-through">
+                            {formatVND(eff.basePrice)}
+                          </span>
+                          <span className="font-display text-2xl font-bold text-lotus sm:text-3xl">
+                            {formatVND(eff.effectivePrice)}
+                            <span className="text-xs font-normal text-stone-600">/ngày</span>
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div>
                     <span className="block text-xs text-stone-500">Tiền cọc minh bạch</span>
@@ -763,6 +815,7 @@ export default function CatalogPage() {
                       group={group}
                       selectedGarmentId={selectedGarmentId}
                       selectedSize={selectedSize}
+                      effectiveMap={effectiveMap}
                       onSelectSize={(sizeId) => handleSelectSize(group.slug, sizeId)}
                       onAddToCart={() => handleAddToCart(group)}
                     />

@@ -3,15 +3,16 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import Lenis from "lenis";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 
 /**
- * SmoothScrollProvider — Lớp cuộn mượt quán tính kiểu XimiTech
+ * SmoothScrollProvider — Lớp cuộn mượt quán tính kiểu XimiTech tích hợp GSAP ScrollTrigger
  *
- * Thay thế cơ chế cuộn mặc định (giật nấc) bằng Lenis Smooth Scroll:
- * - Cuộn có quán tính vật lý (momentum), mượt mà trên mọi thiết bị
- * - Đồng bộ requestAnimationFrame với nhịp quét màn hình (120fps trên ProMotion)
- * - Tôn trọng prefers-reduced-motion: tự động tắt khi hệ thống yêu cầu giảm chuyển động
- * - Hỗ trợ data-lenis-prevent trên các phần tử có scroll riêng (modal, dropdown)
+ * Kết nối hoàn hảo giữa Lenis Smooth Scroll và GSAP Ticker:
+ * - Đồng bộ nhịp quét màn hình (120fps trên ProMotion)
+ * - Tự động cập nhật ScrollTrigger khi Lenis cuộn trang
+ * - Tôn trọng prefers-reduced-motion
  * - Tự động tắt trên /dashboard để đảm bảo native scroll ổn định cho bảng và modal
  */
 export function SmoothScrollProvider({ children }: { children: React.ReactNode }) {
@@ -19,6 +20,10 @@ export function SmoothScrollProvider({ children }: { children: React.ReactNode }
   const pathname = usePathname();
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    gsap.registerPlugin(ScrollTrigger);
+
     // Không chạy Lenis trên các trang dashboard (customer, staff, manager, admin)
     // để tránh xung đột với sticky headers, sidebars, và modals
     if (pathname?.startsWith("/dashboard")) {
@@ -30,21 +35,24 @@ export function SmoothScrollProvider({ children }: { children: React.ReactNode }
     if (prefersReducedMotion) return;
 
     const lenis = new Lenis({
-      duration: 1.15,             // Thời gian quán tính (giây) — cân bằng giữa mượt mà và phản hồi
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), // Exponential easing — tự nhiên như iOS
-      touchMultiplier: 1.5,       // Nhân hệ số cuộn cảm ứng trên mobile
-      smoothWheel: true,          // Bật smooth scroll cho chuột
-      syncTouch: false,           // Không ghi đè touch scroll native (giữ UX di động tự nhiên)
+      duration: 1.18,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      touchMultiplier: 1.5,
+      smoothWheel: true,
+      syncTouch: false,
     });
 
     lenisRef.current = lenis;
 
-    // Vòng lặp requestAnimationFrame đồng bộ với nhịp quét màn hình
-    function raf(time: number) {
-      lenis.raf(time);
-      requestAnimationFrame(raf);
-    }
-    requestAnimationFrame(raf);
+    // Đồng bộ sự kiện cuộn Lenis vào GSAP ScrollTrigger
+    lenis.on("scroll", ScrollTrigger.update);
+
+    // Vòng lặp tick của GSAP trực tiếp điều phối Lenis (chuẩn GSAP + Lenis integration)
+    const updateTicker = (time: number) => {
+      lenis.raf(time * 1000);
+    };
+    gsap.ticker.add(updateTicker);
+    gsap.ticker.lagSmoothing(0);
 
     // Xử lý cuộn tới anchor khi click vào link có hash (#)
     function handleHashClick(e: MouseEvent) {
@@ -66,6 +74,7 @@ export function SmoothScrollProvider({ children }: { children: React.ReactNode }
 
     return () => {
       document.removeEventListener("click", handleHashClick);
+      gsap.ticker.remove(updateTicker);
       lenis.destroy();
       lenisRef.current = null;
     };

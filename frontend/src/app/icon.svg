@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <!-- Nền Đỏ Chu Sa Hoàng Tộc Cung Đình Huế -->
+  <rect width="32" height="32" rx="7" fill="#881337" />
+  
+  <!-- Viền vàng tinh tế -->
+  <rect x="1" y="1" width="30" height="30" rx="6" stroke="#D4AF37" stroke-width="1" opacity="0.6" />
+
+  <!-- Monogram C-P vạt áo tối giản nét đậm để rõ ràng ở 16px/32px -->
+  <path
+    d="M 23 10 A 9.5 9.5 0 1 0 23 23"
+    stroke="#FDE68A"
+    stroke-width="2.5"
+    stroke-linecap="round"
+  />
+
+  <line
+    x1="14"
+    y1="8"
+    x2="14"
+    y2="24"
+    stroke="#FDE68A"
+    stroke-width="2.5"
+    stroke-linecap="round"
+  />
+
+  <path
+    d="M 14 9 H 18 A 4.5 4.5 0 0 1 22.5 13.5 A 4.5 4.5 0 0 1 18 18 H 14"
+    stroke="#FDE68A"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Khuy ngọc đỏ tâm điểm -->
+  <circle cx="14" cy="13.5" r="1.8" fill="#F43F5E" stroke="#FEF08A" stroke-width="0.8" />
+</svg>
