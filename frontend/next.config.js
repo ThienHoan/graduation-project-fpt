@@ -92,6 +92,14 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "leaflet"],
   },
+  async rewrites() {
+    return [
+      {
+        source: "/backend-api/:path*",
+        destination: "http://104.248.147.219:4000/api/:path*",
+      },
+    ];
+  },
   // [SECURITY FIX] Thêm các HTTP security headers cho toàn bộ routes
   async headers() {
     return [
