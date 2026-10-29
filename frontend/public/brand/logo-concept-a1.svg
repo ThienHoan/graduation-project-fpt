@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="100%" height="100%" fill="none" role="img" aria-labelledby="logoTitle logoDesc">
+  <title id="logoTitle">Cổ Phục Hoàng Thành Mark - Giao Lĩnh Minimalist</title>
+  <desc id="logoDesc">Biểu tượng chữ C và P lồng ghép vạt áo cổ phục truyền thống với khuy ngọc hoàng gia</desc>
+
+  <defs>
+    <!-- Gradient Hoàng Kim Triều Nguyễn -->
+    <linearGradient id="goldLuxury" x1="40" y1="30" x2="216" y2="226" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FCD34D" />
+      <stop offset="35%" stop-color="#D4AF37" />
+      <stop offset="70%" stop-color="#B45309" />
+      <stop offset="100%" stop-color="#78350F" />
+    </linearGradient>
+
+    <!-- Gradient Đỏ Chu Sa Hoàng Tộc -->
+    <linearGradient id="rubyRoyal" x1="128" y1="60" x2="128" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E11D48" />
+      <stop offset="100%" stop-color="#881337" />
+    </linearGradient>
+  </defs>
+
+  <!-- Vòng tròn hào quang di sản (Heritage Halo) - Đứt đoạn tinh tế -->
+  <circle cx="128" cy="128" r="110" stroke="url(#goldLuxury)" stroke-width="2" stroke-dasharray="6 6" opacity="0.4" />
+  <circle cx="128" cy="128" r="102" stroke="url(#goldLuxury)" stroke-width="1.5" opacity="0.3" />
+
+  <!-- Cánh vạt áo trái - Chữ C uyển chuyển (The sweeping C lapel) -->
+  <path
+    d="M 180 68 C 140 38 82 50 56 94 C 32 136 44 190 88 210 C 130 228 184 212 206 170"
+    stroke="url(#goldLuxury)"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+
+  <!-- Nẹp áo trung tâm & Thân chữ P (The central Placket & Stem) -->
+  <path
+    d="M 108 52 L 108 204"
+    stroke="url(#goldLuxury)"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+
+  <!-- Vạt áo chéo & Vòng cung chữ P (The Crossing Collar & P Loop) -->
+  <path
+    d="M 108 62 C 158 56 198 76 198 114 C 198 150 156 166 108 166"
+    stroke="url(#goldLuxury)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Đường may vạt chéo giao lĩnh ngũ thân (Collar Lapel Fold Line) -->
+  <path
+    d="M 72 82 L 176 186"
+    stroke="url(#goldLuxury)"
+    stroke-width="4"
+    stroke-linecap="round"
+    opacity="0.5"
+  />
+
+  <!-- Khuy ngọc Cung Đình (Royal Jade Stud) tại giao điểm vạt áo -->
+  <circle cx="128" cy="128" r="12" fill="url(#rubyRoyal)" stroke="#FCD34D" stroke-width="3" />
+  <circle cx="128" cy="128" r="4" fill="#FFFFFF" opacity="0.8" />
+</svg>
