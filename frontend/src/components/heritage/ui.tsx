@@ -44,7 +44,7 @@ import {
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 export type StaffNavKey = "overview" | "pending" | "all" | "refunds" | "map" | "inspection" | "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
+type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "penalty-review" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -206,7 +206,7 @@ export function StaffPortalShell({
     {
       groupTitle: "Vận hành & Đơn hàng",
       items: [
-        { key: "overview", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff" },
+        { key: "all", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff#all" },
         { key: "pending", label: "Chờ xác nhận", icon: Clock, href: "/dashboard/staff#pending" },
         { key: "map", label: "Bản đồ giao nhận", icon: Map, href: "/dashboard/staff#map" },
       ],
@@ -439,6 +439,7 @@ export function ManagerPortalShell({
       items: [
         { key: "finance", label: "Đối soát tài chính", icon: DollarSign, href: "/dashboard/manager#finance" },
         { key: "refunds", label: "Duyệt hoàn cọc", icon: RefreshCw, href: "/dashboard/manager#refunds" },
+        { key: "penalty-review", label: "Duyệt phạt hư hại", icon: ShieldCheck, href: "/dashboard/manager#penalty-review" },
       ],
     },
     {

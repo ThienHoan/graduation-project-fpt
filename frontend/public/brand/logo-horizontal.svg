@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" width="100%" height="100%" fill="none" role="img" aria-labelledby="hLogoTitle">
+  <title id="hLogoTitle">Cổ Phục Hoàng Thành - Logo Ngang</title>
+  
+  <defs>
+    <!-- Imperial Gold Gradient -->
+    <linearGradient id="hGold" x1="20" y1="20" x2="140" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FDE68A" />
+      <stop offset="30%" stop-color="#F59E0B" />
+      <stop offset="70%" stop-color="#D97706" />
+      <stop offset="100%" stop-color="#92400E" />
+    </linearGradient>
+
+    <!-- Ruby Gem Radial -->
+    <radialGradient id="hRuby" cx="35%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#FDA4AF" />
+      <stop offset="40%" stop-color="#E11D48" />
+      <stop offset="85%" stop-color="#991B1B" />
+      <stop offset="100%" stop-color="#4C0519" />
+    </radialGradient>
+  </defs>
+
+  <!-- BIỂU TƯỢNG MARK (Bên trái, Center: 80, 80 - scale từ 256 xuống) -->
+  <g transform="translate(16, 16) scale(0.5)">
+    <!-- Khung Kim Khánh Bát Giác -->
+    <path
+      d="M 88 20 L 168 20 L 236 88 L 236 168 L 168 236 L 88 236 L 20 168 L 20 88 Z"
+      stroke="url(#hGold)"
+      stroke-width="4"
+      stroke-linejoin="round"
+      opacity="0.35"
+    />
+    <circle cx="128" cy="128" r="98" stroke="url(#hGold)" stroke-width="2" stroke-dasharray="4 6" opacity="0.4" />
+
+    <!-- Chữ C Vạt Áo Giao Lĩnh -->
+    <path
+      d="M 184 76 A 76 76 0 1 0 184 180"
+      stroke="url(#hGold)"
+      stroke-width="16"
+      stroke-linecap="round"
+    />
+
+    <!-- Cột Chữ P & Nẹp Áo -->
+    <line
+      x1="112"
+      y1="64"
+      x2="112"
+      y2="192"
+      stroke="url(#hGold)"
+      stroke-width="16"
+      stroke-linecap="round"
+    />
+
+    <!-- Vành Chữ P -->
+    <path
+      d="M 112 72 H 144 A 36 36 0 0 1 180 108 A 36 36 0 0 1 144 144 H 112"
+      stroke="url(#hGold)"
+      stroke-width="16"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Khuy Ngọc Đỏ Hoàng Cung -->
+    <circle cx="112" cy="108" r="12" fill="url(#hRuby)" stroke="#FDE68A" stroke-width="3" />
+    <circle cx="109" cy="105" r="3.5" fill="#FFFFFF" opacity="0.9" />
+  </g>
+
+  <!-- ĐƯỜNG PHÂN CÁCH VÀNG KIM TINH TẾ -->
+  <line x1="168" y1="36" x2="168" y2="124" stroke="url(#hGold)" stroke-width="1.5" opacity="0.4" />
+
+  <!-- PHẦN CHỮ TYPOGRAPHY THƯƠNG HIỆU -->
+  <g transform="translate(196, 0)">
+    <!-- Tên chính: CỔ PHỤC (Font Serif Cung Đình Tinh Tế) -->
+    <text
+      x="0"
+      y="84"
+      font-family="'Playfair Display', 'Cinzel', 'Noto Serif Display', 'Times New Roman', serif"
+      font-size="44"
+      font-weight="700"
+      letter-spacing="4"
+      fill="url(#hGold)"
+    >CỔ PHỤC</text>
+
+    <!-- Phụ đề: HOÀNG THÀNH • DI SẢN & CÔNG NGHỆ -->
+    <text
+      x="2"
+      y="114"
+      font-family="'Inter', 'Montserrat', 'Segoe UI', sans-serif"
+      font-size="11"
+      font-weight="600"
+      letter-spacing="5"
+      fill="#A8A29E"
+      opacity="0.9"
+    >HOÀNG THÀNH • DI SẢN &amp; AI</text>
+  </g>
+</svg>

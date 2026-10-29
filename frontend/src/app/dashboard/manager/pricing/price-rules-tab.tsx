@@ -39,6 +39,15 @@ export const RULE_TYPE_META: Record<PriceRuleType, { label: string; priority: nu
 const RULE_TYPES = Object.keys(RULE_TYPE_META) as PriceRuleType[];
 const WEEKDAYS = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 
+// Backend chỉ nhận UUID chuẩn cho categoryIds. Rule cũ / cache cũ có thể chứa
+// tên danh mục, chuỗi rỗng hoặc id test → lọc bỏ trước khi hiển thị/gửi,
+// tránh lỗi "each value in categoryIds must be a UUID".
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function cleanIds(ids: unknown): string[] {
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((x): x is string => typeof x === "string" && UUID_RE.test(x));
+}
+
 const inputClass =
   "w-full rounded-lg border border-sand px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-lotus/30";
 
@@ -87,7 +96,7 @@ function fromRule(r: PriceRule): FormState {
     percentage: r.percentage != null ? String(Math.abs(r.percentage)) : "",
     fixedAmount: r.fixedAmount != null ? String(Math.abs(r.fixedAmount)) : "",
     priority: String(r.priority),
-    categoryIds: r.categoryIds,
+    categoryIds: cleanIds(r.categoryIds),
     isActive: r.isActive,
     note: r.note ?? "",
   };
@@ -156,6 +165,12 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
     const sign = form.direction === "decrease" ? -1 : 1;
     const pct = form.percentage.trim() ? sign * Number(form.percentage) : null;
     const fixed = form.fixedAmount.trim() ? sign * Number(form.fixedAmount) : null;
+    const categoryIds = cleanIds(form.categoryIds);
+    if (categoryIds.length < form.categoryIds.length) {
+      showToast("error", "Bỏ qua phạm vi danh mục không hợp lệ (id cũ). Chỉ gửi các nhóm hợp lệ.");
+      setForm({ ...form, categoryIds });
+      return;
+    }
     const payload: PriceRulePayload = {
       name: form.name.trim(),
       ruleType: form.ruleType,
@@ -166,7 +181,7 @@ export function PriceRulesTab({ showToast }: { showToast: (kind: "success" | "er
       percentage: pct,
       fixedAmount: fixed,
       priority: form.priority.trim() ? Number(form.priority) : RULE_TYPE_META[form.ruleType].priority,
-      categoryIds: form.categoryIds,
+      categoryIds,
       isActive: form.isActive,
       note: form.note.trim() || null,
     };

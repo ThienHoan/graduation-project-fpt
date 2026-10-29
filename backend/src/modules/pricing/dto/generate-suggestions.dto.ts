@@ -1,9 +1,10 @@
-import { IsArray, IsDateString, IsOptional, IsUUID } from "class-validator";
+import { IsArray, IsDateString, IsOptional, IsUUID, Matches } from "class-validator";
+import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export class GenerateSuggestionsDto {
   @IsOptional()
   @IsArray()
-  @IsUUID("4", { each: true })
+  @Matches(CANONICAL_UUID_REGEX, { each: true, message: "each value in sizeIds must be a UUID" })
   sizeIds?: string[];
 
   @IsOptional()

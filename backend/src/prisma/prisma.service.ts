@@ -20,6 +20,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       try {
         return await this.$transaction(operation, {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: 15000, // 15s — đủ cho flow inspection có nhiều write operations
         });
       } catch (error) {
         const shouldRetry =

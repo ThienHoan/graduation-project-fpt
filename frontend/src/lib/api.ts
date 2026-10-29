@@ -291,6 +291,7 @@ export type BookingItem = {
   assetCode?: string | null;
   assetStatus?: string | null;
   conditionNote?: string | null;
+  purchaseCost?: number | null;
 };
 
 export type HandoverStatus = "PENDING" | "CONFIRMED" | "REJECTED";
@@ -611,6 +612,7 @@ export type InspectionAsset = {
   assetCode: string;
   status: string;
   conditionNote: string | null;
+  purchaseCost?: number | null;
   garment: {
     id: string;
     name: string;
@@ -666,6 +668,7 @@ export type AiInspectionComparisonResult = {
   actionReason: string;
   detectedIssues: AiInspectionFindingSuggestion[];
   totalSuggestedPenalty: number;
+  garmentValue?: number;
   confidence: number;
   beforePhotosAnalyzed: number;
   afterPhotosAnalyzed: number;
@@ -802,7 +805,63 @@ export async function completeInspection(
   });
 }
 
-// ---------- Asset management types ----------
+export async function overrideInspectionPenalty(
+  sessionId: string,
+  payload: {
+    findings?: { id: string; penaltyAmount: number; description?: string }[];
+    totalPenaltyOverride?: number;
+    reason: string;
+  },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/override-penalty`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------- Manager: duyệt / từ chối phạt ----------
+
+export type PendingApprovalEntry = InspectionSessionResponse & {
+  depositAmount: number;
+  totalPenalty: number;
+  penaltyRatio: number;
+  garmentValue?: number;
+  finalAssetStatus: string;
+  customerName: string | null;
+};
+
+/** Lấy danh sách biên bản kiểm tra chờ manager duyệt (phạt > 30% cọc) */
+export async function getInspectionsPendingApproval() {
+  return apiRequest<PendingApprovalEntry[]>("/inspections/pending-approval");
+}
+
+/** Manager duyệt phạt — có thể điều chỉnh mức từng finding */
+export async function managerApproveInspection(
+  sessionId: string,
+  payload: {
+    findings?: { id: string; penaltyAmount: number; description?: string }[];
+    totalPenaltyOverride?: number;
+    note: string;
+  },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/manager-approve`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Manager từ chối phạt — huỷ penalty, complete không trừ tiền */
+export async function managerRejectInspection(
+  sessionId: string,
+  payload: { reason: string },
+) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}/manager-reject`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+
 
 export type AvailableAsset = {
   id: string;
@@ -1389,6 +1448,8 @@ export type InspectionLogEntry = {
   status: string;
   inspectorName: string | null;
   findingsCount: number;
+  photosCount?: number;
+  hasAi?: boolean;
   totalPenalty: number;
   createdAt: string;
   completedAt: string | null;
@@ -2461,6 +2522,41 @@ export async function getRentalQuote(garmentSizeIds: string[], startDate: string
     method: "POST",
     body: JSON.stringify({ garmentSizeIds, startDate, endDate }),
   });
+}
+
+export type EffectivePrice = {
+  sizeId: string;
+  basePrice: number;
+  effectivePrice: number;
+  hasOverride: boolean;
+  source: "period" | "rule" | null;
+  eventName: string | null;
+  eventType: string | null;
+};
+
+export const PRICE_EVENT_TYPE_LABELS: Record<string, string> = {
+  tet: "Tết",
+  holiday: "Ngày lễ",
+  occasion: "Dịp đặc biệt",
+  peak_season: "Mùa cao điểm",
+  off_season: "Mùa thấp điểm",
+  store_program: "Chương trình cửa hàng",
+  double_sale: "Sale đôi",
+  weekend: "Cuối tuần",
+};
+
+export async function getEffectivePrices(garmentSizeIds: string[]) {
+  const ids = [...new Set(garmentSizeIds.filter(Boolean))];
+  if (ids.length === 0) return { success: true as const, data: [] as EffectivePrice[] };
+  const out: EffectivePrice[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const res = await apiRequest<EffectivePrice[]>(
+      `/pricing/quote/effective?sizeIds=${encodeURIComponent(chunk.join(","))}`,
+    );
+    if (res.success && res.data) out.push(...res.data);
+  }
+  return { success: true as const, data: out };
 }
 
 // ---------- Voucher & khuyến mãi ----------

@@ -14,6 +14,8 @@ import {
   Plus,
   X,
   Search,
+  Eye,
+  ShieldAlert,
   Pencil,
   Trash2,
   Images,
@@ -39,9 +41,11 @@ import {
   PieChart,
   Package,
   BarChart3,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 
+import { InspectionDetailModal } from "@/components/bookings/inspection-detail-modal";
 import { useAuth } from "@/components/auth/auth-provider";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
@@ -118,6 +122,10 @@ import {
   type ReconciliationResponse,
   recoverBookingHandover,
   type HandoverRecoveryPayload,
+  getInspectionsPendingApproval,
+  managerApproveInspection,
+  managerRejectInspection,
+  type PendingApprovalEntry,
 } from "@/lib/api";
 
 function formatDate(iso: string) {
@@ -265,6 +273,7 @@ type Tab =
   | "assets"
   | "inventory"
   | "inspection-log"
+  | "penalty-review"
   | "laundry"
   | "damaged"
   | "finance"
@@ -276,6 +285,7 @@ const VALID_TABS: Tab[] = [
   "assets",
   "inventory",
   "inspection-log",
+  "penalty-review",
   "laundry",
   "damaged",
   "finance",
@@ -305,6 +315,10 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
   "inspection-log": {
     title: "Nhật Ký Kiểm Tra",
     subtitle: "Lịch sử kiểm tra tình trạng trang phục sau khi trả.",
+  },
+  "penalty-review": {
+    title: "Duyệt Phạt Hư Hại",
+    subtitle: "Phê duyệt biên bản kiểm tra có tiền phạt vượt 30% tiền cọc.",
   },
   laundry: {
     title: "Giặt Sấy",
@@ -352,6 +366,8 @@ export default function ManagerDashboardPage() {
     message: string;
   } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [inspectingBookingId, setInspectingBookingId] = useState<string | null>(null);
+  const [inspectingSessionId, setInspectingSessionId] = useState<string | null>(null);
 
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
@@ -434,6 +450,11 @@ export default function ManagerDashboardPage() {
   const [inspectionLog, setInspectionLog] = useState<InspectionLogEntry[]>([]);
   const [inspectionLogLoading, setInspectionLogLoading] = useState(false);
   const [accInspectionLog, setAccInspectionLog] = useState<AccessoryInspectionLogEntry[]>([]);
+
+  // Pending penalty approval state (phạt > 30% cọc cần Manager duyệt)
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalEntry[]>([]);
+  const [pendingApprovalsLoading, setPendingApprovalsLoading] = useState(false);
+  const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
 
   // Laundry state
   const [laundryTickets, setLaundryTickets] = useState<LaundryTicketResponse[]>(
@@ -791,6 +812,53 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  async function handleManagerApprove(
+    sessionId: string,
+    payload: {
+      findings?: { id: string; penaltyAmount: number; description?: string }[];
+      totalPenaltyOverride?: number;
+      note: string;
+    },
+  ) {
+    setApprovalActionId(sessionId);
+    setErrorMsg(null);
+    const res = await managerApproveInspection(sessionId, payload);
+    setApprovalActionId(null);
+    if (res.success) {
+      showToast("success", "Đã phê duyệt biên bản phạt thành công.");
+      setPendingApprovals((prev) => prev.filter((s) => s.id !== sessionId));
+      void refreshPendingApprovals();
+      void refreshBookings();
+      void refreshInspectionLog();
+      void refreshPendingRefunds();
+      void refreshCompletedRefunds();
+      return true;
+    } else {
+      showToast("error", res.message ?? "Lỗi khi phê duyệt biên bản phạt.");
+      return false;
+    }
+  }
+
+  async function handleManagerReject(sessionId: string, reason: string) {
+    setApprovalActionId(sessionId);
+    setErrorMsg(null);
+    const res = await managerRejectInspection(sessionId, { reason });
+    setApprovalActionId(null);
+    if (res.success) {
+      showToast("success", "Đã từ chối phạt. Biên bản được hoàn tất với mức phạt 0đ.");
+      setPendingApprovals((prev) => prev.filter((s) => s.id !== sessionId));
+      void refreshPendingApprovals();
+      void refreshBookings();
+      void refreshInspectionLog();
+      void refreshPendingRefunds();
+      void refreshCompletedRefunds();
+      return true;
+    } else {
+      showToast("error", res.message ?? "Lỗi khi từ chối phạt.");
+      return false;
+    }
+  }
+
   // ── Asset assignment helpers ──
 
   // Đồng bộ ngay tab "cần gán" sau mỗi lần gán (trang phục hoặc phụ kiện):
@@ -1038,6 +1106,17 @@ export default function ManagerDashboardPage() {
       .finally(() => setInspectionLogLoading(false));
   }, [tab]);
 
+  // ── Load pending penalty approvals ──
+  useEffect(() => {
+    if (tab !== "penalty-review") return;
+    setPendingApprovalsLoading(true);
+    getInspectionsPendingApproval()
+      .then((res) => {
+        if (res.success && res.data) setPendingApprovals(res.data);
+      })
+      .finally(() => setPendingApprovalsLoading(false));
+  }, [tab]);
+
   // ── Load laundry ──
   useEffect(() => {
     if (tab !== "laundry") return;
@@ -1109,6 +1188,13 @@ export default function ManagerDashboardPage() {
       },
     );
   }, [tab]);
+  const refreshPendingApprovals = useCallback(() => {
+    if (tab !== "penalty-review") return Promise.resolve();
+    return getInspectionsPendingApproval().then((res) => {
+      if (res.success && res.data) setPendingApprovals(res.data);
+      else setPendingApprovals([]);
+    });
+  }, [tab]);
   const refreshMaintenanceAndAssets = useCallback(() => {
     if (tab !== "damaged") return Promise.resolve();
     return Promise.all([getMaintenanceJobs(), getAllAssets(), getAccessoriesProcessing()]).then(
@@ -1138,6 +1224,7 @@ export default function ManagerDashboardPage() {
     },
     inspections: () => {
       void refreshInspectionLog();
+      void refreshPendingApprovals();
       void refreshMaintenanceAndAssets();
       void refreshCompletedRefunds();
     },
@@ -1351,7 +1438,28 @@ export default function ManagerDashboardPage() {
           }
         />
       ) : tab === "inspection-log" ? (
-        <InspectionLogTab log={inspectionLog} loading={inspectionLogLoading} accLog={accInspectionLog} />
+        <InspectionLogTab
+          log={inspectionLog}
+          loading={inspectionLogLoading}
+          accLog={accInspectionLog}
+          onViewInspection={(bId, sId) => {
+            setInspectingBookingId(bId);
+            setInspectingSessionId(sId ?? null);
+          }}
+        />
+      ) : tab === "penalty-review" ? (
+        <PenaltyReviewTab
+          pendingApprovals={pendingApprovals}
+          loading={pendingApprovalsLoading}
+          onApprove={handleManagerApprove}
+          onReject={handleManagerReject}
+          actioningId={approvalActionId}
+          onRefresh={refreshPendingApprovals}
+          onViewInspection={(bId, sId) => {
+            setInspectingBookingId(bId);
+            setInspectingSessionId(sId ?? null);
+          }}
+        />
       ) : tab === "laundry" ? (
         <LaundryTab
           tickets={laundryTickets}
@@ -1444,6 +1552,10 @@ export default function ManagerDashboardPage() {
           handleApproveRefund={handleApproveRefund}
           handleRejectRefund={handleRejectRefund}
           approvingId={approvingId}
+          onViewInspection={(bId) => {
+            setInspectingBookingId(bId);
+            setInspectingSessionId(null);
+          }}
         />
       ) : tab === "rejected-handovers" ? (
         <RejectedHandoversTab
@@ -1511,6 +1623,24 @@ export default function ManagerDashboardPage() {
           onConfirm={() => handleDeleteGarment(garmentToDeleteId)}
         />
       )}
+
+      {/* Chi tiết biên bản kiểm tra & Duyệt/Điều chỉnh phạt cho Quản lý */}
+      <InspectionDetailModal
+        isOpen={Boolean(inspectingBookingId || inspectingSessionId)}
+        onClose={() => {
+          setInspectingBookingId(null);
+          setInspectingSessionId(null);
+        }}
+        bookingId={inspectingBookingId}
+        sessionId={inspectingSessionId}
+        isManager={true}
+        onUpdated={() => {
+          void refreshInspectionLog();
+          void refreshPendingRefunds();
+          void refreshBookings();
+        }}
+        showToast={showToast}
+      />
 
       {/* Toast thông báo trên màn hình */}
       {toast && (
@@ -4433,10 +4563,12 @@ function InspectionLogTab({
   log,
   loading,
   accLog,
+  onViewInspection,
 }: {
   log: InspectionLogEntry[];
   loading: boolean;
   accLog: AccessoryInspectionLogEntry[];
+  onViewInspection?: (bookingId: string, sessionId?: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -4617,6 +4749,7 @@ function InspectionLogTab({
                     <th className="px-6 py-3">Ghi nhận</th>
                     <th className="px-6 py-3">Phạt</th>
                     <th className="px-6 py-3">Ngày tạo</th>
+                    <th className="px-6 py-3 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-sand">
@@ -4653,6 +4786,16 @@ function InspectionLogTab({
                         </td>
                         <td className="px-6 py-4 text-stone-500">
                           {entry.createdAt.slice(0, 10)}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => onViewInspection?.(entry.bookingId, entry.id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:border-lotus hover:text-lotus hover:bg-mist transition shadow-sm"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            <span>Xem biên bản</span>
+                          </button>
                         </td>
                       </tr>
                     );
@@ -6362,6 +6505,7 @@ function RefundCard({
   approvingId,
   handleApproveRefund,
   handleRejectRefund,
+  onViewInspection,
 }: {
   refund: any;
   approvingId: string | null;
@@ -6371,6 +6515,7 @@ function RefundCard({
     approveNote: string,
   ) => void;
   handleRejectRefund: (id: string, reason: string) => void;
+  onViewInspection?: (bookingId: string) => void;
 }) {
   const [proofImageUrl, setProofImageUrl] = useState("");
   const [approveNote, setApproveNote] = useState("");
@@ -6380,8 +6525,9 @@ function RefundCard({
   const isBankTransfer = refund.refundMethod === "bank_transfer";
   const bankDetailsComplete =
     !isBankTransfer || Boolean(refund.bankDetailsComplete);
+  const isZeroRefund = Number(refund.amount) === 0;
   const canApprove =
-    !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
+    isZeroRefund || !isBankTransfer || (bankDetailsComplete && Boolean(proofImageUrl.trim()));
 
   return (
     <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
@@ -6429,6 +6575,20 @@ function RefundCard({
             Cọc: {formatVND(refund.booking.depositTotal)} — Phạt:{" "}
             {formatVND(refund.booking.penaltyTotal)}
           </p>
+          <div className="mt-2.5">
+            <button
+              type="button"
+              onClick={() => onViewInspection?.(refund.bookingId)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-mist px-3 py-1.5 text-xs font-semibold text-stone-700 hover:border-lotus hover:text-lotus transition shadow-sm"
+            >
+              <FileText className="h-3.5 w-3.5 text-lotus" />
+              <span>
+                {Number(refund.booking.penaltyTotal) > 0
+                  ? `Xem biên bản phạt (${formatVND(refund.booking.penaltyTotal)})`
+                  : "Xem biên bản kiểm tra đồ"}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -6641,9 +6801,11 @@ function RefundCard({
           >
             {approvingId === refund.id
               ? "Đang xử lý..."
-              : !bankDetailsComplete
-                ? "Chờ bổ sung thông tin ngân hàng"
-                : `Duyệt hoàn cọc ${formatVND(refund.amount)}`}
+              : isZeroRefund
+                ? "Xác nhận duyệt khấu trừ 100% cọc"
+                : !bankDetailsComplete
+                  ? "Chờ bổ sung thông tin ngân hàng"
+                  : `Duyệt hoàn cọc ${formatVND(refund.amount)}`}
           </button>
         </div>
       </div>
@@ -6657,6 +6819,7 @@ function RefundsTab({
   handleApproveRefund,
   handleRejectRefund,
   approvingId,
+  onViewInspection,
 }: {
   pendingRefunds: any[];
   loadingRefunds: boolean;
@@ -6667,6 +6830,7 @@ function RefundsTab({
   ) => void;
   handleRejectRefund: (id: string, reason: string) => void;
   approvingId: string | null;
+  onViewInspection?: (bookingId: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -6734,6 +6898,7 @@ function RefundsTab({
                 approvingId={approvingId}
                 handleApproveRefund={handleApproveRefund}
                 handleRejectRefund={handleRejectRefund}
+                onViewInspection={onViewInspection}
               />
             ))}
           </div>
@@ -7003,3 +7168,756 @@ function RejectedHandoversTab({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TAB: DUYỆT PHẠT HƯ HẠI (Manager Penalty Approval)
+// Phê duyệt các biên bản kiểm tra có tiền phạt vượt 30% tiền cọc hoặc vượt cọc
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PenaltyReviewTab({
+  pendingApprovals,
+  loading,
+  onApprove,
+  onReject,
+  actioningId,
+  onRefresh,
+  onViewInspection,
+}: {
+  pendingApprovals: PendingApprovalEntry[];
+  loading: boolean;
+  onApprove: (
+    sessionId: string,
+    payload: {
+      findings?: { id: string; penaltyAmount: number; description?: string }[];
+      totalPenaltyOverride?: number;
+      note: string;
+    },
+  ) => Promise<boolean>;
+  onReject: (sessionId: string, reason: string) => Promise<boolean>;
+  actioningId: string | null;
+  onRefresh: () => void;
+  onViewInspection?: (bookingId: string, sessionId?: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedForApprove, setSelectedForApprove] = useState<PendingApprovalEntry | null>(null);
+  const [selectedForReject, setSelectedForReject] = useState<PendingApprovalEntry | null>(null);
+  const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
+
+  // State form duyệt
+  const [findingAdjustments, setFindingAdjustments] = useState<Record<string, number>>({});
+  const [totalOverrideStr, setTotalOverrideStr] = useState("");
+  const [approveNote, setApproveNote] = useState("");
+  const [submittingApprove, setSubmittingApprove] = useState(false);
+
+  // State form từ chối
+  const [rejectReason, setRejectReason] = useState("");
+  const [submittingReject, setSubmittingReject] = useState(false);
+
+  // Khởi tạo form khi chọn biên bản để duyệt
+  function openApproveModal(item: PendingApprovalEntry) {
+    setSelectedForApprove(item);
+    const initialAdjustments: Record<string, number> = {};
+    (item.findings || []).forEach((f) => {
+      initialAdjustments[f.id] = Number(f.penaltyAmount) || 0;
+    });
+    setFindingAdjustments(initialAdjustments);
+    setTotalOverrideStr("");
+    setApproveNote(`Đã kiểm tra bằng chứng hình ảnh & xác nhận mức bồi thường hư hại cho đơn.`);
+  }
+
+  function openRejectModal(item: PendingApprovalEntry) {
+    setSelectedForReject(item);
+    setRejectReason("");
+  }
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return pendingApprovals;
+    return pendingApprovals.filter((item) => {
+      const garmentName = item.asset?.garment?.name || "";
+      const assetCode = item.asset?.assetCode || "";
+      const customerName = item.customerName || "";
+      const inspectorName = item.inspector?.fullName || "";
+      const bookingCode = item.bookingId || "";
+      return (
+        garmentName.toLowerCase().includes(q) ||
+        assetCode.toLowerCase().includes(q) ||
+        customerName.toLowerCase().includes(q) ||
+        inspectorName.toLowerCase().includes(q) ||
+        bookingCode.toLowerCase().includes(q)
+      );
+    });
+  }, [pendingApprovals, search]);
+
+  // Thống kê nhanh
+  const totalPendingCount = pendingApprovals.length;
+  const totalProposedPenalty = pendingApprovals.reduce((s, it) => s + (Number(it.totalPenalty) || 0), 0);
+  const totalDepositInRisk = pendingApprovals.reduce((s, it) => s + (Number(it.depositAmount) || 0), 0);
+
+  // Tính tổng tiền phạt trong modal duyệt
+  const calculatedApproveTotal = useMemo(() => {
+    if (totalOverrideStr.trim() !== "") {
+      const parsed = parseFloat(totalOverrideStr);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return Object.values(findingAdjustments).reduce((sum, val) => sum + (Number(val) || 0), 0);
+  }, [findingAdjustments, totalOverrideStr]);
+
+  const severityMeta: Record<string, { label: string; badge: string }> = {
+    low: { label: "Nhẹ", badge: "bg-blue-100 text-blue-800 border-blue-200" },
+    minor: { label: "Nhẹ", badge: "bg-blue-100 text-blue-800 border-blue-200" },
+    medium: { label: "Trung bình", badge: "bg-amber-100 text-amber-800 border-amber-300" },
+    moderate: { label: "Trung bình", badge: "bg-amber-100 text-amber-800 border-amber-300" },
+    high: { label: "Nặng", badge: "bg-orange-100 text-orange-800 border-orange-300" },
+    severe: { label: "Nghiêm trọng", badge: "bg-red-100 text-red-800 border-red-300 font-semibold" },
+    critical: { label: "Nghiêm trọng", badge: "bg-rose-200 text-rose-900 border-rose-400 font-semibold" },
+  };
+
+  const assetStatusLabels: Record<string, string> = {
+    laundry: "Chuyển Giặt Sấy",
+    maintenance: "Chuyển Bảo Trì / Sửa Chữa",
+    damaged: "Báo Hỏng Nặng",
+    retired: "Ngừng Kinh Doanh",
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Thẻ thống kê & Banner hướng dẫn */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-sand bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-stone-500">Chờ phê duyệt</span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+              <ShieldAlert className="h-5 w-5" />
+            </span>
+          </div>
+          <p className="mt-3 text-3xl font-bold text-stone-900">{totalPendingCount}</p>
+          <p className="mt-1 text-xs text-amber-700">Biên bản phạt &gt; 30% tiền cọc hoặc vượt cọc</p>
+        </div>
+
+        <div className="rounded-2xl border border-sand bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-stone-500">Tổng phạt đề xuất</span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-700">
+              <AlertTriangle className="h-5 w-5" />
+            </span>
+          </div>
+          <p className="mt-3 text-3xl font-bold text-red-700">
+            {totalProposedPenalty.toLocaleString("vi-VN")}đ
+          </p>
+          <p className="mt-1 text-xs text-stone-500">Mức phạt hệ thống/nhân viên đề xuất</p>
+        </div>
+
+        <div className="rounded-2xl border border-sand bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-stone-500">Tổng tiền cọc liên quan</span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-100 text-stone-700">
+              <CheckCircle2 className="h-5 w-5" />
+            </span>
+          </div>
+          <p className="mt-3 text-3xl font-bold text-stone-800">
+            {totalDepositInRisk.toLocaleString("vi-VN")}đ
+          </p>
+          <p className="mt-1 text-xs text-stone-500">Tiền cọc của các món đồ liên quan</p>
+        </div>
+      </div>
+
+      {/* Thanh công cụ: Tìm kiếm & Làm mới */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm theo mã tài sản, tên đồ, khách hàng, nhân viên..."
+            className="w-full rounded-xl border border-sand bg-white py-2.5 pl-10 pr-4 text-sm text-stone-800 placeholder-stone-400 transition focus:border-lotus focus:outline-none focus:ring-1 focus:ring-lotus"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="inline-flex items-center gap-2 rounded-xl border border-sand bg-white px-4 py-2.5 text-sm font-semibold text-stone-700 transition hover:bg-stone-50"
+        >
+          <RotateCcw className="h-4 w-4" />
+          Làm mới danh sách
+        </button>
+      </div>
+
+      {/* Danh sách biên bản chờ duyệt */}
+      {loading ? (
+        <div className="py-20 text-center text-stone-400">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-lotus border-r-transparent align-[-0.125em]" />
+          <p className="mt-3 text-sm">Đang tải danh sách biên bản chờ duyệt...</p>
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <div className="rounded-2xl border border-sand bg-white py-16 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-jade/10 text-forest">
+            <CheckCircle2 className="h-7 w-7" />
+          </div>
+          <h3 className="mt-4 text-base font-semibold text-stone-900">Không có biên bản nào cần duyệt</h3>
+          <p className="mt-1 text-sm text-stone-500 max-w-md mx-auto">
+            Hiện tại không có biên bản kiểm tra nào có mức phạt vượt 30% tiền cọc. Mọi biên bản thông thường đã được nhân viên tự xử lý theo quy định.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredItems.map((item) => {
+            const isExcessDeposit = item.totalPenalty > item.depositAmount;
+            const excessAmount = Math.max(0, item.totalPenalty - item.depositAmount);
+            const ratioPercent = Math.round((item.penaltyRatio || 0) * 100);
+            const isActioning = actioningId === item.id;
+
+            return (
+              <div
+                key={item.id}
+                className="overflow-hidden rounded-2xl border border-amber-200/80 bg-white shadow-sm transition hover:shadow-md"
+              >
+                {/* Header của thẻ */}
+                <div className="border-b border-amber-100 bg-amber-50/50 px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-mono text-xs font-bold uppercase tracking-wider text-stone-700 bg-white border border-sand px-2.5 py-1 rounded-lg">
+                      Đơn #{item.bookingId.slice(0, 8)}
+                    </span>
+                    <span className="text-sm font-semibold text-stone-900">
+                      Khách hàng: {item.customerName || "Khách hàng"}
+                    </span>
+                    <span className="text-xs text-stone-500">
+                      • Nhân viên kiểm tra: <span className="font-medium text-stone-700">{item.inspector?.fullName || "Staff"}</span>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isExcessDeposit ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-100 px-3 py-1 text-xs font-bold text-red-800">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Phạt vượt cọc ({ratioPercent}%)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Phạt vượt 30% cọc ({ratioPercent}%)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Nội dung thông tin chính */}
+                <div className="p-6">
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                    {/* Cột 1: Thông tin trang phục & Hướng xử lý */}
+                    <div className="space-y-3 lg:col-span-1 border-b lg:border-b-0 lg:border-r border-sand/60 pb-5 lg:pb-0 lg:pr-6">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                          <Shirt className="h-6 w-6" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-stone-900">
+                            {item.asset?.garment?.name || "Trang phục"}
+                          </h4>
+                          <p className="text-xs font-mono text-stone-500 mt-0.5">
+                            Mã: <span className="font-bold text-stone-700">{item.asset?.assetCode}</span>
+                            {item.asset?.garment?.sizeLabel && (
+                              <span className="ml-2 font-sans font-medium text-stone-600">
+                                (Size {item.asset?.garment?.sizeLabel})
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl bg-stone-50 p-3 text-xs space-y-1.5 text-stone-600">
+                        <div>
+                          <span className="text-stone-400">Hướng điều phối sau kiểm tra:</span>{" "}
+                          <span className="font-semibold text-stone-800">
+                            {assetStatusLabels[item.finalAssetStatus] || item.finalAssetStatus}
+                          </span>
+                        </div>
+                        {item.note && (
+                          <div>
+                            <span className="text-stone-400">Ghi chú của nhân viên:</span>{" "}
+                            <span className="text-stone-700 italic">"{item.note}"</span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-stone-400">Thời gian tạo biên bản:</span>{" "}
+                          <span className="text-stone-700 font-mono">
+                            {new Date(item.createdAt).toLocaleString("vi-VN")}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Ảnh chụp biên bản */}
+                      {item.photos && item.photos.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-stone-600 mb-2">Ảnh chứng cứ kiểm tra:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {item.photos.map((ph) => (
+                              <button
+                                key={ph.id}
+                                type="button"
+                                onClick={() => setViewingPhotoUrl(ph.imageUrl)}
+                                className="group relative h-16 w-16 overflow-hidden rounded-lg border border-sand transition hover:border-lotus hover:opacity-90"
+                              >
+                                <img
+                                  src={ph.imageUrl}
+                                  alt="Chứng cứ hư hại"
+                                  className="h-full w-full object-cover"
+                                />
+                                <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition group-hover:opacity-100">
+                                  <Eye className="h-4 w-4 text-white" />
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Cột 2 & 3: Bảng lỗi hư hỏng & Tài chính */}
+                    <div className="lg:col-span-2 space-y-4">
+                      {/* Bảng so sánh tài chính */}
+                      {(() => {
+                        const itemGarmentValue = Number(item.garmentValue) || Number(item.asset?.purchaseCost) || 0;
+                        return (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl border border-sand bg-stone-50/80 p-3 text-center">
+                            <div>
+                              <p className="text-xs text-stone-500">Giá trị trang phục</p>
+                              <p className="text-base font-bold text-stone-900 mt-0.5">
+                                {itemGarmentValue > 0 ? `${itemGarmentValue.toLocaleString("vi-VN")}đ` : "—"}
+                              </p>
+                            </div>
+                            <div className="border-l border-sand">
+                              <p className="text-xs text-stone-500">Tiền cọc giữ</p>
+                              <p className="text-base font-bold text-stone-800 mt-0.5">
+                                {item.depositAmount.toLocaleString("vi-VN")}đ
+                              </p>
+                            </div>
+                            <div className="border-l border-sand">
+                              <p className="text-xs text-stone-500">Phạt đề xuất</p>
+                              <p className="text-base font-bold text-red-600 mt-0.5">
+                                {item.totalPenalty.toLocaleString("vi-VN")}đ
+                              </p>
+                              {itemGarmentValue > 0 && (
+                                <p className="text-[10px] text-stone-500 font-medium mt-0.5">
+                                  ~{Math.min(100, Math.round(item.totalPenalty / itemGarmentValue * 100))}% giá trị áo
+                                </p>
+                              )}
+                            </div>
+                            <div className="border-l border-sand">
+                              <p className="text-xs text-stone-500">
+                                {isExcessDeposit ? "Khách cần bù thêm" : "Cọc hoàn lại dự kiến"}
+                              </p>
+                              <p
+                                className={
+                                  "text-base font-bold mt-0.5 " +
+                                  (isExcessDeposit ? "text-red-700" : "text-forest")
+                                }
+                              >
+                                {isExcessDeposit
+                                  ? `+${excessAmount.toLocaleString("vi-VN")}đ`
+                                  : `${(item.depositAmount - item.totalPenalty).toLocaleString("vi-VN")}đ`}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Chi tiết từng lỗi phát hiện (Findings) */}
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">
+                          Chi tiết các lỗi hư hỏng ghi nhận ({item.findings?.length || 0})
+                        </p>
+                        <div className="space-y-2">
+                          {(item.findings || []).map((f) => {
+                            const sevKey = (f.severity || "low").toLowerCase();
+                            const sev = severityMeta[sevKey] || severityMeta.low;
+                            return (
+                              <div
+                                key={f.id}
+                                className="flex items-center justify-between gap-3 rounded-xl border border-sand/80 bg-white p-3 text-sm"
+                              >
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-stone-800">{f.findingType}</span>
+                                    <span
+                                      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${sev.badge}`}
+                                    >
+                                      {sev.label}
+                                    </span>
+                                  </div>
+                                  {f.description && (() => {
+                                    const parts = f.description.split("\n\n");
+                                    const managerAudit = parts.find((p) => p.startsWith("[Quản lý"));
+                                    const mainDesc = parts.filter((p) => !p.startsWith("[Quản lý")).join("\n\n");
+                                    return (
+                                      <div className="space-y-1 text-xs text-stone-500">
+                                        <p className="line-clamp-2">{mainDesc || f.description}</p>
+                                        {managerAudit && (
+                                          <p className="text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px] inline-block">
+                                            🛡️ {managerAudit.replace(/^\[|\]$/g, "")}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="text-sm font-bold text-red-600">
+                                    {Number(f.penaltyAmount).toLocaleString("vi-VN")}đ
+                                  </span>
+                                  {Number(f.penaltyAmount) > 0 && (Number(item.garmentValue) || Number(item.asset?.purchaseCost) || 0) > 0 && (
+                                    <p className="text-[10px] text-stone-500 font-normal mt-0.5">
+                                      ~{Math.round(Number(f.penaltyAmount) / (Number(item.garmentValue) || Number(item.asset?.purchaseCost) || 1) * 100)}% giá trị áo
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Nút hành động */}
+                      <div className="flex flex-wrap items-center justify-end gap-3 pt-3 border-t border-sand/60">
+                        {onViewInspection && (
+                          <button
+                            type="button"
+                            onClick={() => onViewInspection(item.bookingId, item.id)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-sand px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-50"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Xem toàn bộ biên bản
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isActioning}
+                          onClick={() => openRejectModal(item)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50/60 px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                        >
+                          <X className="h-4 w-4" />
+                          Từ chối phạt (Huỷ 0đ)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isActioning}
+                          onClick={() => openApproveModal(item)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-forest px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-800 disabled:opacity-50"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Xem &amp; Phê duyệt mức phạt
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Modal Phê Duyệt Phạt (Cho phép điều chỉnh từng lỗi) ── */}
+      {selectedForApprove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm transition-opacity"
+            onClick={() => !submittingApprove && setSelectedForApprove(null)}
+          />
+          <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-sand bg-white p-6 shadow-2xl space-y-5">
+            <div className="flex items-start justify-between border-b border-sand pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-stone-900">
+                  Phê Duyệt Biên Bản Phạt Hư Hại
+                </h3>
+                <p className="text-xs text-stone-500 mt-1">
+                  Đơn #{selectedForApprove.bookingId.slice(0, 8)} •{" "}
+                  {selectedForApprove.asset?.garment?.name} ({selectedForApprove.asset?.assetCode})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedForApprove(null)}
+                className="text-stone-400 hover:text-stone-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-xs text-amber-900 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                Lưu ý dành cho Quản Lý:
+              </p>
+              <p>
+                Bạn có thể giữ nguyên hoặc điều chỉnh mức phạt của từng lỗi bên dưới cho công bằng và hợp lý với khách hàng trước khi ký duyệt.
+              </p>
+            </div>
+
+            {/* Điều chỉnh từng finding */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-stone-600">
+                Điều chỉnh số tiền phạt cho từng lỗi phát hiện:
+              </p>
+              {(selectedForApprove.findings || []).map((f) => (
+                <div
+                  key={f.id}
+                  className="rounded-xl border border-sand bg-stone-50/50 p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-semibold text-stone-800">{f.findingType}</span>
+                      <span className="ml-2 text-xs text-stone-500">
+                        (Đề xuất: {Number(f.penaltyAmount).toLocaleString("vi-VN")}đ
+                        {(Number(selectedForApprove.garmentValue) || Number(selectedForApprove.asset?.purchaseCost) || 0) > 0 && (
+                          <> ~ {Math.round(Number(f.penaltyAmount) / (Number(selectedForApprove.garmentValue) || Number(selectedForApprove.asset?.purchaseCost) || 1) * 100)}% giá trị áo</>
+                        )})
+                      </span>
+                      {findingAdjustments[f.id] !== undefined && findingAdjustments[f.id] < Number(f.penaltyAmount) && (
+                        <span className="ml-2 rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 border border-emerald-200">
+                          Giảm -{(Number(f.penaltyAmount) - findingAdjustments[f.id]).toLocaleString("vi-VN")}đ
+                        </span>
+                      )}
+                      {findingAdjustments[f.id] !== undefined && findingAdjustments[f.id] > Number(f.penaltyAmount) && (
+                        <span className="ml-2 rounded bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800 border border-rose-200">
+                          Tăng +{(findingAdjustments[f.id] - Number(f.penaltyAmount)).toLocaleString("vi-VN")}đ
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs font-medium text-stone-600 shrink-0">
+                      Mức phạt duyệt (VNĐ):
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={10000}
+                      disabled={totalOverrideStr.trim() !== ""}
+                      value={findingAdjustments[f.id] ?? 0}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        setFindingAdjustments((prev) => ({ ...prev, [f.id]: val }));
+                      }}
+                      className="w-48 rounded-lg border border-sand bg-white px-3 py-1.5 text-sm font-bold text-red-600 focus:border-lotus focus:outline-none"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Hoặc ghi đè tổng tiền trực tiếp */}
+            <div className="rounded-xl border border-sand/80 bg-stone-50/60 p-3 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-stone-700">
+                  Hoặc ghi đè trực tiếp Tổng Tiền Phạt Toàn Biên Bản:
+                </span>
+                <span className="text-stone-400">(Để trống nếu tính theo từng lỗi trên)</span>
+              </div>
+              <input
+                type="number"
+                min={0}
+                step={50000}
+                placeholder="Ví dụ: 300000"
+                value={totalOverrideStr}
+                onChange={(e) => setTotalOverrideStr(e.target.value)}
+                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm font-bold text-stone-800 focus:border-lotus focus:outline-none"
+              />
+            </div>
+
+            {/* Tổng tiền phạt duyệt & So sánh cọc & Giá trị trang phục */}
+            {(() => {
+              const approveGarmentValue = Number(selectedForApprove.garmentValue) || Number(selectedForApprove.asset?.purchaseCost) || 0;
+              return (
+                <div className="rounded-xl border border-sand bg-stone-100 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-xs text-stone-500">Giá trị trang phục</p>
+                    <p className="text-sm font-bold text-stone-900 mt-0.5">
+                      {approveGarmentValue > 0 ? `${approveGarmentValue.toLocaleString("vi-VN")}đ` : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-stone-500">Tiền cọc của món đồ</p>
+                    <p className="text-sm font-semibold text-stone-800 mt-0.5">
+                      {selectedForApprove.depositAmount.toLocaleString("vi-VN")}đ
+                    </p>
+                  </div>
+                  <div className="sm:text-right">
+                    <p className="text-xs text-stone-500">Tổng tiền phạt sẽ áp dụng</p>
+                    <p className="text-xl font-bold text-red-600 mt-0.5">
+                      {calculatedApproveTotal.toLocaleString("vi-VN")}đ
+                    </p>
+                    {approveGarmentValue > 0 && (
+                      <p className="text-[11px] text-stone-600 font-medium">
+                        Chiếm ~{Math.min(100, Math.round(calculatedApproveTotal / approveGarmentValue * 100))}% giá trị áo
+                      </p>
+                    )}
+                    {calculatedApproveTotal > selectedForApprove.depositAmount && (
+                      <p className="text-xs font-semibold text-red-700 mt-0.5">
+                        Khách cần bù thêm: {(calculatedApproveTotal - selectedForApprove.depositAmount).toLocaleString("vi-VN")}đ
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Ghi chú phê duyệt */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-stone-700">
+                Ghi chú / Căn cứ phê duyệt của Quản Lý <span className="text-red-500">*</span>:
+              </label>
+              <textarea
+                rows={3}
+                value={approveNote}
+                onChange={(e) => setApproveNote(e.target.value)}
+                placeholder="Nhập căn cứ xử lý (sẽ được lưu vào hồ sơ đối soát tài chính & biên bản khách hàng)..."
+                className="w-full rounded-xl border border-sand p-3 text-sm text-stone-800 focus:border-lotus focus:outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-sand">
+              <button
+                type="button"
+                disabled={submittingApprove}
+                onClick={() => setSelectedForApprove(null)}
+                className="rounded-xl border border-sand px-4 py-2 text-sm font-medium hover:bg-stone-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={submittingApprove || !approveNote.trim()}
+                onClick={async () => {
+                  setSubmittingApprove(true);
+                  const payload: {
+                    findings?: { id: string; penaltyAmount: number; description?: string }[];
+                    totalPenaltyOverride?: number;
+                    note: string;
+                  } = {
+                    note: approveNote.trim(),
+                  };
+
+                  if (totalOverrideStr.trim() !== "") {
+                    payload.totalPenaltyOverride = parseFloat(totalOverrideStr) || 0;
+                  } else {
+                    payload.findings = Object.entries(findingAdjustments).map(([id, penaltyAmount]) => ({
+                      id,
+                      penaltyAmount,
+                    }));
+                  }
+
+                  const ok = await onApprove(selectedForApprove.id, payload);
+                  setSubmittingApprove(false);
+                  if (ok) setSelectedForApprove(null);
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-forest px-6 py-2.5 text-sm font-semibold text-white shadow hover:bg-emerald-800 disabled:opacity-50"
+              >
+                {submittingApprove ? "Đang xử lý..." : "Xác nhận duyệt phạt"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Từ Chối Phạt (Huỷ phạt 0đ) ── */}
+      {selectedForReject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm transition-opacity"
+            onClick={() => !submittingReject && setSelectedForReject(null)}
+          />
+          <div className="relative w-full max-w-lg rounded-2xl border border-sand bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between border-b border-sand pb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 text-red-700">
+                  <X className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-stone-900">Từ Chối Phạt Hư Hại</h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Đơn #{selectedForReject.bookingId.slice(0, 8)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedForReject(null)}
+                className="text-stone-400 hover:text-stone-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-stone-600">
+              Bạn có chắc chắn muốn <span className="font-semibold text-stone-900">từ chối mức phạt</span> cho biên bản này?
+              Toàn bộ số tiền phạt dự kiến ({selectedForReject.totalPenalty.toLocaleString("vi-VN")}đ) sẽ được điều chỉnh về <span className="font-bold text-forest">0đ</span> và khách hàng được hoàn đủ tiền cọc.
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-stone-700">
+                Lý do từ chối phạt <span className="text-red-500">*</span>:
+              </label>
+              <textarea
+                rows={3}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Ví dụ: Vết bẩn nằm trong hao mòn tự nhiên được miễn phí giặt; Hoặc khách hàng thân thiết được miễn trừ bồi thường..."
+                className="w-full rounded-xl border border-sand p-3 text-sm text-stone-800 focus:border-lotus focus:outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-sand">
+              <button
+                type="button"
+                disabled={submittingReject}
+                onClick={() => setSelectedForReject(null)}
+                className="rounded-xl border border-sand px-4 py-2 text-sm font-medium hover:bg-stone-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={submittingReject || !rejectReason.trim()}
+                onClick={async () => {
+                  setSubmittingReject(true);
+                  const ok = await onReject(selectedForReject.id, rejectReason.trim());
+                  setSubmittingReject(false);
+                  if (ok) setSelectedForReject(null);
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-sm font-semibold text-white shadow hover:bg-red-700 disabled:opacity-50"
+              >
+                {submittingReject ? "Đang xử lý..." : "Xác nhận từ chối phạt"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Lightbox phóng to ảnh ── */}
+      {viewingPhotoUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setViewingPhotoUrl(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-3xl overflow-hidden rounded-2xl bg-black">
+            <button
+              type="button"
+              onClick={() => setViewingPhotoUrl(null)}
+              className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={viewingPhotoUrl}
+              alt="Ảnh phóng to"
+              className="max-h-[85vh] w-auto object-contain"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

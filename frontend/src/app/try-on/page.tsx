@@ -9,8 +9,10 @@ import { CameraCapture } from "@/components/try-on/camera-capture";
 import { ImageUpload } from "@/components/try-on/image-upload";
 import { SimilarGarments } from "@/components/try-on/similar-garments";
 import { TryonResultViewer } from "@/components/try-on/tryon-result-viewer";
+import { RealtimeTryOnModal } from "@/components/try-on/realtime-tryon-modal";
 import {
   Sparkles,
+  Zap,
   Smile,
   User,
   Upload,
@@ -163,6 +165,7 @@ function TryOnInner() {
   const [quota, setQuota] = useState<TryonQuota | null>(null);
   const [factIndex, setFactIndex] = useState(0);
   const [progressPercent, setProgressPercent] = useState(15);
+  const [isRealtimeModalOpen, setIsRealtimeModalOpen] = useState(false);
 
   async function loadQuota() {
     if (!readStoredAccessToken()) {
@@ -460,6 +463,36 @@ function TryOnInner() {
               </div>
             </div>
           )}
+        </section>
+
+        {/* Realtime Live Virtual Try-On Banner */}
+        <section className="relative overflow-hidden rounded-3xl border border-sand bg-gradient-to-br from-white via-parchment/60 to-amber-50/40 p-6 sm:p-8 shadow-sm">
+          <div className="absolute top-0 right-0 -mt-10 -mr-10 h-48 w-48 rounded-full bg-lotus/5 blur-3xl pointer-events-none" />
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-lotus/10 px-3 py-1 text-xs font-bold text-lotus ring-1 ring-lotus/20">
+                <Zap className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+                <span>MỚI • CÔNG NGHỆ DECART WEBRTC</span>
+              </div>
+              <h2 className="font-display text-2xl sm:text-3xl font-bold text-ink">
+                Gương Soi Thử Đồ Trực Tiếp Qua Webcam (Real-time Live)
+              </h2>
+              <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+                Không cần tải ảnh hay chờ đợi tạo ảnh tĩnh. Bật webcam để AI khoác ngay tà áo cổ phục lên cơ thể bạn theo thời gian thực (Gương soi Flash 15s), tặng ngay Voucher giảm 10% khi hoàn tất trải nghiệm!
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsRealtimeModalOpen(true)}
+                className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-lotus px-6 py-3.5 text-sm font-bold text-white shadow-lg shadow-lotus/25 hover:bg-lotus/90 transition transform active:scale-95"
+              >
+                <Camera className="h-4 w-4" />
+                <span>Bật Gương Soi Live</span>
+              </button>
+            </div>
+          </div>
         </section>
 
         <div className="grid gap-8 lg:grid-cols-[1fr_1.1fr]">
@@ -1053,6 +1086,14 @@ function TryOnInner() {
           </div>
         </div>
       )}
+
+      {/* Realtime Decart Try-On Modal */}
+      <RealtimeTryOnModal
+        isOpen={isRealtimeModalOpen}
+        onClose={() => setIsRealtimeModalOpen(false)}
+        initialGarment={groups[selectedGroupIdx] ?? null}
+        garments={groups}
+      />
 
       <CustomerFooter />
     </div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   getMyBookings,
   cancelBooking,
@@ -114,6 +115,20 @@ export default function CustomerDashboardPage() {
   const [inspectionSessions, setInspectionSessions] = useState<InspectionSessionResponse[]>([]);
   const [loadingInspections, setLoadingInspections] = useState(false);
   const [customerLightboxUrl, setCustomerLightboxUrl] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!inspectingBooking && !customerLightboxUrl) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [inspectingBooking, customerLightboxUrl]);
 
   // Review modal & confirm modal & toast
   const [reviewingItem, setReviewingItem] = useState<{ bookingId: string; garmentId: string; garmentName: string } | null>(null);
@@ -528,7 +543,7 @@ export default function CustomerDashboardPage() {
                 <Award className="h-3.5 w-3.5 text-lotus" />
                 <span>Thành viên Cổ Phục Rental</span>
               </span>
-              <span className="text-xs text-stone-400 font-sans">
+              <span className="text-xs text-stone-400 font-sans" suppressHydrationWarning>
                 • {new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
               </span>
             </div>
@@ -1376,13 +1391,21 @@ export default function CustomerDashboardPage() {
       />
 
       {/* Inspection & Deposit Breakdown Modal */}
-      {inspectingBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl border border-stone-200">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-sand pb-4">
+      {mounted && inspectingBooking && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 sm:p-4 md:p-6 backdrop-blur-sm animate-in fade-in duration-200"
+          data-lenis-prevent
+          onClick={() => setInspectingBooking(null)}
+        >
+          <div
+            className="relative flex flex-col max-h-[92vh] w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-stone-200 overflow-hidden"
+            data-lenis-prevent
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header (Cố định ở đỉnh) */}
+            <div className="flex shrink-0 items-start justify-between border-b border-sand bg-white p-5 sm:p-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
                   <ClipboardCheck className="h-6 w-6" />
                 </div>
                 <div>
@@ -1403,18 +1426,20 @@ export default function CustomerDashboardPage() {
               </button>
             </div>
 
-            {/* Financial summary calculations */}
-            {(() => {
-              const deposit = Number(inspectingBooking.depositTotal ?? 0);
-              const penalty = Number(inspectingBooking.penaltyTotal ?? 0);
-              const remaining = Math.max(0, deposit - penalty);
-              const excess = penalty > deposit ? penalty - deposit : 0;
+            {/* Scrollable Body Container */}
+            <div className="flex-1 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-6" data-lenis-prevent>
+              {/* Financial summary calculations */}
+              {(() => {
+                const deposit = Number(inspectingBooking.depositTotal ?? 0);
+                const penalty = Number(inspectingBooking.penaltyTotal ?? 0);
+                const remaining = Math.max(0, deposit - penalty);
+                const excess = penalty > deposit ? penalty - deposit : 0;
 
-              return (
-                <div className={`my-5 rounded-xl border p-4 ${excess > 0 ? "border-red-300 bg-red-50/50" : "border-sand bg-mist/60"}`}>
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
-                    Bảng chiết tính cọc & hoàn trả
-                  </h4>
+                return (
+                  <div className={`rounded-xl border p-4 ${excess > 0 ? "border-red-300 bg-red-50/50" : "border-sand bg-mist/60"}`}>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
+                      Bảng chiết tính cọc & hoàn trả
+                    </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
                       <span className="text-xs text-stone-500 block">Tiền cọc ban đầu</span>
@@ -1477,29 +1502,68 @@ export default function CustomerDashboardPage() {
                 </div>
               ) : (
                 inspectionSessions.map((session, sIdx) => {
+                  const garmentName = session.asset?.garment?.name || "Trang phục";
+                  const garmentValue = Number(session.asset?.purchaseCost) || Number(session.aiComparisonResult?.garmentValue) || 0;
+                  const isPendingApproval = session.status === "pending_manager_approval";
+
                   return (
                     <div
                       key={session.id || sIdx}
                       className="rounded-xl border border-stone-200 bg-white p-4 shadow-2xs"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
-                        <div>
-                          <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700 mr-2">
-                            Mã đồ: {session.asset?.assetCode || session.asset?.garment?.name || "Trang phục"}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-ink text-sm">
+                            {garmentName}
                           </span>
+                          {session.asset?.assetCode && (
+                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-mono font-medium text-stone-700">
+                              Mã: {session.asset.assetCode}
+                            </span>
+                          )}
+                          {session.asset?.garment?.sizeLabel && (
+                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">
+                              Size {session.asset.garment.sizeLabel}
+                            </span>
+                          )}
+                          {garmentValue > 0 && (
+                            <span className="inline-block rounded bg-sand/40 px-2.5 py-0.5 text-xs font-semibold text-stone-800">
+                              Giá trị niêm yết: {garmentValue.toLocaleString("vi-VN")}đ
+                            </span>
+                          )}
                           <span className="text-xs text-stone-400">
                             {new Date(session.createdAt).toLocaleString("vi-VN")}
                           </span>
                           {session.inspector && (
-                            <span className="ml-2 text-xs text-stone-500">
+                            <span className="text-xs text-stone-500">
                               • Chuyên viên: {session.inspector.fullName}
                             </span>
                           )}
                         </div>
-                        <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
-                          Trạng thái: {session.status === "completed" ? "Đã thẩm định xong" : session.status}
-                        </span>
+                        <div>
+                          {session.status === "completed" ? (
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-200">
+                              Đã hoàn tất thẩm định
+                            </span>
+                          ) : isPendingApproval ? (
+                            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 border border-amber-200">
+                              Đang chờ Quản lý đối soát
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
+                              Trạng thái: {session.status === "in_progress" ? "Đang kiểm tra" : session.status}
+                            </span>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Thông báo nhẹ nhàng khi đang chờ quản lý duyệt */}
+                      {isPendingApproval && (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                          <Clock className="h-4 w-4 shrink-0 text-amber-600" />
+                          <span>Biên bản đang được Quản lý thẩm định và đối soát để đảm bảo mức bồi hoàn chuẩn xác và hợp lý nhất cho quý khách.</span>
+                        </div>
+                      )}
 
                       {/* Integrity score */}
                       {session.aiComparisonResult?.conditionScore !== undefined && session.aiComparisonResult?.conditionScore !== null && (() => {
@@ -1507,7 +1571,14 @@ export default function CustomerDashboardPage() {
                         const loss = 100 - score;
                         return (
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-mist px-3 py-2 text-xs">
-                            <span className="font-semibold text-stone-600">Đánh giá chất lượng sau thuê:</span>
+                            <div className="space-y-0.5">
+                              <span className="font-semibold text-stone-700">Đánh giá chất lượng sau thuê:</span>
+                              {garmentValue > 0 && (
+                                <p className="text-[11px] text-stone-500">
+                                  Cơ sở định giá trang phục: <strong className="text-stone-800">{garmentValue.toLocaleString("vi-VN")}đ</strong>
+                                </p>
+                              )}
+                            </div>
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 font-medium shadow-2xs">
                               <span className="text-stone-700">Độ nguyên vẹn: <strong className="font-bold text-ink">{score}/100</strong></span>
                               {loss > 0 ? (
@@ -1549,30 +1620,74 @@ export default function CustomerDashboardPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-stone-100">
-                                {session.findings.map((f, fIdx) => (
-                                  <tr key={f.id || fIdx} className="hover:bg-stone-50/50">
-                                    <td className="px-3 py-2 font-medium text-ink capitalize">
-                                      {f.findingType || "Hao mòn"}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
-                                        f.severity === "high" || f.severity === "severe" || f.severity === "nang"
-                                          ? "bg-red-100 text-red-700"
-                                          : f.severity === "medium" || f.severity === "vua"
-                                          ? "bg-amber-100 text-amber-700"
-                                          : "bg-blue-50 text-blue-700"
-                                      }`}>
-                                        {f.severity || "Nhẹ"}
-                                      </span>
-                                    </td>
-                                    <td className="px-3 py-2 text-stone-600 max-w-xs">
-                                      {f.description || "Chi tiết kiểm tra định kỳ"}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-semibold text-amber-700">
-                                      {formatVND(f.penaltyAmount || 0)}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {session.findings.map((f, fIdx) => {
+                                  const hasManagerFinding = session.findings.some((item) => item.findingType?.startsWith("[Quản lý"));
+                                  const isStaffProposal = f.findingType?.startsWith("[Staff");
+                                  const isManagerApproval = f.findingType?.startsWith("[Quản lý phê duyệt]");
+                                  const isManagerReject = f.findingType?.startsWith("[Quản lý từ chối]");
+                                  const cleanType = (f.findingType || "Hao mòn")
+                                    .replace(/^\[(Staff thẩm định|Staff đề xuất|Quản lý phê duyệt|Quản lý từ chối phạt)\]\s*/i, "")
+                                    .trim();
+
+                                  return (
+                                    <tr key={f.id || fIdx} className={`hover:bg-stone-50/50 ${isStaffProposal && hasManagerFinding ? "opacity-75 bg-stone-50/40" : ""}`}>
+                                      <td className="px-3 py-2 font-medium text-ink">
+                                        <div>{cleanType}</div>
+                                        {isStaffProposal && (
+                                          <span className="inline-block rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
+                                            Nhân viên thẩm định (Đề xuất)
+                                          </span>
+                                        )}
+                                        {isManagerApproval && (
+                                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                                            Quản lý phê duyệt (Chính thức)
+                                          </span>
+                                        )}
+                                        {isManagerReject && (
+                                          <span className="inline-block rounded bg-stone-200 px-1.5 py-0.5 text-[10px] font-bold text-stone-600">
+                                            Quản lý từ chối phạt
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
+                                          f.severity === "high" || f.severity === "severe" || f.severity === "nang"
+                                            ? "bg-red-100 text-red-700"
+                                            : f.severity === "medium" || f.severity === "vua"
+                                            ? "bg-amber-100 text-amber-700"
+                                            : "bg-blue-50 text-blue-700"
+                                        }`}>
+                                          {f.severity || "Nhẹ"}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2 text-stone-600 max-w-xs">
+                                        <p className="whitespace-pre-line leading-relaxed">{f.description || "Chi tiết kiểm tra định kỳ"}</p>
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <div>
+                                          <span className={`font-semibold tabular-nums ${
+                                            isStaffProposal && hasManagerFinding
+                                              ? "line-through text-stone-400 text-xs"
+                                              : "text-amber-700"
+                                          }`}>
+                                            {formatVND(f.penaltyAmount || 0)}
+                                          </span>
+                                          {Number(f.penaltyAmount) > 0 && garmentValue > 0 && (!isStaffProposal || !hasManagerFinding) && (
+                                            <p className="text-[10px] text-stone-500 font-normal mt-0.5">
+                                              ~{Math.round(Number(f.penaltyAmount) / garmentValue * 100)}% giá trị áo
+                                            </p>
+                                          )}
+                                          {isStaffProposal && hasManagerFinding && (
+                                            <p className="text-[10px] text-stone-400">Mức đề xuất cũ</p>
+                                          )}
+                                          {isManagerApproval && (
+                                            <p className="text-[10px] text-emerald-700 font-semibold">Khấu trừ thực tế</p>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -1644,28 +1759,30 @@ export default function CustomerDashboardPage() {
                 })
               )}
             </div>
+            </div>
 
-            {/* Footer */}
-            <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-sand pt-4">
+            {/* Modal Footer (Cố định ở đáy) */}
+            <div className="flex shrink-0 flex-col sm:flex-row items-center justify-between gap-3 border-t border-sand bg-stone-50/80 px-5 sm:px-6 py-4">
               <p className="text-xs text-stone-500">
                 Mọi thắc mắc về tiền cọc, vui lòng liên hệ bộ phận hỗ trợ khách hàng.
               </p>
               <button
                 type="button"
                 onClick={() => setInspectingBooking(null)}
-                className="w-full sm:w-auto rounded-lg bg-stone-100 px-5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-200 transition"
+                className="w-full sm:w-auto rounded-lg bg-stone-200/80 px-5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-300 transition"
               >
                 Đóng biên bản
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Lightbox Modal */}
-      {customerLightboxUrl && (
+      {mounted && customerLightboxUrl && createPortal(
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200"
           onClick={() => setCustomerLightboxUrl(null)}
         >
           <div className="relative max-h-[90vh] max-w-4xl" onClick={(e) => e.stopPropagation()}>
@@ -1683,7 +1800,8 @@ export default function CustomerDashboardPage() {
               <X className="h-5 w-5" />
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
