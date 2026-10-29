@@ -251,7 +251,7 @@ export function HeritageTimelineShowcase() {
             </div>
 
             <div className="max-w-md border-l-2 border-lotus/40 pl-3.5 text-xs italic text-stone-600">
-              <p>"{activeEpoch.quote}"</p>
+              <p>&ldquo;{activeEpoch.quote}&rdquo;</p>
               <span className="mt-1 block font-semibold text-stone-800 not-italic">
                 — {activeEpoch.source}
               </span>

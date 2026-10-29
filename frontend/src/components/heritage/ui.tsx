@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { useAuth } from "@/components/auth/auth-provider";
 import { StaffChatNavBadge } from "@/components/chat/staff-chat-nav-badge";
@@ -39,12 +39,15 @@ import {
   Clock,
   Map,
   RotateCcw,
+  Menu,
   type LucideIcon,
 } from "lucide-react";
+import { ManagerSidebar } from "@/components/dashboard/manager-sidebar";
+import { StaffSidebar } from "@/components/dashboard/staff-sidebar";
 
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 export type StaffNavKey = "overview" | "pending" | "all" | "refunds" | "map" | "inspection" | "chat" | "reviews";
-type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "penalty-review" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
+export type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "penalty-review" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats";
 export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
 
 export function BookingFlowShell({
@@ -164,6 +167,31 @@ export function StaffPortalShell({
 }) {
   const router = useRouter();
   const { signOut, user } = useAuth();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("co_phuc_staff_sidebar_collapsed");
+      if (saved !== null) {
+        setIsCollapsed(saved === "true");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const toggleCollapse = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("co_phuc_staff_sidebar_collapsed", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const effectiveName = staffName ?? user?.fullName ?? user?.email?.split("@")[0] ?? "Nhân viên vận hành";
   const effectiveEmail = staffEmail !== undefined ? staffEmail : (user?.email ?? null);
@@ -192,126 +220,70 @@ export function StaffPortalShell({
     }
   };
 
-  type NavGroup = {
-    groupTitle: string;
-    items: {
-      key: StaffNavKey;
-      label: string;
-      icon: LucideIcon;
-      href: string;
-    }[];
-  };
-
-  const navGroups: NavGroup[] = [
-    {
-      groupTitle: "Vận hành & Đơn hàng",
-      items: [
-        { key: "all", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff#all" },
-        { key: "pending", label: "Chờ xác nhận", icon: Clock, href: "/dashboard/staff#pending" },
-        { key: "map", label: "Bản đồ giao nhận", icon: Map, href: "/dashboard/staff#map" },
-      ],
-    },
-    {
-      groupTitle: "Kiểm tra & Hậu cần",
-      items: [
-        { key: "inspection", label: "Kiểm tra hiện vật", icon: ClipboardCheck, href: "/dashboard/staff/inspection" },
-        { key: "refunds", label: "Xử lý hoàn cọc", icon: RotateCcw, href: "/dashboard/staff#refunds" },
-      ],
-    },
-    {
-      groupTitle: "Dịch vụ & Khách hàng",
-      items: [
-        { key: "reviews", label: "Đánh giá", icon: Star, href: "/dashboard/staff/reviews" },
-        { key: "chat", label: "CSKH & Tin nhắn", icon: MessageSquare, href: "/chat" },
-      ],
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
-        <div className="mb-6 px-3 pt-3">
-          <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
-          <p className="mt-1 text-sm text-stone-500">Bảng vận hành nhân viên</p>
-        </div>
-        <div className="mb-6 flex items-center gap-3.5 rounded-xl border border-sand/70 bg-white p-3.5 shadow-xs">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-lotus/10 font-display text-lg text-lotus">
-            {initials}
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-ink">{effectiveName}</p>
-            <p className="truncate text-[11px] uppercase tracking-[0.14em] text-antique">{effectiveEmail ?? "Staff / Vận hành"}</p>
-          </div>
-        </div>
-        <Link
-          href="/dashboard/staff/inspection"
-          className="mb-5 inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood shadow-xs"
-        >
-          <ClipboardCheck className="h-4 w-4" />
-          Kiểm tra hiện vật
-        </Link>
-        <nav className="flex flex-1 flex-col gap-3.5">
-          {navGroups.map((group, gIdx) => (
-            <div key={group.groupTitle} className={gIdx > 0 ? "pt-2 border-t border-sand/60" : ""}>
-              <div className="px-3 pb-1 pt-0.5">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-bronze/80">
-                  {group.groupTitle}
-                </span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => {
-                  const isActive = item.key === active;
-                  const ItemIcon = item.icon;
-                  const isHashTab =
-                    (item.href.includes("#") || item.href === "/dashboard/staff") &&
-                    item.key !== "chat";
-                  const itemClass = isActive
-                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
-                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+      {/* Mobile Drawer Backdrop & Drawer Panel */}
+      {mobileDrawerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink/50 backdrop-blur-xs transition-opacity duration-300 lg:hidden"
+          onClick={() => setMobileDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-[270px] bg-parchment p-3.5 border-r border-sand shadow-2xl transition-transform duration-300 ease-in-out lg:hidden flex flex-col ${
+          mobileDrawerOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <StaffSidebar
+          active={active}
+          onTabChange={onTabChange}
+          isCollapsed={false}
+          onToggleCollapse={() => {}}
+          effectiveName={effectiveName}
+          effectiveEmail={effectiveEmail}
+          initials={initials}
+          onProfile={handleProfile}
+          onSignOut={handleSignOut}
+          isMobileDrawer={true}
+          onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
+        />
+      </aside>
 
-                  if (isHashTab && onTabChange) {
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => onTabChange(item.key)}
-                        className={itemClass}
-                      >
-                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    );
-                  }
-
-                  return (
-                    <Link
-                      key={item.key}
-                      href={item.href}
-                      className={itemClass}
-                    >
-                      <ItemIcon className="h-4.5 w-4.5 shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                      {item.key === "chat" && <StaffChatNavBadge />}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="mt-6 border-t border-sand pt-4">
-          <Link href="/chat" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
-            <Headphones className="h-5 w-5 shrink-0" />
-            <span>Hỗ trợ vận hành</span>
-          </Link>
-        </div>
+      {/* Desktop Sticky Collapsible Sidebar */}
+      <aside
+        className={`hidden lg:flex flex-col sticky top-0 h-screen border-r border-sand bg-parchment p-3 transition-[width] duration-300 ease-in-out motion-reduce:transition-none shrink-0 z-20 ${
+          isCollapsed ? "w-[72px]" : "w-[250px]"
+        }`}
+      >
+        <StaffSidebar
+          active={active}
+          onTabChange={onTabChange}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={toggleCollapse}
+          effectiveName={effectiveName}
+          effectiveEmail={effectiveEmail}
+          initials={initials}
+          onProfile={handleProfile}
+          onSignOut={handleSignOut}
+        />
       </aside>
 
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-sand bg-mist/95 px-4 backdrop-blur md:px-6 lg:px-8">
-          <div>
-            <h2 className="font-display text-3xl text-lotus">Cổ Phục Rental</h2>
-            <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{subtitle}</p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-stone-600 hover:bg-sand/40 hover:text-lotus lg:hidden transition-colors"
+              aria-label="Mở menu điều hướng"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div>
+              <h2 className="font-display text-2xl sm:text-3xl text-lotus leading-tight">Cổ Phục Rental</h2>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-stone-500 truncate max-w-[200px] sm:max-w-none">{subtitle}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2 md:gap-3">
             <div className="hidden rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 xl:block">
@@ -377,6 +349,31 @@ export function ManagerPortalShell({
 }) {
   const router = useRouter();
   const { signOut, user } = useAuth();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("co_phuc_manager_sidebar_collapsed");
+      if (saved !== null) {
+        setIsCollapsed(saved === "true");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const toggleCollapse = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("co_phuc_manager_sidebar_collapsed", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const effectiveName = managerName ?? user?.fullName ?? user?.email?.split("@")[0] ?? "Quản lý cửa hàng";
   const effectiveEmail = managerEmail !== undefined ? managerEmail : (user?.email ?? null);
@@ -405,155 +402,70 @@ export function ManagerPortalShell({
     }
   };
 
-  type NavGroup = {
-    groupTitle: string;
-    items: {
-      key: ManagerNavKey;
-      label: string;
-      icon: LucideIcon;
-      href: string;
-    }[];
-  };
-
-  const navGroups: NavGroup[] = [
-    {
-      groupTitle: "Vận hành & Đơn hàng",
-      items: [
-        { key: "overview", label: "Tổng quan", icon: LayoutDashboard, href: "/dashboard/manager" },
-        { key: "assets", label: "Gán tài sản", icon: ArrowLeftRight, href: "/dashboard/manager#assets" },
-        { key: "rejected-handovers", label: "Từ chối bàn giao", icon: XCircle, href: "/dashboard/manager#rejected-handovers" },
-      ],
-    },
-    {
-      groupTitle: "Kho & Bảo quản",
-      items: [
-        { key: "inventory", label: "Kho trang phục", icon: Shirt, href: "/dashboard/manager#inventory" },
-        { key: "accessories", label: "Kho phụ kiện", icon: Sparkles, href: "/dashboard/manager/accessories" },
-        { key: "laundry", label: "Giặt sấy", icon: Waves, href: "/dashboard/manager#laundry" },
-        { key: "damaged", label: "Hư hỏng & Bảo trì", icon: AlertTriangle, href: "/dashboard/manager#damaged" },
-        { key: "inspection-log", label: "Nhật ký kiểm tra", icon: ClipboardCheck, href: "/dashboard/manager#inspection-log" },
-      ],
-    },
-    {
-      groupTitle: "Tài chính & Cọc",
-      items: [
-        { key: "finance", label: "Đối soát tài chính", icon: DollarSign, href: "/dashboard/manager#finance" },
-        { key: "refunds", label: "Duyệt hoàn cọc", icon: RefreshCw, href: "/dashboard/manager#refunds" },
-        { key: "penalty-review", label: "Duyệt phạt hư hại", icon: ShieldCheck, href: "/dashboard/manager#penalty-review" },
-      ],
-    },
-    {
-      groupTitle: "Kinh doanh & Bảng giá",
-      items: [
-        { key: "pricing", label: "Bảng giá thuê", icon: Tag, href: "/dashboard/manager/pricing" },
-        { key: "vouchers", label: "Voucher & Khuyến mãi", icon: Ticket, href: "/dashboard/manager/vouchers" },
-        { key: "product-stats", label: "Hiệu quả sản phẩm", icon: TrendingUp, href: "/dashboard/manager/product-stats" },
-      ],
-    },
-    {
-      groupTitle: "Dịch vụ & Khách hàng",
-      items: [
-        { key: "reviews", label: "Đánh giá", icon: Star, href: "/dashboard/manager/reviews" },
-        { key: "chat", label: "CSKH", icon: MessageSquare, href: "/chat" },
-      ],
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-mist text-ink lg:flex" suppressHydrationWarning>
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex sticky top-0 h-screen overflow-y-auto">
-        <div className="mb-6 px-3 pt-3">
-          <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
-          <p className="mt-1 text-sm text-stone-500">Bảng quản lý vận hành</p>
-        </div>
-        <div className="mb-6 flex items-center gap-3.5 rounded-xl border border-sand/70 bg-white p-3.5 shadow-xs">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-lotus/10 font-display text-lg text-lotus">
-            {initials}
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-ink">{effectiveName}</p>
-            <p className="truncate text-[11px] uppercase tracking-[0.14em] text-antique">{effectiveEmail ?? "Manager / Owner"}</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            if (onTabChange) {
-              onTabChange("inventory");
-            } else {
-              // Trang con không có onTabChange: SPA về trang chính, tab kho trang phục
-              router.push("/dashboard/manager#inventory");
-            }
-          }}
-          className="mb-5 inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood shadow-xs"
-        >
-          <Plus className="h-4 w-4" />
-          Thêm trang phục
-        </button>
-        <nav className="flex flex-1 flex-col gap-3.5">
-          {navGroups.map((group, gIdx) => (
-            <div key={group.groupTitle} className={gIdx > 0 ? "pt-2 border-t border-sand/60" : ""}>
-              <div className="px-3 pb-1 pt-0.5">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-bronze/80">
-                  {group.groupTitle}
-                </span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => {
-                  const isActive = item.key === active;
-                  const ItemIcon = item.icon;
-                  const isHashTab =
-                    (item.href.includes('#') || item.href === '/dashboard/manager') &&
-                    item.key !== "chat";
-                  const itemClass = isActive
-                    ? "flex w-full items-center gap-3 rounded-lg bg-lotus/10 px-3 py-2 text-left text-sm font-semibold text-lotus"
-                    : "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-stone-600 transition hover:bg-white hover:text-lotus";
+      {/* Mobile Drawer Backdrop & Drawer Panel */}
+      {mobileDrawerOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-ink/50 backdrop-blur-xs transition-opacity duration-300 lg:hidden"
+          onClick={() => setMobileDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-[270px] bg-parchment p-3.5 border-r border-sand shadow-2xl transition-transform duration-300 ease-in-out lg:hidden flex flex-col ${
+          mobileDrawerOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <ManagerSidebar
+          active={active}
+          onTabChange={onTabChange}
+          isCollapsed={false}
+          onToggleCollapse={() => {}}
+          effectiveName={effectiveName}
+          effectiveEmail={effectiveEmail}
+          initials={initials}
+          onProfile={handleProfile}
+          onSignOut={handleSignOut}
+          isMobileDrawer={true}
+          onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
+        />
+      </aside>
 
-                  if (isHashTab && onTabChange) {
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => onTabChange(item.key)}
-                        className={itemClass}
-                      >
-                        <ItemIcon className="h-4.5 w-4.5 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                        {item.key === "reviews" && <ManagerReviewsNavBadge />}
-                      </button>
-                    );
-                  }
-
-                  return (
-                    <Link
-                      key={item.key}
-                      href={item.href}
-                      className={itemClass}
-                    >
-                      <ItemIcon className="h-4.5 w-4.5 shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                      {item.key === "reviews" && <ManagerReviewsNavBadge />}
-                      {item.key === "chat" && <StaffChatNavBadge />}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="mt-6 border-t border-sand pt-4">
-          <Link href="/chat" className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm text-stone-600 transition hover:bg-white hover:text-lotus">
-            <Headphones className="h-5 w-5 shrink-0" />
-            <span>Hỗ trợ vận hành</span>
-          </Link>
-        </div>
+      {/* Desktop Sticky Collapsible Sidebar */}
+      <aside
+        className={`hidden lg:flex flex-col sticky top-0 h-screen border-r border-sand bg-parchment p-3 transition-[width] duration-300 ease-in-out motion-reduce:transition-none shrink-0 z-20 ${
+          isCollapsed ? "w-[72px]" : "w-[250px]"
+        }`}
+      >
+        <ManagerSidebar
+          active={active}
+          onTabChange={onTabChange}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={toggleCollapse}
+          effectiveName={effectiveName}
+          effectiveEmail={effectiveEmail}
+          initials={initials}
+          onProfile={handleProfile}
+          onSignOut={handleSignOut}
+        />
       </aside>
 
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-sand bg-mist/95 px-4 backdrop-blur md:px-6 lg:px-8">
-          <div>
-            <h2 className="font-display text-3xl text-lotus">Cổ Phục Rental</h2>
-            <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{subtitle}</p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-stone-600 hover:bg-sand/40 hover:text-lotus lg:hidden transition-colors"
+              aria-label="Mở menu điều hướng"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div>
+              <h2 className="font-display text-2xl sm:text-3xl text-lotus leading-tight">Cổ Phục Rental</h2>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-stone-500 truncate max-w-[200px] sm:max-w-none">{subtitle}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2 md:gap-3">
             <div className="hidden rounded-lg border border-sand bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500 xl:block">

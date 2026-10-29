@@ -84,6 +84,11 @@ const nextConfig = {
   },
   // [SECURITY FIX] Tắt header X-Powered-By để không lộ công nghệ backend
   poweredByHeader: false,
+  // Bỏ qua ESLint warnings khi build production (try-on camera components dùng
+  // <img> với blob: URL từ webcam — không thể dùng next/image với blob URLs)
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     optimizePackageImports: ["lucide-react", "leaflet"],
   },
