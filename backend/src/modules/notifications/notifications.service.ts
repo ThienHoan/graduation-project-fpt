@@ -523,27 +523,47 @@ export class NotificationsService {
       return { status: "skipped", provider: "mock", reason: "provider-mock" };
     }
 
-    const username = settings.smtp.user ?? this.configService.get<string>("SMTP_EMAIL") ?? "";
-    const password = settings.smtp.password ?? this.configService.get<string>("SMTP_PASSWORD") ?? "";
+    const rawUsername = settings.smtp.user ?? this.configService.get<string>("SMTP_EMAIL") ?? "";
+    const rawPassword = settings.smtp.password ?? this.configService.get<string>("SMTP_PASSWORD") ?? "";
+    const username = rawUsername.trim();
+    const password = rawPassword.trim().replace(/\s+/g, "");
+
     if (!username || !password) {
       return { status: "skipped", provider: "smtp", reason: "smtp-not-configured" };
     }
 
-    // Timeout ngắn để không treo ~2 phút (mặc định nodemailer) khi không kết nối được SMTP.
-    const timeouts = { connectionTimeout: 8000, greetingTimeout: 8000, socketTimeout: 15000 };
+    const isGmail =
+      settings.smtp.service === "gmail" ||
+      (!settings.smtp.service &&
+        (!settings.smtp.host ||
+          settings.smtp.host.toLowerCase().includes("gmail.com") ||
+          username.toLowerCase().endsWith("@gmail.com")));
+
     const transporter = nodemailer.createTransport(
       settings.smtp.service
         ? {
             service: settings.smtp.service,
             auth: { user: username, pass: password },
-            ...timeouts,
+            connectionTimeout: 30000,
+            greetingTimeout: 30000,
+            socketTimeout: 30000,
+          }
+        : isGmail
+        ? {
+            service: "gmail",
+            auth: { user: username, pass: password },
+            connectionTimeout: 30000,
+            greetingTimeout: 30000,
+            socketTimeout: 30000,
           }
         : {
             host: settings.smtp.host ?? "smtp.gmail.com",
-            port: settings.smtp.port ?? 587,
-            secure: settings.smtp.secure,
+            port: settings.smtp.port ?? (settings.smtp.secure ? 465 : 587),
+            secure: settings.smtp.secure ?? false,
             auth: { user: username, pass: password },
-            ...timeouts,
+            connectionTimeout: 30000,
+            greetingTimeout: 30000,
+            socketTimeout: 30000,
           },
     );
 
@@ -574,18 +594,41 @@ export class NotificationsService {
 
   private async loadSettings(): Promise<NotificationSettings> {
     const stored = await this.loadSetting<Partial<NotificationSettings>>(SETTINGS_KEY);
+    const envUser = this.configService.get<string>("SMTP_EMAIL")?.trim() || null;
+    const envPassword = this.configService.get<string>("SMTP_PASSWORD")?.trim() || null;
+    const envService = this.configService.get<string>("SMTP_SERVICE")?.trim() || null;
+    const envHost = this.configService.get<string>("SMTP_HOST")?.trim() || null;
+    const envPortRaw = this.configService.get<string>("SMTP_PORT")?.trim();
+    const envPort = envPortRaw ? parseInt(envPortRaw, 10) : null;
+    const envSecureRaw = this.configService.get<string>("SMTP_SECURE")?.trim();
+    const envSecure = envSecureRaw ? envSecureRaw === "true" || envSecureRaw === "1" : null;
+    const envFromName = this.configService.get<string>("SMTP_FROM_NAME")?.trim() || null;
+    const envFromEmail = this.configService.get<string>("SMTP_FROM_EMAIL")?.trim() || null;
+    const envReplyTo = this.configService.get<string>("SMTP_REPLY_TO")?.trim() || null;
+
+    const user = stored?.smtp?.user || envUser;
+    const isGmail =
+      stored?.smtp?.service === "gmail" ||
+      (!stored?.smtp?.service &&
+        (user?.toLowerCase().endsWith("@gmail.com") ||
+          (stored?.smtp?.host ?? envHost)?.toLowerCase().includes("gmail.com")));
+
+    const service = stored?.smtp?.service ?? (envService || (isGmail ? "gmail" : null));
+    const port = stored?.smtp?.port ?? (service ? null : (envPort ?? (isGmail ? 465 : 587)));
+    const secure = Boolean(stored?.smtp?.secure ?? (service ? true : (envSecure ?? (port === 465 || isGmail))));
+
     return {
-      provider: stored?.provider ?? (this.hasSmtpEnv() ? "smtp" : "mock"),
+      provider: stored?.provider ?? (this.hasSmtpEnv() || Boolean(stored?.smtp?.user && stored?.smtp?.password) ? "smtp" : "mock"),
       smtp: {
-        service: stored?.smtp?.service ?? null,
-        host: stored?.smtp?.host ?? null,
-        port: stored?.smtp?.port ?? null,
-        secure: stored?.smtp?.secure ?? false,
-        user: stored?.smtp?.user ?? this.configService.get<string>("SMTP_EMAIL") ?? null,
-        password: stored?.smtp?.password ?? this.configService.get<string>("SMTP_PASSWORD") ?? null,
-        fromEmail: stored?.smtp?.fromEmail ?? this.configService.get<string>("SMTP_EMAIL") ?? null,
-        fromName: stored?.smtp?.fromName ?? "Cổ Phục ERP",
-        replyTo: stored?.smtp?.replyTo ?? null,
+        service,
+        host: stored?.smtp?.host ?? (service ? null : (envHost ?? (isGmail ? null : "smtp.gmail.com"))),
+        port,
+        secure,
+        user,
+        password: stored?.smtp?.password || envPassword,
+        fromEmail: stored?.smtp?.fromEmail || envFromEmail || user,
+        fromName: stored?.smtp?.fromName || envFromName || "Cổ Phục ERP",
+        replyTo: stored?.smtp?.replyTo || envReplyTo,
       },
     };
   }

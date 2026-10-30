@@ -500,7 +500,7 @@ export async function getMyBookings() {
 }
 
 export async function getBooking(id: string) {
-  return apiRequest<BookingResponse>(`/bookings/${id}`);
+  return apiRequest<BookingResponse>(`/bookings/${id}?_t=${Date.now()}`, { cache: "no-store" });
 }
 
 export async function cancelBooking(id: string) {
@@ -2823,5 +2823,46 @@ export type TryonQuota = {
 
 export async function getTryonQuota() {
   return apiRequest<TryonQuota>("/ai/tryon/quota");
+}
+
+// ---------- Wishlist API functions ----------
+
+export type WishlistGarmentItem = {
+  garmentId: string;
+  name: string;
+  categoryName: string | null;
+  imageUrl: string | null;
+  dailyPrice: number;
+  depositAmount: number;
+  sizes: Array<{
+    sizeId: string;
+    sizeLabel: string | null;
+    dailyPrice: number;
+    depositAmount: number;
+  }>;
+  addedAt: string;
+};
+
+export async function getWishlist() {
+  return apiRequest<WishlistGarmentItem[]>("/wishlist", { cache: "no-store" });
+}
+
+export async function addToWishlist(garmentId: string) {
+  return apiRequest<{ garmentId: string; isWishlisted: boolean }>(`/wishlist/${garmentId}`, {
+    method: "POST",
+  });
+}
+
+export async function removeFromWishlist(garmentId: string) {
+  return apiRequest<{ garmentId: string; isWishlisted: boolean }>(`/wishlist/${garmentId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function syncWishlist(garmentIds: string[]) {
+  return apiRequest<WishlistGarmentItem[]>("/wishlist/sync", {
+    method: "POST",
+    body: JSON.stringify({ garmentIds }),
+  });
 }
 

@@ -27,6 +27,8 @@ import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { RedisModule } from "./modules/redis/redis.module";
 
+import { WishlistModule } from "./modules/wishlist/wishlist.module";
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -64,6 +66,7 @@ import { RedisModule } from "./modules/redis/redis.module";
     ReviewsModule,
     VouchersModule,
     AnalyticsModule,
+    WishlistModule,
   ],
   providers: [
     // [SECURITY FIX] Đăng ký ThrottlerGuard toàn cục để bảo vệ tất cả routes

@@ -76,8 +76,8 @@ export function BookingStatusStepper({
 
   return (
     <div className={className}>
-      {/* Ngang cho màn rộng */}
-      <ol className="hidden items-start sm:flex">
+      {/* Ngang cho màn rộng & luôn hiển thị khi in */}
+      <ol className="hidden items-start sm:flex print:!flex [print-color-adjust:exact] [-webkit-print-color-adjust:exact]">
         {STEPS.map((step, index) => {
           const state = index < currentStepIndex ? "done" : index === currentStepIndex ? "current" : "todo";
           // Nhãn bàn giao đổi theo hình thức nhận.
@@ -88,18 +88,20 @@ export function BookingStatusStepper({
             <li key={step.key} className="relative flex flex-1 flex-col items-center text-center">
               {!isLast && (
                 <span
-                  className={`absolute left-1/2 top-5 h-0.5 w-full ${index < currentStepIndex ? "bg-lotus" : "bg-sand"}`}
+                  className={`absolute left-1/2 top-5 h-0.5 w-full [print-color-adjust:exact] [-webkit-print-color-adjust:exact] ${
+                    index < currentStepIndex ? "bg-lotus print:!bg-stone-800" : "bg-sand print:!bg-stone-300"
+                  }`}
                   aria-hidden
                 />
               )}
               <span
                 className={
-                  "relative z-10 flex h-10 w-10 items-center justify-center rounded-full border-2 transition " +
+                  "relative z-10 flex h-10 w-10 items-center justify-center rounded-full border-2 transition [print-color-adjust:exact] [-webkit-print-color-adjust:exact] " +
                   (state === "done"
-                    ? "border-lotus bg-lotus text-white"
+                    ? "border-lotus bg-lotus text-white print:!bg-stone-900 print:!border-stone-900 print:!text-white"
                     : state === "current"
-                      ? "border-lotus bg-white text-lotus ring-4 ring-lotus/15"
-                      : "border-sand bg-white text-stone-300")
+                      ? "border-lotus bg-white text-lotus ring-4 ring-lotus/15 print:!border-stone-900 print:!text-stone-900 print:!bg-stone-100 print:!ring-0"
+                      : "border-sand bg-white text-stone-300 print:!border-stone-300 print:!text-stone-400 print:!bg-white")
                 }
               >
                 {state === "done" ? (
@@ -110,8 +112,8 @@ export function BookingStatusStepper({
               </span>
               <span
                 className={
-                  "mt-2 px-1 text-xs font-medium " +
-                  (state === "todo" ? "text-stone-400" : state === "current" ? "text-lotus font-semibold" : "text-ink")
+                  "mt-2 px-1 text-xs font-medium [print-color-adjust:exact] [-webkit-print-color-adjust:exact] " +
+                  (state === "todo" ? "text-stone-400 print:!text-stone-400" : state === "current" ? "text-lotus font-semibold print:!text-stone-900 print:!font-bold" : "text-ink print:!text-stone-900")
                 }
               >
                 {label}
@@ -121,8 +123,8 @@ export function BookingStatusStepper({
         })}
       </ol>
 
-      {/* Dọc cho mobile */}
-      <ol className="space-y-0 sm:hidden">
+      {/* Dọc cho mobile (ẩn hoàn toàn khi in) */}
+      <ol className="space-y-0 sm:hidden print:!hidden">
         {STEPS.map((step, index) => {
           const state = index < currentStepIndex ? "done" : index === currentStepIndex ? "current" : "todo";
           const label = step.key === "handover" && pickupMethod === "delivery" ? "Đang giao" : step.label;
