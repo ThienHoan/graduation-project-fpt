@@ -95,6 +95,12 @@ const nextConfig = {
   async rewrites() {
     return [
       {
+        // Proxy WebSocket/HTTP cho Socket.IO (realtime + chat namespaces)
+        // Browser kết nối wss://cophuctruyenthong.tech/socket.io/* → Vercel forward sang VPS
+        source: "/socket.io/:path*",
+        destination: "http://104.248.147.219:4000/socket.io/:path*",
+      },
+      {
         source: "/backend-api/:path*",
         destination: "http://104.248.147.219:4000/api/:path*",
       },
