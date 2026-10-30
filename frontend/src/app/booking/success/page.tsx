@@ -11,6 +11,7 @@ import type { BookingResponse } from "@/lib/api";
 import { statusBadgeClass, statusOf } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverSummary } from "@/components/customer/handover-summary";
+import { HeritageMascot } from "@/components/mascot";
 import {
   CheckCircle2,
   Sparkles,
@@ -155,7 +156,7 @@ function BookingSuccessInner() {
 
       <main className="flex-1 px-4 py-8 sm:py-12 print:p-0 print:m-0">
         <div className="mx-auto max-w-7xl space-y-6 sm:space-y-8 print:max-w-none print:space-y-4">
-          
+
           {/* Breadcrumb Navigation - Ẩn khi in */}
           <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs text-stone-500 print:hidden">
             <Link href="/" className="hover:text-lotus transition">Trang chủ</Link>
@@ -257,10 +258,10 @@ function BookingSuccessInner() {
               2. MAIN CONTENT: 2-COLUMN LUXURY GRID LAYOUT (8 cols / 4 cols)
              ========================================================================= */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-start print:block print:space-y-6">
-            
+
             {/* ── CỘT TRÁI (8 CỘT): TIẾN TRÌNH & CHI TIẾT TRANG PHỤC ────────────────── */}
             <div className="lg:col-span-8 space-y-6 sm:space-y-8">
-              
+
               {/* CARD 1: TIẾN TRÌNH ĐƠN HÀNG (Stepper & Live Tracker) */}
               <section className="overflow-hidden rounded-3xl border border-sand bg-white shadow-xs p-6 sm:p-8 print:p-4 print:border-stone-400">
                 <div className="flex items-center justify-between pb-4 mb-4 border-b border-sand/80 print:pb-2 print:mb-2">
@@ -348,7 +349,7 @@ function BookingSuccessInner() {
                               <h3 className="font-display font-bold text-base sm:text-lg text-ink hover:text-lotus transition">
                                 {item.garmentName ?? "Trang phục Cung Đình Việt Nam"}
                               </h3>
-                              
+
                               <div className="flex flex-wrap items-center gap-2 text-xs">
                                 {item.sizeLabel && (
                                   <span className="inline-flex items-center rounded-md bg-stone-100 border border-stone-200 px-2 py-0.5 font-bold text-stone-800">
@@ -472,11 +473,11 @@ function BookingSuccessInner() {
                       <p className="text-xs text-stone-600 leading-relaxed">
                         {booking.pickupMethod === "delivery" && (booking.deliverySnapshot ?? booking.deliveryAddress)
                           ? [
-                              (booking.deliverySnapshot ?? booking.deliveryAddress)!.line1,
-                              (booking.deliverySnapshot ?? booking.deliveryAddress)!.ward,
-                              (booking.deliverySnapshot ?? booking.deliveryAddress)!.district,
-                              (booking.deliverySnapshot ?? booking.deliveryAddress)!.city,
-                            ].filter(Boolean).join(", ")
+                            (booking.deliverySnapshot ?? booking.deliveryAddress)!.line1,
+                            (booking.deliverySnapshot ?? booking.deliveryAddress)!.ward,
+                            (booking.deliverySnapshot ?? booking.deliveryAddress)!.district,
+                            (booking.deliverySnapshot ?? booking.deliveryAddress)!.city,
+                          ].filter(Boolean).join(", ")
                           : "320 Nguyễn Huệ, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh"}
                       </p>
                     </div>
@@ -546,15 +547,15 @@ function BookingSuccessInner() {
 
             {/* ── CỘT PHẢI (4 CỘT): VÉ BIÊN NHẬN HOÀNG GIA & CHIẾT TÍNH TÀI CHÍNH ──── */}
             <div className="lg:col-span-4 space-y-6 print:w-full print:col-span-12">
-              
+
               {/* VÉ BIÊN NHẬN (Heritage Ticket Design) */}
               <div className="relative overflow-hidden rounded-3xl border border-amber-300/80 bg-gradient-to-b from-white via-amber-50/20 to-white shadow-md print:border-stone-800 print:shadow-none">
-                
+
                 {/* Viền hoa văn vàng kim trên cùng */}
                 <div className="h-2 bg-gradient-to-r from-amber-500 via-lotus to-oxblood print:hidden" />
 
                 <div className="p-6 sm:p-7 space-y-5">
-                  
+
                   {/* Ticket Header */}
                   <div className="flex items-start justify-between border-b border-sand pb-4">
                     <div>
@@ -565,7 +566,7 @@ function BookingSuccessInner() {
                         {displayCode}
                       </p>
                     </div>
-                    
+
                     {/* Nút chép mã */}
                     <button
                       type="button"

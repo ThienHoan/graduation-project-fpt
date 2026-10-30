@@ -10,6 +10,7 @@ import { ImageUpload } from "@/components/try-on/image-upload";
 import { SimilarGarments } from "@/components/try-on/similar-garments";
 import { TryonResultViewer } from "@/components/try-on/tryon-result-viewer";
 import { RealtimeTryOnModal } from "@/components/try-on/realtime-tryon-modal";
+import { HeritageMascot } from "@/components/mascot";
 import {
   Sparkles,
   Zap,
@@ -442,18 +443,16 @@ function TryOnInner() {
           {hasAccessToken && quota && (
             <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
               <div
-                className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold shadow-xs transition ${
-                  quota.remaining > 1
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold shadow-xs transition ${quota.remaining > 1
                     ? "border-emerald-300 bg-emerald-50 text-emerald-900"
                     : quota.remaining === 1
-                    ? "border-amber-300 bg-amber-50 text-amber-900"
-                    : "border-rose-300 bg-rose-50 text-rose-800"
-                }`}
+                      ? "border-amber-300 bg-amber-50 text-amber-900"
+                      : "border-rose-300 bg-rose-50 text-rose-800"
+                  }`}
               >
                 <span
-                  className={`h-2 w-2 rounded-full ${
-                    quota.remaining > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
-                  }`}
+                  className={`h-2 w-2 rounded-full ${quota.remaining > 0 ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
+                    }`}
                 />
                 <span>Hôm nay bạn còn:</span>
                 <span className={`font-bold ${quota.remaining > 0 ? "text-lotus" : "text-rose-600"}`}>
@@ -545,20 +544,18 @@ function TryOnInner() {
                                 key={s.garmentSizeId}
                                 type="button"
                                 onClick={() => setSelectedSizeId(s.garmentSizeId)}
-                                className={`relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                                  isSelected
+                                className={`relative inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${isSelected
                                     ? "bg-lotus text-white shadow-xs"
                                     : isRec
-                                    ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                                    : "border border-sand bg-parchment/60 text-stone-600 hover:border-lotus/40 hover:bg-lotus/10"
-                                }`}
+                                      ? "border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                      : "border border-sand bg-parchment/60 text-stone-600 hover:border-lotus/40 hover:bg-lotus/10"
+                                  }`}
                               >
                                 <span>Size {s.sizeLabel ?? "—"}</span>
                                 {isRec && (
                                   <span
-                                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                                      isSelected ? "bg-white/20 text-white" : "bg-amber-200 text-amber-950"
-                                    }`}
+                                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isSelected ? "bg-white/20 text-white" : "bg-amber-200 text-amber-950"
+                                      }`}
                                   >
                                     ⭐ Vừa nhất
                                   </span>
@@ -601,8 +598,8 @@ function TryOnInner() {
                                 {selectedSizeBustDiff >= 2 && selectedSizeBustDiff <= 5
                                   ? `+${selectedSizeBustDiff}cm (vừa vặn)`
                                   : selectedSizeBustDiff > 5
-                                  ? `+${selectedSizeBustDiff}cm (thùng thình)`
-                                  : `${selectedSizeBustDiff}cm (bó chật)`}
+                                    ? `+${selectedSizeBustDiff}cm (thùng thình)`
+                                    : `${selectedSizeBustDiff}cm (bó chật)`}
                               </span>
                             )}
                           </div>
@@ -617,8 +614,8 @@ function TryOnInner() {
                                 {selectedSizeWaistDiff >= 1 && selectedSizeWaistDiff <= 4
                                   ? `+${selectedSizeWaistDiff}cm (vừa vặn)`
                                   : selectedSizeWaistDiff > 4
-                                  ? `+${selectedSizeWaistDiff}cm (rộng eo)`
-                                  : `${selectedSizeWaistDiff}cm (ôm sát)`}
+                                    ? `+${selectedSizeWaistDiff}cm (rộng eo)`
+                                    : `${selectedSizeWaistDiff}cm (ôm sát)`}
                               </span>
                             )}
                           </div>
@@ -717,11 +714,10 @@ function TryOnInner() {
                       key={opt.key}
                       type="button"
                       onClick={() => setMode(opt.key)}
-                      className={`rounded-xl border p-4 text-left transition ${
-                        isSelected
+                      className={`rounded-xl border p-4 text-left transition ${isSelected
                           ? "border-lotus bg-parchment/60 ring-1 ring-lotus/30 shadow-xs"
                           : "border-sand bg-white hover:border-antique/80 hover:bg-mist/40"
-                      }`}
+                        }`}
                     >
                       <div className={`flex h-9 w-9 items-center justify-center rounded-lg mb-2.5 ${isSelected ? "bg-lotus text-white" : "bg-stone-100 text-stone-500"}`}>
                         <Icon className="h-5 w-5" />
@@ -754,9 +750,8 @@ function TryOnInner() {
                       key={opt.key}
                       type="button"
                       onClick={() => { setImageSource(opt.key); setImageBase64(null); }}
-                      className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold transition ${
-                        isSelected ? "bg-white text-lotus shadow-xs" : "text-stone-600 hover:text-ink"
-                      }`}
+                      className={`flex-1 flex items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold transition ${isSelected ? "bg-white text-lotus shadow-xs" : "text-stone-600 hover:text-ink"
+                        }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
                       {opt.label}
@@ -813,8 +808,8 @@ function TryOnInner() {
                 {viewState === "processing"
                   ? "Đang dệt nên sắc phục..."
                   : quota && quota.remaining <= 0
-                  ? "Đã dùng hết lượt thử hôm nay"
-                  : "Bắt đầu mặc thử AI"}
+                    ? "Đã dùng hết lượt thử hôm nay"
+                    : "Bắt đầu mặc thử AI"}
               </button>
             </section>
           </div>
@@ -824,10 +819,8 @@ function TryOnInner() {
             <section className="relative min-h-[580px] overflow-hidden rounded-2xl border border-sand bg-white shadow-sm flex flex-col">
               {viewState === "setup" && !imageBase64 && (
                 <div className="flex flex-1 flex-col items-center justify-center p-8 text-center bg-mist/30">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-lotus/5 text-lotus mb-4 border border-sand/80">
-                    <ImageIcon className="h-9 w-9 text-antique" />
-                  </div>
-                  <h3 className="font-display text-2xl font-semibold text-ink">Khung xem thử AI</h3>
+                  <HeritageMascot mood="wave" size="md" showSparkles={true} />
+                  <h3 className="font-display text-2xl font-semibold text-ink mt-2">Khung xem thử AI</h3>
                   <p className="mt-2 max-w-md text-xs leading-relaxed text-stone-500">
                     Hình ảnh mặc thử cổ phục của bạn sẽ xuất hiện tại đây sau khi bạn chọn ảnh và bấm &quot;Bắt đầu mặc thử AI&quot;.
                   </p>
@@ -854,13 +847,10 @@ function TryOnInner() {
 
               {viewState === "processing" && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 p-6 sm:p-8 text-center backdrop-blur-md overflow-y-auto">
-                  {/* Glowing pulse ring & laser scan */}
-                  <div className="relative flex items-center justify-center">
-                    <div className="h-24 w-24 animate-spin rounded-full border-4 border-stone-200 border-t-lotus" />
-                    <Sparkles className="absolute h-8 w-8 text-lotus animate-pulse" />
-                  </div>
+                  {/* Mascot doing magic while waiting */}
+                  <HeritageMascot mood="magic" size="lg" showSparkles={true} />
 
-                  <h2 className="mt-5 font-display text-2xl sm:text-3xl font-semibold text-lotus">
+                  <h2 className="mt-3 font-display text-2xl sm:text-3xl font-semibold text-lotus">
                     Đang dệt nên sắc phục...
                   </h2>
 
@@ -915,9 +905,8 @@ function TryOnInner() {
                           key={i}
                           type="button"
                           onClick={() => setFactIndex(i)}
-                          className={`h-1.5 rounded-full transition-all ${
-                            i === factIndex ? "w-5 bg-lotus" : "w-1.5 bg-stone-300 hover:bg-stone-400"
-                          }`}
+                          className={`h-1.5 rounded-full transition-all ${i === factIndex ? "w-5 bg-lotus" : "w-1.5 bg-stone-300 hover:bg-stone-400"
+                            }`}
                           title={`Chuyện xưa ${i + 1}`}
                         />
                       ))}

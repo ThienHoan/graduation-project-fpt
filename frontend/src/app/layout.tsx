@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/components/auth/auth-provider";
 import { CustomerChatProvider } from "@/components/chat/customer-chat-provider";
 import { SmoothScrollProvider } from "@/components/common/smooth-scroll-provider";
+import { FloatingHeritageCompanion } from "@/components/mascot";
 
 const manrope = Manrope({
   subsets: ["latin", "vietnamese"],
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <CustomerChatProvider>
               {children}
             </CustomerChatProvider>
+            <FloatingHeritageCompanion />
           </SmoothScrollProvider>
         </AuthProvider>
       </body>
