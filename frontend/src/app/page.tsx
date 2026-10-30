@@ -16,6 +16,7 @@ import { ImperialSeal } from "@/components/common/imperial-seal";
 import { HeritageTimelineShowcase } from "@/components/common/heritage-timeline-showcase";
 import { Heritage3dShowcaseCarousel } from "@/components/common/heritage-3d-showcase-carousel";
 import { Hero3DStage } from "@/components/common/hero-3d-stage";
+import { AnimatedSparkles, AnimatedCompass, AnimatedIconWrapper } from "@/components/common/animated-icons";
 import { playWoodTap, playRoyalChime, playHoverTick, playWhoosh, playImperialStamp } from "@/lib/sound-fx";
 import { cartCount } from "@/lib/cart";
 import { useEffect, useMemo, useState } from "react";
@@ -224,7 +225,7 @@ export default function HomePage() {
                     className="group relative inline-flex items-center gap-2.5 overflow-hidden rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-rose-500 px-7 py-4 text-sm font-bold tracking-wider text-stone-950 shadow-[0_0_24px_rgba(245,158,11,0.35)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_32px_rgba(245,158,11,0.5)] active:scale-[0.98]"
                   >
                     <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-full" />
-                    <Compass className="h-4 w-4 transition-transform group-hover:rotate-45" />
+                    <AnimatedCompass size={18} color="currentColor" />
                     <span>Khám Phá Lưu Trữ</span>
                   </Link>
 
@@ -234,7 +235,7 @@ export default function HomePage() {
                     onMouseEnter={(e) => playHoverTick({ event: e })}
                     className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/5 px-6 py-4 text-sm font-semibold text-white backdrop-blur-md shadow-xs transition hover:border-amber-400 hover:bg-white/10 hover:text-amber-300 active:scale-[0.98]"
                   >
-                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <AnimatedSparkles size={18} color="#fbbf24" trigger="always" />
                     <span>Xem Sử Thi Cuộn Trang</span>
                   </a>
                 </div>
@@ -257,7 +258,7 @@ export default function HomePage() {
                       : "text-stone-300 hover:text-amber-200"
                   }`}
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
+                  <AnimatedSparkles size={15} trigger={heroVisualTab === "3d" ? "always" : "hover"} />
                   <span>Bảo Vật 3D 360°</span>
                 </button>
                 <button

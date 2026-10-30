@@ -11,6 +11,7 @@ import { SimilarGarments } from "@/components/try-on/similar-garments";
 import { TryonResultViewer } from "@/components/try-on/tryon-result-viewer";
 import { RealtimeTryOnModal } from "@/components/try-on/realtime-tryon-modal";
 import { HeritageMascot } from "@/components/mascot";
+import { AnimatedCamera, AnimatedSparkles, AnimatedShield, AnimatedCheckCircle } from "@/components/common/animated-icons";
 import {
   Sparkles,
   Zap,
@@ -824,9 +825,9 @@ function TryOnInner() {
                   <p className="mt-2 max-w-md text-xs leading-relaxed text-stone-500">
                     Hình ảnh mặc thử cổ phục của bạn sẽ xuất hiện tại đây sau khi bạn chọn ảnh và bấm &quot;Bắt đầu mặc thử AI&quot;.
                   </p>
-                  <div className="mt-6 flex items-center gap-4 text-xs text-stone-400">
-                    <span className="flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-jade" /> Bảo mật thông tin</span>
-                    <span className="flex items-center gap-1.5"><Sparkles className="h-4 w-4 text-antique" /> AI thế hệ mới</span>
+                  <div className="mt-6 flex items-center gap-4 text-xs text-stone-500">
+                    <span className="flex items-center gap-1.5"><AnimatedShield size={16} color="#225d55" /> Bảo mật thông tin</span>
+                    <span className="flex items-center gap-1.5"><AnimatedSparkles size={16} color="#c6a664" trigger="always" /> AI thế hệ mới</span>
                   </div>
                 </div>
               )}
@@ -838,8 +839,8 @@ function TryOnInner() {
                     alt="Ảnh của bạn"
                     className="max-h-[460px] w-auto rounded-xl object-contain shadow-md border border-sand"
                   />
-                  <p className="mt-4 flex items-center gap-1.5 text-xs font-medium text-stone-600">
-                    <CheckCircle2 className="h-4 w-4 text-jade" />
+                  <p className="mt-4 flex items-center gap-1.5 text-xs font-medium text-stone-700">
+                    <AnimatedCheckCircle size={16} color="#225d55" trigger="always" />
                     Ảnh của bạn đã sẵn sàng — bấm &quot;Bắt đầu mặc thử AI&quot; để tiến hành
                   </p>
                 </div>

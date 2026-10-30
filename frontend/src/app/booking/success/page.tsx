@@ -12,6 +12,7 @@ import { statusBadgeClass, statusOf } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverSummary } from "@/components/customer/handover-summary";
 import { HeritageMascot } from "@/components/mascot";
+import { AnimatedCheckCircle, AnimatedSparkles, AnimatedShield } from "@/components/common/animated-icons";
 import {
   CheckCircle2,
   Sparkles,

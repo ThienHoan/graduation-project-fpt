@@ -9,6 +9,7 @@ import { cartCount } from "@/lib/cart";
 import { wishlistCount, refreshWishlistFromServer } from "@/lib/wishlist";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { playWoodTap, playHoverTick } from "@/lib/sound-fx";
+import { AnimatedShoppingBag, AnimatedSparkles, AnimatedIconWrapper } from "@/components/common/animated-icons";
 import {
   ShoppingBag,
   Heart,
@@ -192,7 +193,7 @@ export function CustomerNavbar({
                   : "bg-lotus text-white hover:bg-oxblood shadow-xs"
               }`}
             >
-              <Sparkles className="h-3.5 w-3.5" />
+              <AnimatedSparkles size={15} />
               <span>Thuê Ngay</span>
             </Link>
 
@@ -236,16 +237,7 @@ export function CustomerNavbar({
               }`}
               aria-label="Giỏ thuê đồ"
             >
-              <ShoppingBag className="h-4 w-4" />
-              {cartCountVal > 0 && (
-                <span
-                  className={`absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-xs ${
-                    isDark ? "bg-rose-600" : "bg-lotus"
-                  }`}
-                >
-                  {cartCountVal}
-                </span>
-              )}
+              <AnimatedShoppingBag size={18} count={cartCountVal} />
             </Link>
 
             {/* Khối tài khoản người dùng */}
