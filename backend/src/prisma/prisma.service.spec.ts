@@ -23,6 +23,7 @@ describe("PrismaService.runSerializable", () => {
 
     expect(transaction).toHaveBeenCalledWith(operation, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      timeout: 15000,
     });
   });
 
