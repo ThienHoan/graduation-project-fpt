@@ -1,7 +1,8 @@
 import { io, type Socket } from "socket.io-client";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") ?? "http://localhost:4000";
-const realtimeSocketUrl = `${apiBaseUrl}/realtime`;
+// Socket.IO dùng proxy rewrite của Vercel (/socket.io/* → VPS)
+// Không cần base URL — dùng origin hiện tại (relative) để browser tự ghép wss://domain/socket.io/
+const realtimeSocketUrl = `/realtime`;
 
 let socket: Socket | null = null;
 let currentToken: string | null = null;

@@ -1,7 +1,7 @@
 import { io, type Socket } from "socket.io-client";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") ?? "http://localhost:4000";
-const chatSocketUrl = `${apiBaseUrl}/chat`;
+// Socket.IO dùng proxy rewrite của Vercel (/socket.io/* → VPS)
+const chatSocketUrl = `/chat`;
 
 let socket: Socket | null = null;
 
