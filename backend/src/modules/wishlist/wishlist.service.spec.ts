@@ -44,12 +44,12 @@ describe("WishlistService", () => {
     const result = await service.findUserWishlist("user-1");
 
     expect(result.success).toBe(true);
-    expect(result.data).toHaveLength(1);
-    expect(result.data[0].name).toBe("Áo Tấc Hoàng Cung");
-    expect(result.data[0].categoryName).toBe("Triều Nguyễn");
-    expect(result.data[0].dailyPrice).toBe(350000);
-    expect(result.data[0].imageUrl).toBe("https://example.com/ao-tac.jpg");
-    expect(result.data[0].sizes).toHaveLength(2);
+    expect(result.data!).toHaveLength(1);
+    expect(result.data![0].name).toBe("Áo Tấc Hoàng Cung");
+    expect(result.data![0].categoryName).toBe("Triều Nguyễn");
+    expect(result.data![0].dailyPrice).toBe(350000);
+    expect(result.data![0].imageUrl).toBe("https://example.com/ao-tac.jpg");
+    expect(result.data![0].sizes).toHaveLength(2);
   });
 
   it("should add garment to wishlist if active", async () => {
@@ -64,7 +64,7 @@ describe("WishlistService", () => {
     const result = await service.addToWishlist("user-1", "garment-1");
 
     expect(result.success).toBe(true);
-    expect(result.data.isWishlisted).toBe(true);
+    expect(result.data!.isWishlisted).toBe(true);
     expect(mockPrisma.customerWishlist.upsert).toHaveBeenCalledWith({
       where: {
         userId_garmentId: {
@@ -91,7 +91,7 @@ describe("WishlistService", () => {
     const result = await service.removeFromWishlist("user-1", "garment-1");
 
     expect(result.success).toBe(true);
-    expect(result.data.isWishlisted).toBe(false);
+    expect(result.data!.isWishlisted).toBe(false);
     expect(mockPrisma.customerWishlist.deleteMany).toHaveBeenCalledWith({
       where: { userId: "user-1", garmentId: "garment-1" },
     });

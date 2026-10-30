@@ -61,10 +61,6 @@ function createCompleteService(accessoryRows: Array<{ accessoryAssetId: string |
   };
   const prisma = {
     runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
-    inspectionSession: {
-      findUnique: vi.fn().mockResolvedValue(mockSession),
-      findUniqueOrThrow: vi.fn().mockResolvedValue(mockSession),
-    },
     // Service đọc lại session bằng prisma (ngoài transaction) để emit realtime và serialize.
     inspectionSession: tx.inspectionSession,
   };
