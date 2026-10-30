@@ -4,7 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import * as dns from "node:dns";
-import compression = require("compression");
+import compression from "compression";
 import helmet from "helmet";
 
 // Ưu tiên IPv4 trước IPv6 để tránh treo kết nối (Connection timeout) trên môi trường VPS Cloud
