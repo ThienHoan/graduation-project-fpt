@@ -7436,7 +7436,7 @@ function PenaltyReviewTab({
                         {item.note && (
                           <div>
                             <span className="text-stone-400">Ghi chú của nhân viên:</span>{" "}
-                            <span className="text-stone-700 italic">"{item.note}"</span>
+                            <span className="text-stone-700 italic">&quot;{item.note}&quot;</span>
                           </div>
                         )}
                         <div>

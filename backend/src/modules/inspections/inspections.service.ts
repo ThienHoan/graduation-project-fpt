@@ -271,6 +271,7 @@ export class InspectionsService {
     return ok({ message: "Đã xoá ảnh thành công", photoId });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async runAiComparison(sessionId: string, dto?: { afterImageUrls?: string[] }, staffId?: string) {
     const session = await this.prisma.inspectionSession.findUnique({
       where: { id: sessionId },
@@ -1064,6 +1065,7 @@ export class InspectionsService {
    * Đồng bộ lại tổng phạt trên booking, số tiền hoàn cọc (nếu đang chờ duyệt),
    * và khoản đền bù vượt cọc cần thu thêm.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async overridePenalty(id: string, dto: OverridePenaltyDto, managerId: string) {
     await this.prisma.runSerializable(async (tx) => {
       const session = await tx.inspectionSession.findUnique({
