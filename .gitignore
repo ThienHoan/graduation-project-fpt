@@ -1,4 +1,4 @@
-﻿dist
+dist
 backend/dist
 .next
 node_modules
@@ -21,3 +21,4 @@ frontend/.env.*.local
 Thumbs.db
 *.log
 *.tsbuildinfo
+.pnpm-store

@@ -35,19 +35,19 @@ export function SoundToggle({ className = "", variant = "floating" }: SoundToggl
       <button
         type="button"
         onClick={() => toggleSound()}
-        className={`inline-flex items-center gap-1.5 rounded-full border border-sand bg-white/90 px-2.5 py-1 text-xs font-medium text-stone-700 transition hover:border-lotus hover:text-lotus active:scale-95 ${className}`}
+        className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-sand bg-white/90 p-2 sm:px-2.5 sm:py-1 text-xs font-medium text-stone-700 transition hover:border-lotus hover:text-lotus active:scale-95 ${className}`}
         title={enabled ? "Tắt âm thanh di sản" : "Bật âm thanh di sản"}
         aria-label={enabled ? "Tắt âm thanh di sản" : "Bật âm thanh di sản"}
       >
         {enabled ? (
           <>
-            <Volume2 className="h-3.5 w-3.5 text-amber-600" />
-            <span className="hidden sm:inline text-[11px] font-semibold text-amber-800">Âm thanh: Bật</span>
+            <Volume2 className="h-4 w-4 shrink-0 text-amber-600" />
+            <span className="hidden 2xl:inline text-[11px] font-semibold text-amber-800 whitespace-nowrap">Âm thanh: Bật</span>
           </>
         ) : (
           <>
-            <VolumeX className="h-3.5 w-3.5 text-stone-400" />
-            <span className="hidden sm:inline text-[11px] text-stone-500">Âm thanh: Tắt</span>
+            <VolumeX className="h-4 w-4 shrink-0 text-stone-400" />
+            <span className="hidden 2xl:inline text-[11px] text-stone-500 whitespace-nowrap">Âm thanh: Tắt</span>
           </>
         )}
       </button>

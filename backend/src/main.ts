@@ -9,7 +9,11 @@ import helmet from "helmet";
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
-  const frontendUrl = config.get<string>("FRONTEND_URL") ?? "http://localhost:3000";
+  const rawFrontendUrls = config.get<string>("FRONTEND_URL") ?? "http://localhost:3000";
+  const allowedOrigins = rawFrontendUrls
+    .split(",")
+    .map((url) => url.trim().replace(/\/$/, ""))
+    .filter(Boolean);
   const port = config.get<number>("PORT") ?? 4000;
 
   // [SECURITY FIX] Thêm Helmet để tự động gắn các security headers chuẩn:
@@ -30,10 +34,16 @@ async function bootstrap() {
 
   app.setGlobalPrefix("api");
   app.enableCors({
-    // [SECURITY] Chỉ cho phép frontend URL chính thức và localhost trong môi trường dev
-    // Trong production, đảm bảo FRONTEND_URL được set đúng (vd: https://cophuc.vn)
+    // [SECURITY] Cho phép frontend URL chính thức, các domain Vercel và localhost trong môi trường dev
     origin: (origin, callback) => {
-      if (!origin || origin === frontendUrl || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      const cleanOrigin = origin?.trim().replace(/\/$/, "");
+
+      if (
+        !origin ||
+        (cleanOrigin && allowedOrigins.includes(cleanOrigin)) ||
+        /^https:\/\/graduation-project-fpt(-[a-zA-Z0-9_-]+)?\.vercel\.app$/.test(origin) ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      ) {
         return callback(null, true);
       }
       return callback(new Error(`Origin ${origin} not allowed by CORS`), false);

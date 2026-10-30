@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -39,7 +39,8 @@ function LoginPageContent() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
+  const googleClientId =
+    process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim().replace(/^["']|["']$/g, "") ?? "";
 
   const authNotice = useMemo(() => {
     if (searchParams.get("reset") === "1") {
