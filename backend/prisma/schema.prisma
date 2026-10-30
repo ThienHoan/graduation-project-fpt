@@ -37,6 +37,7 @@ model UserAccount {
   staffRepliedReviews                                    Review[]                @relation("StaffRepliedReviews")
   tryonRequests                                          TryonRequest[]
   voucher_usages                                         voucher_usages[]
+  wishlists                                              CustomerWishlist[]
 
   @@map("user_accounts")
 }
@@ -134,6 +135,7 @@ model Garment {
   reviews             Review[]              @relation("GarmentReviews")
   tryonRequests       TryonRequest[]
   views               garment_views[]
+  wishlists           CustomerWishlist[]
 
   @@map("garments")
 }
@@ -966,4 +968,18 @@ model garment_views {
 
   @@index([garment_id, created_at])
   @@index([garment_id, visitor_key, created_at])
+}
+
+model CustomerWishlist {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  garmentId String      @map("garment_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      UserAccount @relation(fields: [userId], references: [id], onDelete: Cascade)
+  garment   Garment     @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, garmentId], map: "uq_customer_wishlist_user_garment")
+  @@index([userId], map: "idx_customer_wishlists_user_id")
+  @@index([garmentId], map: "idx_customer_wishlists_garment_id")
+  @@map("customer_wishlists")
 }

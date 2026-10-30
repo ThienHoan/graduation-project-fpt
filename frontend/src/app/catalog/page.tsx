@@ -16,6 +16,9 @@ import {
 import { addToCart, cartCount, removeFromCart, getCart } from "@/lib/cart";
 import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@/lib/chat";
 import { OptimizedImage } from "@/components/common/optimized-image";
+import { WishlistButton } from "@/components/common/wishlist-button";
+import { MascotEmptyState } from "@/components/mascot";
+import { AnimatedSparkles } from "@/components/common/animated-icons";
 import {
   Search,
   Sparkles,
@@ -86,21 +89,42 @@ function CatalogGarmentCard({
       className="group flex flex-col overflow-hidden rounded-xl border border-sand bg-white shadow-xs transition-all duration-300 hover:border-lotus hover:shadow-lg"
     >
       {/* Ảnh cổ phục với Lazy Load & Smooth Fade-in */}
-      <Link
-        href={`/catalog/${selectedGarmentId}`}
-        className="relative aspect-[3/4] overflow-hidden bg-stone-100"
-      >
-        <OptimizedImage
-          src={group.imageUrl ?? ""}
-          alt={group.name}
-          fill
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-          className="object-cover transition-all duration-500 group-hover:scale-105"
-        />
-        <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+      <div className="relative aspect-[3/4] overflow-hidden bg-stone-100">
+        <Link
+          href={`/catalog/${selectedGarmentId}`}
+          className="absolute inset-0"
+        >
+          <OptimizedImage
+            src={group.imageUrl ?? ""}
+            alt={group.name}
+            fill
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+            className="object-cover transition-all duration-500 group-hover:scale-105"
+          />
+        </Link>
+        <span className="shadow-xs absolute left-3 top-3 pointer-events-none z-10 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
           {group.categoryName ?? "Triều Nguyễn"}
         </span>
-      </Link>
+        <div className="absolute right-3 top-3 z-10">
+          <WishlistButton
+            item={{
+              garmentId: group.garmentId,
+              name: group.name,
+              categoryName: group.categoryName,
+              imageUrl: group.imageUrl,
+              dailyPrice: selectedSize?.dailyPrice ?? 0,
+              depositAmount: selectedSize?.depositAmount ?? 0,
+              sizes: group.sizes.map((s) => ({
+                sizeId: s.garmentSizeId,
+                sizeLabel: s.sizeLabel,
+                dailyPrice: s.dailyPrice,
+                depositAmount: s.depositAmount,
+              })),
+              addedAt: new Date().toISOString(),
+            }}
+          />
+        </div>
+      </div>
 
       {/* Thông tin card */}
       <div className="flex flex-1 flex-col p-4">
@@ -119,11 +143,10 @@ function CatalogGarmentCard({
                 key={s.garmentSizeId}
                 type="button"
                 onClick={() => onSelectSize(s.garmentSizeId)}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${
-                  isSel
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${isSel
                     ? "bg-lotus text-white"
                     : "bg-parchment text-stone-600 hover:bg-lotus/15"
-                }`}
+                  }`}
               >
                 {s.sizeLabel ?? "—"}
               </button>
@@ -501,7 +524,9 @@ export default function CatalogPage() {
           <div className="lg:col-span-7">
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Sparkles className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-lotus" />
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lotus pointer-events-none">
+                  <AnimatedSparkles size={16} color="#8b1e1e" trigger="always" />
+                </span>
                 <input
                   type="text"
                   value={aiQuery}
@@ -522,7 +547,7 @@ export default function CatalogPage() {
                 {aiLoading ? (
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
+                  <AnimatedSparkles size={14} color="#ffffff" trigger="always" />
                 )}
                 <span>Tư Vấn AI</span>
               </button>
@@ -535,7 +560,7 @@ export default function CatalogPage() {
           <section className="mt-6 rounded-2xl border border-sand bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between border-b border-sand pb-3">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-lotus">
-                <Sparkles className="h-4 w-4 text-lotus" />
+                <AnimatedSparkles size={16} color="#8b1e1e" trigger="always" />
                 <span>Gợi ý phong cách từ Trợ lý AI xưởng may</span>
               </div>
               <button
@@ -622,11 +647,10 @@ export default function CatalogPage() {
                     key={cat}
                     type="button"
                     onClick={() => setActiveCategory(cat)}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                      isSelected
+                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${isSelected
                         ? "bg-lotus text-white shadow-xs"
                         : "border border-sand bg-white text-stone-700 hover:border-lotus hover:text-lotus"
-                    }`}
+                      }`}
                   >
                     {cat === "all" ? "Tất cả cổ phục" : cat}
                   </button>
@@ -687,11 +711,10 @@ export default function CatalogPage() {
                           key={s.garmentSizeId}
                           type="button"
                           onClick={() => handleSelectSize(featured.slug, s.garmentSizeId)}
-                          className={`min-w-[40px] rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                            sel
+                          className={`min-w-[40px] rounded-lg px-3 py-1.5 text-xs font-semibold transition ${sel
                               ? "bg-lotus text-white shadow-xs"
                               : "border border-sand bg-parchment text-stone-700 hover:border-lotus"
-                          }`}
+                            }`}
                         >
                           Size {s.sizeLabel ?? "Chuẩn"}
                         </button>
@@ -758,9 +781,8 @@ export default function CatalogPage() {
                   </button>
 
                   <Link
-                    href={`/try-on?garmentSizeId=${
-                      selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId
-                    }`}
+                    href={`/try-on?garmentSizeId=${selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId
+                      }`}
                     className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-6 py-3 text-xs font-semibold uppercase tracking-wider text-ink shadow-xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
                   >
                     <Camera className="h-4 w-4 text-lotus" />
@@ -789,15 +811,16 @@ export default function CatalogPage() {
               ))}
             </div>
           ) : groups.length === 0 ? (
-            <div className="rounded-2xl border border-sand bg-white py-16 text-center shadow-xs">
-              <ShoppingBag className="mx-auto h-12 w-12 text-stone-300" />
-              <h3 className="mt-3 font-display text-xl font-bold text-stone-800">
-                Không tìm thấy y phục phù hợp
-              </h3>
-              <p className="mt-1 text-xs text-stone-500">
-                Vui lòng thử đổi từ khóa tìm kiếm hoặc chọn danh mục cổ phục khác.
-              </p>
-            </div>
+            <MascotEmptyState
+              mood="empty"
+              title="Không tìm thấy y phục phù hợp"
+              description="Bé Nghê đã lùng sục khắp rương y phục mà chưa thấy bộ phục trang bạn yêu cầu. Hãy thử đổi từ khóa tìm kiếm hoặc chọn triều đại khác nhé!"
+              actionText="Xóa bộ lọc tìm kiếm"
+              onAction={() => {
+                setSearchQuery("");
+                setActiveCategory("all");
+              }}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {groups

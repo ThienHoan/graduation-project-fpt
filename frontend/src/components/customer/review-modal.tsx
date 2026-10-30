@@ -110,9 +110,22 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
       } else {
         setImages(prev => [...prev, url]);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Upload error", err);
-      setError("Lỗi kết nối khi tải file.");
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "Upload failed" || msg.includes("Internal Server Error")) {
+        setError("Lỗi máy chủ khi tải file. Vui lòng thử lại sau.");
+      } else if (msg === "Authentication required" || msg === "Authentication failed") {
+        setError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.");
+      } else if (msg === "You are not allowed to upload this file") {
+        setError("Bạn không có quyền tải ảnh đánh giá.");
+      } else if (msg === "Unsupported file type or size") {
+        setError("Định dạng file không được hỗ trợ hoặc dung lượng quá lớn.");
+      } else if (msg === "File content does not match its type") {
+        setError("Nội dung file không hợp lệ hoặc bị lỗi.");
+      } else {
+        setError(msg || "Lỗi kết nối khi tải file.");
+      }
     } finally {
       setIsUploading(false);
     }

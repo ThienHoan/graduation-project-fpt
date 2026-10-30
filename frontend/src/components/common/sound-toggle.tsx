@@ -54,9 +54,9 @@ export function SoundToggle({ className = "", variant = "floating" }: SoundToggl
     );
   }
 
-  // Floating variant (Góc dưới bên phải màn hình, thiết kế thủy tinh viền vàng hoàng cung)
+  // Floating variant (Đặt ở góc dưới bên phải nhưng dời sang trái cạnh logo chat, không đè lên chat và tránh dev badge góc trái)
   return (
-    <aside aria-label="Điều khiển âm thanh" className="fixed bottom-6 right-6 z-40">
+    <aside aria-label="Điều khiển âm thanh" className="fixed bottom-5 right-20 sm:bottom-5.5 sm:right-22 z-40">
       <button
         type="button"
         onClick={() => toggleSound()}
