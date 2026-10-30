@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewsService } from "./reviews.service";
 
@@ -95,7 +95,7 @@ describe("ReviewsService", () => {
     );
 
     const service = new ReviewsService(prisma as never, mockNotifications as never);
-    const result = await service.create("customer-1", {
+    await service.create("customer-1", {
       garmentId: "garment-1",
       bookingId: "booking-1",
       rating: 5,

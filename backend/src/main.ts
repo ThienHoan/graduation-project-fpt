@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import type { NestExpressApplication } from "@nestjs/platform-express";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import compression = require("compression");
 import helmet from "helmet";
 

@@ -244,6 +244,7 @@ export class PriceRulesService {
         rentalTotal: total,
         days,
         appliedPriceRule: appliedRules[0]
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           ? (({ days: _d, ...r }) => r)(appliedRules[0])
           : null,
         appliedRules,

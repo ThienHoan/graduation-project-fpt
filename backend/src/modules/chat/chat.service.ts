@@ -1122,7 +1122,7 @@ export class ChatService {
           .toBuffer();
         uploadMimeType = "image/webp";
         ext = "webp";
-      } catch (err) {
+      } catch {
         // Fallback to original buffer
       }
     }
