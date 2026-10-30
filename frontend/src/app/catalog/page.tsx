@@ -16,6 +16,7 @@ import {
 import { addToCart, cartCount, removeFromCart, getCart } from "@/lib/cart";
 import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@/lib/chat";
 import { OptimizedImage } from "@/components/common/optimized-image";
+import { WishlistButton } from "@/components/common/wishlist-button";
 import {
   Search,
   Sparkles,
@@ -86,21 +87,42 @@ function CatalogGarmentCard({
       className="group flex flex-col overflow-hidden rounded-xl border border-sand bg-white shadow-xs transition-all duration-300 hover:border-lotus hover:shadow-lg"
     >
       {/* Ảnh cổ phục với Lazy Load & Smooth Fade-in */}
-      <Link
-        href={`/catalog/${selectedGarmentId}`}
-        className="relative aspect-[3/4] overflow-hidden bg-stone-100"
-      >
-        <OptimizedImage
-          src={group.imageUrl ?? ""}
-          alt={group.name}
-          fill
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-          className="object-cover transition-all duration-500 group-hover:scale-105"
-        />
-        <span className="shadow-xs absolute left-3 top-3 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
+      <div className="relative aspect-[3/4] overflow-hidden bg-stone-100">
+        <Link
+          href={`/catalog/${selectedGarmentId}`}
+          className="absolute inset-0"
+        >
+          <OptimizedImage
+            src={group.imageUrl ?? ""}
+            alt={group.name}
+            fill
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+            className="object-cover transition-all duration-500 group-hover:scale-105"
+          />
+        </Link>
+        <span className="shadow-xs absolute left-3 top-3 pointer-events-none z-10 rounded bg-white/95 px-2.5 py-1 text-xs font-bold text-stone-800 backdrop-blur-xs">
           {group.categoryName ?? "Triều Nguyễn"}
         </span>
-      </Link>
+        <div className="absolute right-3 top-3 z-10">
+          <WishlistButton
+            item={{
+              garmentId: group.garmentId,
+              name: group.name,
+              categoryName: group.categoryName,
+              imageUrl: group.imageUrl,
+              dailyPrice: selectedSize?.dailyPrice ?? 0,
+              depositAmount: selectedSize?.depositAmount ?? 0,
+              sizes: group.sizes.map((s) => ({
+                sizeId: s.garmentSizeId,
+                sizeLabel: s.sizeLabel,
+                dailyPrice: s.dailyPrice,
+                depositAmount: s.depositAmount,
+              })),
+              addedAt: new Date().toISOString(),
+            }}
+          />
+        </div>
+      </div>
 
       {/* Thông tin card */}
       <div className="flex flex-1 flex-col p-4">

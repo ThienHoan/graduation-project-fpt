@@ -27,6 +27,7 @@ import { getMyChatConversation, sendProductCardMessage } from "@/lib/chat";
 import { ReviewModal } from "@/components/customer/review-modal";
 import { OptimizedImage } from "@/components/common/optimized-image";
 import { RealtimeTryOnModal } from "@/components/try-on/realtime-tryon-modal";
+import { WishlistButton } from "@/components/common/wishlist-button";
 import {
   ChevronRight,
   ChevronLeft,
@@ -985,20 +986,40 @@ export default function GarmentDetailPage({ params }: { params: Promise<{ slug: 
                     <span>Thêm Vào Giỏ</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleConsult}
-                    disabled={isConsulting}
-                    className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-sand bg-mist px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-stone-700 transition hover:border-lotus hover:text-lotus disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98]"
-                  >
-                    {isConsulting ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-lotus" />
-                    ) : (
-                      <Headphones className="h-4 w-4 text-lotus" />
-                    )}
-                    <span>{isConsulting ? "Đang gửi..." : "Tư Vấn Size"}</span>
-                  </button>
+                  <WishlistButton
+                    variant="button"
+                    className="w-full min-h-[44px]"
+                    item={{
+                      garmentId: group.garmentId,
+                      name: group.name,
+                      categoryName: group.categoryName,
+                      imageUrl: group.imageUrl,
+                      dailyPrice: selectedSize?.dailyPrice ?? 0,
+                      depositAmount: selectedSize?.depositAmount ?? 0,
+                      sizes: group.sizes.map((s) => ({
+                        sizeId: s.garmentSizeId,
+                        sizeLabel: s.sizeLabel,
+                        dailyPrice: s.dailyPrice,
+                        depositAmount: s.depositAmount,
+                      })),
+                      addedAt: new Date().toISOString(),
+                    }}
+                  />
                 </div>
+
+                <button
+                  type="button"
+                  onClick={handleConsult}
+                  disabled={isConsulting}
+                  className="w-full flex min-h-[40px] items-center justify-center gap-2 rounded-xl border border-sand bg-mist/60 px-4 py-2 text-xs font-medium text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isConsulting ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-lotus" />
+                  ) : (
+                    <Headphones className="h-4 w-4 text-lotus" />
+                  )}
+                  <span>{isConsulting ? "Đang gửi..." : "Cần tư vấn chọn size & phối phụ kiện"}</span>
+                </button>
 
                 {consultMsg && (
                   <p className="text-center text-xs font-semibold text-lotus">{consultMsg}</p>

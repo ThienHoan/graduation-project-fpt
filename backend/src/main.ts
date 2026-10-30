@@ -3,9 +3,12 @@ import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import type { NestExpressApplication } from "@nestjs/platform-express";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+import * as dns from "node:dns";
 import compression = require("compression");
 import helmet from "helmet";
+
+// Ưu tiên IPv4 trước IPv6 để tránh treo kết nối (Connection timeout) trên môi trường VPS Cloud
+dns.setDefaultResultOrder("ipv4first");
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);

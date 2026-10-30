@@ -6,10 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { cartCount } from "@/lib/cart";
+import { wishlistCount, refreshWishlistFromServer } from "@/lib/wishlist";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { playWoodTap, playHoverTick } from "@/lib/sound-fx";
 import {
   ShoppingBag,
+  Heart,
   Sparkles,
   User,
   LayoutDashboard,
@@ -36,6 +38,7 @@ export function CustomerNavbar({
   const router = useRouter();
   const { session, signOut, status } = useAuth();
   const [cartCountVal, setCartCountVal] = useState(0);
+  const [wishlistCountVal, setWishlistCountVal] = useState(0);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -44,14 +47,26 @@ export function CustomerNavbar({
 
   useEffect(() => {
     const updateCount = () => setCartCountVal(cartCount());
+    const updateWishlist = () => setWishlistCountVal(wishlistCount());
+
     updateCount();
+    updateWishlist();
+
+    if (status === "authenticated") {
+      refreshWishlistFromServer().then(updateWishlist);
+    }
+
     window.addEventListener("cart:updated", updateCount);
+    window.addEventListener("wishlist:updated", updateWishlist);
     window.addEventListener("storage", updateCount);
+    window.addEventListener("storage", updateWishlist);
     return () => {
       window.removeEventListener("cart:updated", updateCount);
+      window.removeEventListener("wishlist:updated", updateWishlist);
       window.removeEventListener("storage", updateCount);
+      window.removeEventListener("storage", updateWishlist);
     };
-  }, []);
+  }, [status]);
 
   // Close account dropdown on outside click
   useEffect(() => {
@@ -187,6 +202,29 @@ export function CustomerNavbar({
             )}
 
             {/* Giỏ thuê đồ */}
+            {/* Nút danh sách cổ phục yêu thích */}
+            <Link
+              href="/wishlist"
+              onClick={(e) => playWoodTap({ event: e })}
+              onMouseEnter={(e) => playHoverTick({ event: e })}
+              className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${
+                isDark
+                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-lotus hover:text-lotus"
+                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+              }`}
+              aria-label="Danh sách cổ phục yêu thích"
+              title="Danh sách yêu thích"
+            >
+              <Heart className={`h-4 w-4 ${wishlistCountVal > 0 ? "fill-lotus/20 text-lotus" : ""}`} />
+              {wishlistCountVal > 0 && (
+                <span
+                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white bg-lotus shadow-xs"
+                >
+                  {wishlistCountVal}
+                </span>
+              )}
+            </Link>
+
             <Link
               href={cartHref}
               onClick={(e) => playWoodTap({ event: e })}
@@ -288,6 +326,18 @@ export function CustomerNavbar({
                       >
                         <ShoppingBag className="h-4 w-4 opacity-70" />
                         <span>Giỏ thuê ({cartCountVal})</span>
+                      </Link>
+                      <Link
+                        href="/wishlist"
+                        onClick={() => setAccountOpen(false)}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
+                          isDark
+                            ? "hover:bg-white/10 hover:text-amber-300"
+                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                        }`}
+                      >
+                        <Heart className="h-4 w-4 opacity-70" />
+                        <span>Yêu thích ({wishlistCountVal})</span>
                       </Link>
                       <button
                         type="button"
@@ -397,6 +447,24 @@ export function CustomerNavbar({
                   </Link>
                 );
               })}
+
+              <Link
+                href="/wishlist"
+                onClick={() => setMobileOpen(false)}
+                className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${
+                  isDark
+                    ? "border-white/10 bg-white/5 text-stone-200 hover:border-lotus"
+                    : "border-sand bg-mist text-stone-800 hover:border-lotus"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <Heart className="h-4 w-4 text-lotus" />
+                  <span>Cổ phục yêu thích</span>
+                </span>
+                <span className="rounded-full px-2 py-0.5 text-xs font-bold text-white bg-lotus">
+                  {wishlistCountVal}
+                </span>
+              </Link>
 
               <Link
                 href={cartHref}
