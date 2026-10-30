@@ -10,6 +10,9 @@ vi.mock("@/components/auth/auth-provider", () => ({
 
 vi.mock("@/lib/api", () => ({
   apiRequest: vi.fn(),
+  getMyAddresses: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  forgotPassword: vi.fn(),
+  resetPassword: vi.fn(),
 }));
 
 import { useAuth } from "@/components/auth/auth-provider";

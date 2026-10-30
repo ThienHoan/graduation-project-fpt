@@ -33,7 +33,7 @@ describe("realtime socket client", () => {
     createRealtimeSocket("token-1");
 
     expect(ioMock).toHaveBeenCalledWith(
-      "http://localhost:4000/realtime",
+      "/realtime",
       expect.objectContaining({ auth: { token: "Bearer token-1" } }),
     );
   });
