@@ -106,10 +106,16 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: [
+          // Cho phép Google popup OAuth hoạt động đúng cách
+          // "same-origin-allow-popups" cho phép postMessage từ popup Google
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
           // Ngăn clickjacking: trang web của mình không thể bị nhúng vào iframe của site khác
           {
             key: "X-Frame-Options",
-            value: "DENY",
+            value: "SAMEORIGIN",
           },
           // Ngăn MIME-sniffing: browser không được tự đoán content type
           {
