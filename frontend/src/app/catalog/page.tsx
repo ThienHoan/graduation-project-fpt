@@ -18,6 +18,7 @@ import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@
 import { OptimizedImage } from "@/components/common/optimized-image";
 import { WishlistButton } from "@/components/common/wishlist-button";
 import { MascotEmptyState } from "@/components/mascot";
+import { AnimatedSparkles } from "@/components/common/animated-icons";
 import {
   Search,
   Sparkles,
@@ -523,7 +524,9 @@ export default function CatalogPage() {
           <div className="lg:col-span-7">
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Sparkles className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-lotus" />
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lotus pointer-events-none">
+                  <AnimatedSparkles size={16} color="#8b1e1e" trigger="always" />
+                </span>
                 <input
                   type="text"
                   value={aiQuery}
@@ -544,7 +547,7 @@ export default function CatalogPage() {
                 {aiLoading ? (
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
+                  <AnimatedSparkles size={14} color="#ffffff" trigger="always" />
                 )}
                 <span>Tư Vấn AI</span>
               </button>
@@ -557,7 +560,7 @@ export default function CatalogPage() {
           <section className="mt-6 rounded-2xl border border-sand bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between border-b border-sand pb-3">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-lotus">
-                <Sparkles className="h-4 w-4 text-lotus" />
+                <AnimatedSparkles size={16} color="#8b1e1e" trigger="always" />
                 <span>Gợi ý phong cách từ Trợ lý AI xưởng may</span>
               </div>
               <button
