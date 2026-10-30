@@ -8,6 +8,7 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 import { apiRequest } from "@/lib/api";
 import { PasswordVisibilityToggle } from "@/components/auth/password-visibility-toggle";
 import { resolveDashboardPath, toAuthenticatedUser, type AppRole } from "@/lib/auth";
+import { HeritageMascot } from "@/components/mascot";
 
 type LoginResult = {
   accessToken: string;
@@ -150,6 +151,9 @@ function LoginPageContent() {
         <section className="flex w-full items-center justify-center bg-white px-4 py-10 md:w-1/2 md:px-12">
           <div className="w-full max-w-md">
             <div className="mb-8 text-center md:hidden">
+              <div className="flex justify-center mb-2">
+                <HeritageMascot mood="wave" size="sm" showSparkles={true} />
+              </div>
               <h1 className="font-display text-4xl text-oxblood">Cổ Phục Rental</h1>
             </div>
 

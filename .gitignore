@@ -22,3 +22,5 @@ Thumbs.db
 *.log
 *.tsbuildinfo
 .pnpm-store
+security/audit-report/
+

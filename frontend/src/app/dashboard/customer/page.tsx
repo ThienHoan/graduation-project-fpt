@@ -32,6 +32,7 @@ import { BookingStatusStepper } from "@/components/customer/booking-status-stepp
 import { ConfirmModal } from "@/components/heritage/ui";
 import { HandoverSummary } from "@/components/customer/handover-summary";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
+import { HeritageMascot } from "@/components/mascot";
 import {
   CheckCircle2,
   Receipt,
@@ -875,8 +876,8 @@ export default function CustomerDashboardPage() {
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-sand bg-white/60 p-8 sm:p-12 text-center shadow-2xs">
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-parchment text-stone-400 mb-4">
-                  <PackageOpen className="h-8 w-8 text-antique" />
+                <div className="flex justify-center mb-1">
+                  <HeritageMascot mood="idle" size="md" showSparkles={false} />
                 </div>
                 <h3 className="font-display text-2xl font-bold text-ink">
                   Không có đơn thuê đang hoạt động
@@ -1028,17 +1029,15 @@ export default function CustomerDashboardPage() {
                     key={tab.key}
                     type="button"
                     onClick={() => setSelectedTab(tab.key as HistoryTab)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      isActive
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${isActive
                         ? "bg-lotus text-white shadow-2xs"
                         : "text-stone-600 hover:bg-white hover:text-ink"
-                    }`}
+                      }`}
                   >
                     <span>{tab.label}</span>
                     <span
-                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                        isActive ? "bg-white/20 text-white" : "bg-sand/60 text-stone-600"
-                      }`}
+                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${isActive ? "bg-white/20 text-white" : "bg-sand/60 text-stone-600"
+                        }`}
                     >
                       {tab.count}
                     </span>
@@ -1050,7 +1049,10 @@ export default function CustomerDashboardPage() {
             {/* Table / Card List */}
             {filteredHistory.length === 0 && !loading ? (
               <div className="rounded-2xl border border-dashed border-sand bg-white/60 p-10 text-center">
-                <p className="text-sm font-medium text-stone-500">
+                <div className="flex justify-center mb-2">
+                  <HeritageMascot mood={searchQuery ? "curious" : "happy"} size="sm" />
+                </div>
+                <p className="text-sm font-medium text-stone-600">
                   {searchQuery ? "Không tìm thấy đơn thuê nào khớp với từ khóa." : "Chưa có đơn thuê nào trong mục này."}
                 </p>
                 {searchQuery && (
@@ -1440,325 +1442,322 @@ export default function CustomerDashboardPage() {
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
                       Bảng chiết tính cọc & hoàn trả
                     </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
-                      <span className="text-xs text-stone-500 block">Tiền cọc ban đầu</span>
-                      <span className="text-base font-semibold text-ink">
-                        {formatVND(deposit)}
-                      </span>
-                    </div>
-                    <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
-                      <span className="text-xs text-stone-500 block">Khấu trừ hư tổn / vệ sinh</span>
-                      <span className={`text-base font-semibold ${penalty > 0 ? "text-red-600" : "text-stone-700"}`}>
-                        {penalty > 0 ? `-${formatVND(penalty)}` : "0đ"}
-                      </span>
-                    </div>
-                    <div className={`rounded-lg p-3 border shadow-2xs ${
-                      excess > 0 ? "bg-red-100/80 border-red-300" : "bg-emerald-50 border-emerald-200"
-                    }`}>
-                      <span className={`text-xs font-medium block ${excess > 0 ? "text-red-800 font-bold" : "text-emerald-700"}`}>
-                        {excess > 0 ? "Cần bồi thường thêm" : "Thực hoàn ví cọc"}
-                      </span>
-                      <span className={`text-base font-bold ${excess > 0 ? "text-red-700" : "text-emerald-800"}`}>
-                        {excess > 0 ? `+${formatVND(excess)}` : formatVND(remaining)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {excess > 0 ? (
-                    <div className="mt-3.5 rounded-xl border border-red-300 bg-white p-3.5 shadow-2xs">
-                      <div className="flex items-center gap-2 text-red-800 font-bold text-xs uppercase tracking-wide mb-1.5">
-                        <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
-                        <span>Thông báo bồi thường vượt cọc theo biên bản</span>
-                      </div>
-                      <p className="text-xs text-red-900/90 leading-relaxed">
-                        Do trang phục phát sinh hư hại nặng không thể phục hồi, tổng tổn thất thực tế là <strong>{formatVND(penalty)}</strong>, vượt quá khoản tiền cọc ban đầu (<strong>{formatVND(deposit)}</strong>).
-                        Căn cứ theo Điều khoản thuê trang phục & Biên bản bàn giao đã xác nhận, quý khách có trách nhiệm thanh toán bổ sung số tiền chênh lệch <strong>+{formatVND(excess)}</strong> trong vòng 3 ngày làm việc. Quý khách vui lòng liên hệ nhân viên hoặc thanh toán tại quầy atelier.
-                      </p>
-                    </div>
-                  ) : penalty > 0 ? (
-                    <p className="mt-2 text-xs text-stone-500 italic">
-                      * Mức khấu trừ đã được thẩm định tự động và kiểm tra xác nhận bởi chuyên viên cửa hàng.
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })()}
-
-            {/* Inspection Session List */}
-            <div className="space-y-6">
-              <h4 className="text-sm font-semibold text-ink">
-                Chi tiết kết quả thẩm định ({inspectionSessions.length})
-              </h4>
-
-              {loadingInspections ? (
-                <div className="flex flex-col items-center justify-center py-10 text-stone-400">
-                  <Loader2 className="h-8 w-8 animate-spin text-lotus" />
-                  <p className="mt-2 text-xs">Đang tải biên bản và ảnh đối chiếu...</p>
-                </div>
-              ) : inspectionSessions.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
-                  Chưa có biên bản kiểm tra chi tiết nào được lưu cho đơn này.
-                </div>
-              ) : (
-                inspectionSessions.map((session, sIdx) => {
-                  const garmentName = session.asset?.garment?.name || "Trang phục";
-                  const garmentValue = Number(session.asset?.purchaseCost) || Number(session.aiComparisonResult?.garmentValue) || 0;
-                  const isPendingApproval = session.status === "pending_manager_approval";
-
-                  return (
-                    <div
-                      key={session.id || sIdx}
-                      className="rounded-xl border border-stone-200 bg-white p-4 shadow-2xs"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold text-ink text-sm">
-                            {garmentName}
-                          </span>
-                          {session.asset?.assetCode && (
-                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-mono font-medium text-stone-700">
-                              Mã: {session.asset.assetCode}
-                            </span>
-                          )}
-                          {session.asset?.garment?.sizeLabel && (
-                            <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">
-                              Size {session.asset.garment.sizeLabel}
-                            </span>
-                          )}
-                          {garmentValue > 0 && (
-                            <span className="inline-block rounded bg-sand/40 px-2.5 py-0.5 text-xs font-semibold text-stone-800">
-                              Giá trị niêm yết: {garmentValue.toLocaleString("vi-VN")}đ
-                            </span>
-                          )}
-                          <span className="text-xs text-stone-400">
-                            {new Date(session.createdAt).toLocaleString("vi-VN")}
-                          </span>
-                          {session.inspector && (
-                            <span className="text-xs text-stone-500">
-                              • Chuyên viên: {session.inspector.fullName}
-                            </span>
-                          )}
-                        </div>
-                        <div>
-                          {session.status === "completed" ? (
-                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-200">
-                              Đã hoàn tất thẩm định
-                            </span>
-                          ) : isPendingApproval ? (
-                            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 border border-amber-200">
-                              Đang chờ Quản lý đối soát
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
-                              Trạng thái: {session.status === "in_progress" ? "Đang kiểm tra" : session.status}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Thông báo nhẹ nhàng khi đang chờ quản lý duyệt */}
-                      {isPendingApproval && (
-                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
-                          <Clock className="h-4 w-4 shrink-0 text-amber-600" />
-                          <span>Biên bản đang được Quản lý thẩm định và đối soát để đảm bảo mức bồi hoàn chuẩn xác và hợp lý nhất cho quý khách.</span>
-                        </div>
-                      )}
-
-                      {/* Integrity score */}
-                      {session.aiComparisonResult?.conditionScore !== undefined && session.aiComparisonResult?.conditionScore !== null && (() => {
-                        const score = Math.max(0, Math.min(100, Number(session.aiComparisonResult.conditionScore) || 0));
-                        const loss = 100 - score;
-                        return (
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-mist px-3 py-2 text-xs">
-                            <div className="space-y-0.5">
-                              <span className="font-semibold text-stone-700">Đánh giá chất lượng sau thuê:</span>
-                              {garmentValue > 0 && (
-                                <p className="text-[11px] text-stone-500">
-                                  Cơ sở định giá trang phục: <strong className="text-stone-800">{garmentValue.toLocaleString("vi-VN")}đ</strong>
-                                </p>
-                              )}
-                            </div>
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 font-medium shadow-2xs">
-                              <span className="text-stone-700">Độ nguyên vẹn: <strong className="font-bold text-ink">{score}/100</strong></span>
-                              {loss > 0 ? (
-                                <span className="font-bold text-amber-800">(Hao tổn {loss}%)</span>
-                              ) : (
-                                <span className="font-bold text-emerald-700">(Hoàn hảo 100%)</span>
-                              )}
-                            </span>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Staff note */}
-                      {session.note && (
-                        <div className="mt-3 text-xs text-stone-600 bg-stone-50 rounded-lg p-2.5 border border-stone-100">
-                          <span className="font-semibold text-stone-700">Ghi chú nhân viên: </span>
-                          {session.note}
-                        </div>
-                      )}
-
-                      {/* Findings table */}
-                      <div className="mt-4">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
-                          Ghi nhận hư tổn / hao mòn ({session.findings?.length ?? 0})
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
+                        <span className="text-xs text-stone-500 block">Tiền cọc ban đầu</span>
+                        <span className="text-base font-semibold text-ink">
+                          {formatVND(deposit)}
                         </span>
-                        {(!session.findings || session.findings.length === 0) ? (
-                          <p className="text-xs text-emerald-700 bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-100">
-                            ✓ Không phát hiện lỗi hoặc hư hỏng nào. Trang phục đạt chuẩn tốt.
-                          </p>
-                        ) : (
-                          <div className="overflow-x-auto rounded-lg border border-stone-200">
-                            <table className="min-w-full text-left text-xs">
-                              <thead className="bg-stone-50 text-stone-600 border-b border-stone-200">
-                                <tr>
-                                  <th className="px-3 py-2 font-semibold">Loại vấn đề</th>
-                                  <th className="px-3 py-2 font-semibold">Mức độ</th>
-                                  <th className="px-3 py-2 font-semibold">Chi tiết mô tả</th>
-                                  <th className="px-3 py-2 font-semibold text-right">Phí khấu trừ</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-stone-100">
-                                {session.findings.map((f, fIdx) => {
-                                  const hasManagerFinding = session.findings.some((item) => item.findingType?.startsWith("[Quản lý"));
-                                  const isStaffProposal = f.findingType?.startsWith("[Staff");
-                                  const isManagerApproval = f.findingType?.startsWith("[Quản lý phê duyệt]");
-                                  const isManagerReject = f.findingType?.startsWith("[Quản lý từ chối]");
-                                  const cleanType = (f.findingType || "Hao mòn")
-                                    .replace(/^\[(Staff thẩm định|Staff đề xuất|Quản lý phê duyệt|Quản lý từ chối phạt)\]\s*/i, "")
-                                    .trim();
+                      </div>
+                      <div className="rounded-lg bg-white p-3 border border-stone-200/70 shadow-2xs">
+                        <span className="text-xs text-stone-500 block">Khấu trừ hư tổn / vệ sinh</span>
+                        <span className={`text-base font-semibold ${penalty > 0 ? "text-red-600" : "text-stone-700"}`}>
+                          {penalty > 0 ? `-${formatVND(penalty)}` : "0đ"}
+                        </span>
+                      </div>
+                      <div className={`rounded-lg p-3 border shadow-2xs ${excess > 0 ? "bg-red-100/80 border-red-300" : "bg-emerald-50 border-emerald-200"
+                        }`}>
+                        <span className={`text-xs font-medium block ${excess > 0 ? "text-red-800 font-bold" : "text-emerald-700"}`}>
+                          {excess > 0 ? "Cần bồi thường thêm" : "Thực hoàn ví cọc"}
+                        </span>
+                        <span className={`text-base font-bold ${excess > 0 ? "text-red-700" : "text-emerald-800"}`}>
+                          {excess > 0 ? `+${formatVND(excess)}` : formatVND(remaining)}
+                        </span>
+                      </div>
+                    </div>
 
-                                  return (
-                                    <tr key={f.id || fIdx} className={`hover:bg-stone-50/50 ${isStaffProposal && hasManagerFinding ? "opacity-75 bg-stone-50/40" : ""}`}>
-                                      <td className="px-3 py-2 font-medium text-ink">
-                                        <div>{cleanType}</div>
-                                        {isStaffProposal && (
-                                          <span className="inline-block rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
-                                            Nhân viên thẩm định (Đề xuất)
-                                          </span>
-                                        )}
-                                        {isManagerApproval && (
-                                          <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
-                                            Quản lý phê duyệt (Chính thức)
-                                          </span>
-                                        )}
-                                        {isManagerReject && (
-                                          <span className="inline-block rounded bg-stone-200 px-1.5 py-0.5 text-[10px] font-bold text-stone-600">
-                                            Quản lý từ chối phạt
-                                          </span>
-                                        )}
-                                      </td>
-                                      <td className="px-3 py-2">
-                                        <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${
-                                          f.severity === "high" || f.severity === "severe" || f.severity === "nang"
-                                            ? "bg-red-100 text-red-700"
-                                            : f.severity === "medium" || f.severity === "vua"
-                                            ? "bg-amber-100 text-amber-700"
-                                            : "bg-blue-50 text-blue-700"
-                                        }`}>
-                                          {f.severity || "Nhẹ"}
-                                        </span>
-                                      </td>
-                                      <td className="px-3 py-2 text-stone-600 max-w-xs">
-                                        <p className="whitespace-pre-line leading-relaxed">{f.description || "Chi tiết kiểm tra định kỳ"}</p>
-                                      </td>
-                                      <td className="px-3 py-2 text-right">
-                                        <div>
-                                          <span className={`font-semibold tabular-nums ${
-                                            isStaffProposal && hasManagerFinding
-                                              ? "line-through text-stone-400 text-xs"
-                                              : "text-amber-700"
-                                          }`}>
-                                            {formatVND(f.penaltyAmount || 0)}
-                                          </span>
-                                          {Number(f.penaltyAmount) > 0 && garmentValue > 0 && (!isStaffProposal || !hasManagerFinding) && (
-                                            <p className="text-[10px] text-stone-500 font-normal mt-0.5">
-                                              ~{Math.round(Number(f.penaltyAmount) / garmentValue * 100)}% giá trị áo
-                                            </p>
-                                          )}
-                                          {isStaffProposal && hasManagerFinding && (
-                                            <p className="text-[10px] text-stone-400">Mức đề xuất cũ</p>
+                    {excess > 0 ? (
+                      <div className="mt-3.5 rounded-xl border border-red-300 bg-white p-3.5 shadow-2xs">
+                        <div className="flex items-center gap-2 text-red-800 font-bold text-xs uppercase tracking-wide mb-1.5">
+                          <ShieldAlert className="h-4 w-4 shrink-0 text-red-600" />
+                          <span>Thông báo bồi thường vượt cọc theo biên bản</span>
+                        </div>
+                        <p className="text-xs text-red-900/90 leading-relaxed">
+                          Do trang phục phát sinh hư hại nặng không thể phục hồi, tổng tổn thất thực tế là <strong>{formatVND(penalty)}</strong>, vượt quá khoản tiền cọc ban đầu (<strong>{formatVND(deposit)}</strong>).
+                          Căn cứ theo Điều khoản thuê trang phục & Biên bản bàn giao đã xác nhận, quý khách có trách nhiệm thanh toán bổ sung số tiền chênh lệch <strong>+{formatVND(excess)}</strong> trong vòng 3 ngày làm việc. Quý khách vui lòng liên hệ nhân viên hoặc thanh toán tại quầy atelier.
+                        </p>
+                      </div>
+                    ) : penalty > 0 ? (
+                      <p className="mt-2 text-xs text-stone-500 italic">
+                        * Mức khấu trừ đã được thẩm định tự động và kiểm tra xác nhận bởi chuyên viên cửa hàng.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })()}
+
+              {/* Inspection Session List */}
+              <div className="space-y-6">
+                <h4 className="text-sm font-semibold text-ink">
+                  Chi tiết kết quả thẩm định ({inspectionSessions.length})
+                </h4>
+
+                {loadingInspections ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-stone-400">
+                    <Loader2 className="h-8 w-8 animate-spin text-lotus" />
+                    <p className="mt-2 text-xs">Đang tải biên bản và ảnh đối chiếu...</p>
+                  </div>
+                ) : inspectionSessions.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
+                    Chưa có biên bản kiểm tra chi tiết nào được lưu cho đơn này.
+                  </div>
+                ) : (
+                  inspectionSessions.map((session, sIdx) => {
+                    const garmentName = session.asset?.garment?.name || "Trang phục";
+                    const garmentValue = Number(session.asset?.purchaseCost) || Number(session.aiComparisonResult?.garmentValue) || 0;
+                    const isPendingApproval = session.status === "pending_manager_approval";
+
+                    return (
+                      <div
+                        key={session.id || sIdx}
+                        className="rounded-xl border border-stone-200 bg-white p-4 shadow-2xs"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-ink text-sm">
+                              {garmentName}
+                            </span>
+                            {session.asset?.assetCode && (
+                              <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-mono font-medium text-stone-700">
+                                Mã: {session.asset.assetCode}
+                              </span>
+                            )}
+                            {session.asset?.garment?.sizeLabel && (
+                              <span className="inline-block rounded bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-600">
+                                Size {session.asset.garment.sizeLabel}
+                              </span>
+                            )}
+                            {garmentValue > 0 && (
+                              <span className="inline-block rounded bg-sand/40 px-2.5 py-0.5 text-xs font-semibold text-stone-800">
+                                Giá trị niêm yết: {garmentValue.toLocaleString("vi-VN")}đ
+                              </span>
+                            )}
+                            <span className="text-xs text-stone-400">
+                              {new Date(session.createdAt).toLocaleString("vi-VN")}
+                            </span>
+                            {session.inspector && (
+                              <span className="text-xs text-stone-500">
+                                • Chuyên viên: {session.inspector.fullName}
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            {session.status === "completed" ? (
+                              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 border border-emerald-200">
+                                Đã hoàn tất thẩm định
+                              </span>
+                            ) : isPendingApproval ? (
+                              <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 border border-amber-200">
+                                Đang chờ Quản lý đối soát
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-xs font-medium text-stone-700 capitalize">
+                                Trạng thái: {session.status === "in_progress" ? "Đang kiểm tra" : session.status}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Thông báo nhẹ nhàng khi đang chờ quản lý duyệt */}
+                        {isPendingApproval && (
+                          <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900">
+                            <Clock className="h-4 w-4 shrink-0 text-amber-600" />
+                            <span>Biên bản đang được Quản lý thẩm định và đối soát để đảm bảo mức bồi hoàn chuẩn xác và hợp lý nhất cho quý khách.</span>
+                          </div>
+                        )}
+
+                        {/* Integrity score */}
+                        {session.aiComparisonResult?.conditionScore !== undefined && session.aiComparisonResult?.conditionScore !== null && (() => {
+                          const score = Math.max(0, Math.min(100, Number(session.aiComparisonResult.conditionScore) || 0));
+                          const loss = 100 - score;
+                          return (
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sand bg-mist px-3 py-2 text-xs">
+                              <div className="space-y-0.5">
+                                <span className="font-semibold text-stone-700">Đánh giá chất lượng sau thuê:</span>
+                                {garmentValue > 0 && (
+                                  <p className="text-[11px] text-stone-500">
+                                    Cơ sở định giá trang phục: <strong className="text-stone-800">{garmentValue.toLocaleString("vi-VN")}đ</strong>
+                                  </p>
+                                )}
+                              </div>
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 font-medium shadow-2xs">
+                                <span className="text-stone-700">Độ nguyên vẹn: <strong className="font-bold text-ink">{score}/100</strong></span>
+                                {loss > 0 ? (
+                                  <span className="font-bold text-amber-800">(Hao tổn {loss}%)</span>
+                                ) : (
+                                  <span className="font-bold text-emerald-700">(Hoàn hảo 100%)</span>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Staff note */}
+                        {session.note && (
+                          <div className="mt-3 text-xs text-stone-600 bg-stone-50 rounded-lg p-2.5 border border-stone-100">
+                            <span className="font-semibold text-stone-700">Ghi chú nhân viên: </span>
+                            {session.note}
+                          </div>
+                        )}
+
+                        {/* Findings table */}
+                        <div className="mt-4">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                            Ghi nhận hư tổn / hao mòn ({session.findings?.length ?? 0})
+                          </span>
+                          {(!session.findings || session.findings.length === 0) ? (
+                            <p className="text-xs text-emerald-700 bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-100">
+                              ✓ Không phát hiện lỗi hoặc hư hỏng nào. Trang phục đạt chuẩn tốt.
+                            </p>
+                          ) : (
+                            <div className="overflow-x-auto rounded-lg border border-stone-200">
+                              <table className="min-w-full text-left text-xs">
+                                <thead className="bg-stone-50 text-stone-600 border-b border-stone-200">
+                                  <tr>
+                                    <th className="px-3 py-2 font-semibold">Loại vấn đề</th>
+                                    <th className="px-3 py-2 font-semibold">Mức độ</th>
+                                    <th className="px-3 py-2 font-semibold">Chi tiết mô tả</th>
+                                    <th className="px-3 py-2 font-semibold text-right">Phí khấu trừ</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                  {session.findings.map((f, fIdx) => {
+                                    const hasManagerFinding = session.findings.some((item) => item.findingType?.startsWith("[Quản lý"));
+                                    const isStaffProposal = f.findingType?.startsWith("[Staff");
+                                    const isManagerApproval = f.findingType?.startsWith("[Quản lý phê duyệt]");
+                                    const isManagerReject = f.findingType?.startsWith("[Quản lý từ chối]");
+                                    const cleanType = (f.findingType || "Hao mòn")
+                                      .replace(/^\[(Staff thẩm định|Staff đề xuất|Quản lý phê duyệt|Quản lý từ chối phạt)\]\s*/i, "")
+                                      .trim();
+
+                                    return (
+                                      <tr key={f.id || fIdx} className={`hover:bg-stone-50/50 ${isStaffProposal && hasManagerFinding ? "opacity-75 bg-stone-50/40" : ""}`}>
+                                        <td className="px-3 py-2 font-medium text-ink">
+                                          <div>{cleanType}</div>
+                                          {isStaffProposal && (
+                                            <span className="inline-block rounded bg-stone-200/80 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
+                                              Nhân viên thẩm định (Đề xuất)
+                                            </span>
                                           )}
                                           {isManagerApproval && (
-                                            <p className="text-[10px] text-emerald-700 font-semibold">Khấu trừ thực tế</p>
+                                            <span className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                                              Quản lý phê duyệt (Chính thức)
+                                            </span>
                                           )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                                          {isManagerReject && (
+                                            <span className="inline-block rounded bg-stone-200 px-1.5 py-0.5 text-[10px] font-bold text-stone-600">
+                                              Quản lý từ chối phạt
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2">
+                                          <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${f.severity === "high" || f.severity === "severe" || f.severity === "nang"
+                                              ? "bg-red-100 text-red-700"
+                                              : f.severity === "medium" || f.severity === "vua"
+                                                ? "bg-amber-100 text-amber-700"
+                                                : "bg-blue-50 text-blue-700"
+                                            }`}>
+                                            {f.severity || "Nhẹ"}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-stone-600 max-w-xs">
+                                          <p className="whitespace-pre-line leading-relaxed">{f.description || "Chi tiết kiểm tra định kỳ"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 text-right">
+                                          <div>
+                                            <span className={`font-semibold tabular-nums ${isStaffProposal && hasManagerFinding
+                                                ? "line-through text-stone-400 text-xs"
+                                                : "text-amber-700"
+                                              }`}>
+                                              {formatVND(f.penaltyAmount || 0)}
+                                            </span>
+                                            {Number(f.penaltyAmount) > 0 && garmentValue > 0 && (!isStaffProposal || !hasManagerFinding) && (
+                                              <p className="text-[10px] text-stone-500 font-normal mt-0.5">
+                                                ~{Math.round(Number(f.penaltyAmount) / garmentValue * 100)}% giá trị áo
+                                              </p>
+                                            )}
+                                            {isStaffProposal && hasManagerFinding && (
+                                              <p className="text-[10px] text-stone-400">Mức đề xuất cũ</p>
+                                            )}
+                                            {isManagerApproval && (
+                                              <p className="text-[10px] text-emerald-700 font-semibold">Khấu trừ thực tế</p>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actual photos */}
+                        {session.photos && session.photos.length > 0 && (
+                          <div className="mt-4">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                              Hình ảnh chụp thực tế lúc hoàn trả ({session.photos.length})
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {session.photos.map((p, pIdx) => (
+                                <button
+                                  key={p.id || pIdx}
+                                  type="button"
+                                  onClick={() => setCustomerLightboxUrl(p.imageUrl)}
+                                  className="group relative h-20 w-20 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-lotus transition"
+                                >
+                                  <img
+                                    src={p.imageUrl}
+                                    alt={p.photoType || "Ảnh kiểm tra"}
+                                    className="h-full w-full object-cover transition group-hover:scale-105"
+                                  />
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                                    <ZoomIn className="h-5 w-5 text-white" />
+                                  </div>
+                                  {p.photoType && (
+                                    <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white text-center py-0.5 truncate">
+                                      {p.photoType}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Handover comparison photos if any */}
+                        {session.handoverImages && session.handoverImages.length > 0 && (
+                          <div className="mt-4 border-t border-dashed border-stone-200 pt-3">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
+                              Ảnh bàn giao ban đầu ({session.handoverImages.length})
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {session.handoverImages.map((imgUrl, hIdx) => (
+                                <button
+                                  key={hIdx}
+                                  type="button"
+                                  onClick={() => setCustomerLightboxUrl(imgUrl)}
+                                  className="group relative h-16 w-16 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-jade transition"
+                                >
+                                  <img
+                                    src={imgUrl}
+                                    alt="Ảnh bàn giao"
+                                    className="h-full w-full object-cover transition group-hover:scale-105"
+                                  />
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                                    <ZoomIn className="h-4 w-4 text-white" />
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
-
-                      {/* Actual photos */}
-                      {session.photos && session.photos.length > 0 && (
-                        <div className="mt-4">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
-                            Hình ảnh chụp thực tế lúc hoàn trả ({session.photos.length})
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {session.photos.map((p, pIdx) => (
-                              <button
-                                key={p.id || pIdx}
-                                type="button"
-                                onClick={() => setCustomerLightboxUrl(p.imageUrl)}
-                                className="group relative h-20 w-20 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-lotus transition"
-                              >
-                                <img
-                                  src={p.imageUrl}
-                                  alt={p.photoType || "Ảnh kiểm tra"}
-                                  className="h-full w-full object-cover transition group-hover:scale-105"
-                                />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
-                                  <ZoomIn className="h-5 w-5 text-white" />
-                                </div>
-                                {p.photoType && (
-                                  <span className="absolute bottom-0 inset-x-0 bg-black/60 text-[9px] text-white text-center py-0.5 truncate">
-                                    {p.photoType}
-                                  </span>
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Handover comparison photos if any */}
-                      {session.handoverImages && session.handoverImages.length > 0 && (
-                        <div className="mt-4 border-t border-dashed border-stone-200 pt-3">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-stone-500 block mb-2">
-                            Ảnh bàn giao ban đầu ({session.handoverImages.length})
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {session.handoverImages.map((imgUrl, hIdx) => (
-                              <button
-                                key={hIdx}
-                                type="button"
-                                onClick={() => setCustomerLightboxUrl(imgUrl)}
-                                className="group relative h-16 w-16 overflow-hidden rounded-lg border border-stone-200 bg-stone-100 hover:ring-2 hover:ring-jade transition"
-                              >
-                                <img
-                                  src={imgUrl}
-                                  alt="Ảnh bàn giao"
-                                  className="h-full w-full object-cover transition group-hover:scale-105"
-                                />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
-                                  <ZoomIn className="h-4 w-4 text-white" />
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
 
             {/* Modal Footer (Cố định ở đáy) */}

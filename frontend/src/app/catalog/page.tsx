@@ -17,6 +17,7 @@ import { addToCart, cartCount, removeFromCart, getCart } from "@/lib/cart";
 import { getProductAdvisor, type AIAdvisorTopic, type AIAdvisorProduct } from "@/lib/chat";
 import { OptimizedImage } from "@/components/common/optimized-image";
 import { WishlistButton } from "@/components/common/wishlist-button";
+import { MascotEmptyState } from "@/components/mascot";
 import {
   Search,
   Sparkles,
@@ -141,11 +142,10 @@ function CatalogGarmentCard({
                 key={s.garmentSizeId}
                 type="button"
                 onClick={() => onSelectSize(s.garmentSizeId)}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${
-                  isSel
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase transition ${isSel
                     ? "bg-lotus text-white"
                     : "bg-parchment text-stone-600 hover:bg-lotus/15"
-                }`}
+                  }`}
               >
                 {s.sizeLabel ?? "—"}
               </button>
@@ -644,11 +644,10 @@ export default function CatalogPage() {
                     key={cat}
                     type="button"
                     onClick={() => setActiveCategory(cat)}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-                      isSelected
+                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${isSelected
                         ? "bg-lotus text-white shadow-xs"
                         : "border border-sand bg-white text-stone-700 hover:border-lotus hover:text-lotus"
-                    }`}
+                      }`}
                   >
                     {cat === "all" ? "Tất cả cổ phục" : cat}
                   </button>
@@ -709,11 +708,10 @@ export default function CatalogPage() {
                           key={s.garmentSizeId}
                           type="button"
                           onClick={() => handleSelectSize(featured.slug, s.garmentSizeId)}
-                          className={`min-w-[40px] rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                            sel
+                          className={`min-w-[40px] rounded-lg px-3 py-1.5 text-xs font-semibold transition ${sel
                               ? "bg-lotus text-white shadow-xs"
                               : "border border-sand bg-parchment text-stone-700 hover:border-lotus"
-                          }`}
+                            }`}
                         >
                           Size {s.sizeLabel ?? "Chuẩn"}
                         </button>
@@ -780,9 +778,8 @@ export default function CatalogPage() {
                   </button>
 
                   <Link
-                    href={`/try-on?garmentSizeId=${
-                      selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId
-                    }`}
+                    href={`/try-on?garmentSizeId=${selectedSizes[featured.slug] ?? featured.sizes[0]?.garmentSizeId
+                      }`}
                     className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-6 py-3 text-xs font-semibold uppercase tracking-wider text-ink shadow-xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
                   >
                     <Camera className="h-4 w-4 text-lotus" />
@@ -811,15 +808,16 @@ export default function CatalogPage() {
               ))}
             </div>
           ) : groups.length === 0 ? (
-            <div className="rounded-2xl border border-sand bg-white py-16 text-center shadow-xs">
-              <ShoppingBag className="mx-auto h-12 w-12 text-stone-300" />
-              <h3 className="mt-3 font-display text-xl font-bold text-stone-800">
-                Không tìm thấy y phục phù hợp
-              </h3>
-              <p className="mt-1 text-xs text-stone-500">
-                Vui lòng thử đổi từ khóa tìm kiếm hoặc chọn danh mục cổ phục khác.
-              </p>
-            </div>
+            <MascotEmptyState
+              mood="empty"
+              title="Không tìm thấy y phục phù hợp"
+              description="Bé Nghê đã lùng sục khắp rương y phục mà chưa thấy bộ phục trang bạn yêu cầu. Hãy thử đổi từ khóa tìm kiếm hoặc chọn triều đại khác nhé!"
+              actionText="Xóa bộ lọc tìm kiếm"
+              onAction={() => {
+                setSearchQuery("");
+                setActiveCategory("all");
+              }}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {groups
