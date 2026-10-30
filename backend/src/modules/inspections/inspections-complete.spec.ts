@@ -35,6 +35,7 @@ function createCompleteService(accessoryRows: Array<{ accessoryAssetId: string |
     maintenanceJob: { create: vi.fn().mockResolvedValue({ id: "mj-1" }) },
     inspectionFinding: {
       aggregate: vi.fn().mockResolvedValue({ _sum: { penaltyAmount: 0 } }),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     booking: {
       update: vi.fn().mockResolvedValue({ id: BOOKING_ID, status: "inspection_pending", depositTotal: 0, penaltyTotal: 0 }),
@@ -52,6 +53,8 @@ function createCompleteService(accessoryRows: Array<{ accessoryAssetId: string |
   };
   const prisma = {
     runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+    // Service đọc lại session bằng prisma (ngoài transaction) để emit realtime và serialize.
+    inspectionSession: tx.inspectionSession,
   };
   const realtime = {
     inspectionChanged: vi.fn(), assetChanged: vi.fn(),
