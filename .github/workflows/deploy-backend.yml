@@ -67,7 +67,9 @@ jobs:
             # Generate Prisma client on VPS
             npx prisma generate
 
-            # Restart PM2
-            pm2 restart be-api || pm2 start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"
+            # Restart bằng ecosystem config (đảm bảo .env được load đúng)
+            pm2 delete be-api || true
+            pm2 start ecosystem.config.js
+            pm2 save
 
             echo "✅ Deploy complete"
