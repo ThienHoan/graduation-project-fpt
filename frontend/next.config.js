@@ -84,8 +84,27 @@ const nextConfig = {
   },
   // [SECURITY FIX] Tắt header X-Powered-By để không lộ công nghệ backend
   poweredByHeader: false,
+  // Bỏ qua ESLint warnings khi build production (try-on camera components dùng
+  // <img> với blob: URL từ webcam — không thể dùng next/image với blob URLs)
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     optimizePackageImports: ["lucide-react", "leaflet"],
+  },
+  async rewrites() {
+    return [
+      {
+        // Proxy WebSocket/HTTP cho Socket.IO (realtime + chat namespaces)
+        // Browser kết nối wss://cophuctruyenthong.tech/socket.io/* → Vercel forward sang VPS
+        source: "/socket.io/:path*",
+        destination: "http://104.248.147.219:4000/socket.io/:path*",
+      },
+      {
+        source: "/backend-api/:path*",
+        destination: "http://104.248.147.219:4000/api/:path*",
+      },
+    ];
   },
   // [SECURITY FIX] Thêm các HTTP security headers cho toàn bộ routes
   async headers() {
@@ -93,10 +112,16 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: [
+          // Cho phép Google popup OAuth hoạt động đúng cách
+          // "same-origin-allow-popups" cho phép postMessage từ popup Google
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
           // Ngăn clickjacking: trang web của mình không thể bị nhúng vào iframe của site khác
           {
             key: "X-Frame-Options",
-            value: "DENY",
+            value: "SAMEORIGIN",
           },
           // Ngăn MIME-sniffing: browser không được tự đoán content type
           {

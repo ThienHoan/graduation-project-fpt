@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { cartCount } from "@/lib/cart";
 import { NotificationBell } from "@/components/notifications/notification-bell";
-import { SoundToggle } from "@/components/common/sound-toggle";
 import { playWoodTap, playHoverTick } from "@/lib/sound-fx";
 import {
   ShoppingBag,
@@ -98,23 +98,26 @@ export function CustomerNavbar({
             : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
         }`}
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
           {/* Logo & Nhận diện thương hiệu chính thức */}
-          <div className="flex items-center gap-6 lg:gap-8">
+          <div className="flex items-center gap-4 lg:gap-5 xl:gap-7 min-w-0 shrink-0">
             <Link
               href="/"
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
-              className="inline-flex items-center gap-2.5 sm:gap-3 py-1 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+              className="inline-flex shrink-0 items-center gap-2.5 sm:gap-3 py-1 whitespace-nowrap transition-transform hover:scale-[1.02] active:scale-[0.98]"
             >
-              <img
+              <Image
                 src="/brand/logo-mark.svg"
                 alt="Logo Cổ Phục Hoàng Thành"
+                width={40}
+                height={40}
                 className="h-9 w-9 sm:h-10 sm:w-10 shrink-0 drop-shadow-[0_2px_10px_rgba(212,175,55,0.4)]"
+                priority
               />
-              <div className="flex flex-col">
+              <div className="flex flex-col shrink-0 whitespace-nowrap">
                 <span
-                  className={`font-display text-xl sm:text-2xl font-bold tracking-wide leading-none ${
+                  className={`font-display text-xl sm:text-2xl font-bold tracking-wide leading-none whitespace-nowrap ${
                     isDark
                       ? "text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-300 bg-clip-text drop-shadow-[0_2px_10px_rgba(251,191,36,0.3)]"
                       : "text-lotus"
@@ -123,7 +126,7 @@ export function CustomerNavbar({
                   Cổ Phục
                 </span>
                 <span
-                  className={`text-[9px] sm:text-[10px] tracking-[0.22em] font-medium uppercase mt-0.5 ${
+                  className={`text-[9px] sm:text-[10px] tracking-[0.22em] font-medium uppercase mt-0.5 whitespace-nowrap ${
                     isDark ? "text-stone-400" : "text-stone-500"
                   }`}
                 >
@@ -133,7 +136,7 @@ export function CustomerNavbar({
             </Link>
 
             {/* Desktop Navigation Links */}
-            <nav className="hidden items-center gap-5 lg:gap-6 md:flex text-sm font-medium">
+            <nav className="hidden items-center gap-2.5 lg:gap-3.5 xl:gap-5 lg:flex text-xs lg:text-[13px] xl:text-sm font-medium shrink-0">
               {navItems.map((item) => {
                 const isExplicitActive = active === item.key;
                 const isPathActive = pathname === item.href && !active;
@@ -144,7 +147,7 @@ export function CustomerNavbar({
                     href={item.href}
                     onClick={(e) => playWoodTap({ event: e })}
                     onMouseEnter={(e) => playHoverTick({ event: e })}
-                    className={`py-2 transition duration-200 ${
+                    className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${
                       isHighlighted
                         ? isDark
                           ? "border-b-2 border-amber-400 font-bold text-amber-300"
@@ -162,16 +165,13 @@ export function CustomerNavbar({
           </div>
 
           {/* Right Action Tools */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Âm thanh di sản */}
-            {showSoundToggle && <SoundToggle variant="compact" />}
-
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
             {/* Nút hành động nhanh "Thuê Ngay" */}
             <Link
               href="/catalog"
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
-              className={`hidden sm:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition active:scale-[0.98] ${
+              className={`hidden xl:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition active:scale-[0.98] ${
                 isDark
                   ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 shadow-md hover:opacity-90"
                   : "bg-lotus text-white hover:bg-oxblood shadow-xs"
@@ -321,7 +321,7 @@ export function CustomerNavbar({
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition md:hidden ${
+              className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition lg:hidden ${
                 isDark
                   ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400"
                   : "border border-sand bg-white text-ink hover:border-lotus"
@@ -336,7 +336,7 @@ export function CustomerNavbar({
 
       {/* Mobile Drawer (Menu trượt di động đồng bộ) */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={() => setMobileOpen(false)}
@@ -352,7 +352,7 @@ export function CustomerNavbar({
               }`}
             >
               <div className="flex items-center gap-2.5">
-                <img src="/brand/logo-mark.svg" alt="Logo" className="h-7 w-7" />
+                <Image src="/brand/logo-mark.svg" alt="Logo" width={28} height={28} className="h-7 w-7 shrink-0" />
                 <span
                   className={`font-display text-xl font-bold ${
                     isDark

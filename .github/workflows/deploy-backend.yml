@@ -1,0 +1,73 @@
+name: Deploy Backend to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        working-directory: backend
+        run: pnpm prisma generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Build NestJS
+        working-directory: backend
+        run: pnpm exec nest build
+
+      - name: Copy dist to VPS via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "backend/dist"
+          target: "~/graduation-project-fpt/backend"
+          strip_components: 2
+
+      - name: Restart Backend on VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/graduation-project-fpt/backend
+
+            # Pull latest source (for package.json, prisma schema, .env)
+            git pull origin main
+
+            # Install production dependencies only
+            pnpm install --prod --frozen-lockfile
+
+            # Generate Prisma client on VPS
+            npx prisma generate
+
+            # Restart PM2
+            pm2 restart be-api || pm2 start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"
+
+            echo "✅ Deploy complete"
