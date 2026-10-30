@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { AppRole, Notification as NotificationRow, Prisma } from "@prisma/client";
 import * as nodemailer from "nodemailer";
@@ -173,6 +173,7 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -366,9 +367,14 @@ export class NotificationsService {
       });
     }
 
+    // Gửi email ở nền: SMTP chậm/bị chặn (vd. VPS chặn cổng 587) không được làm treo
+    // request API của khách (Vercel proxy sẽ trả 502). sendEmail tự ghi log khi thất bại.
     let emailStatus: NotificationSendStatus | null = null;
     if (activeChannels.includes("email") && email) {
-      emailStatus = await this.sendEmail(template, email, data, input.templateKey);
+      emailStatus = { status: "skipped", provider: "smtp", reason: "queued-background" };
+      void this.sendEmail(template, email, data, input.templateKey).catch((error) => {
+        this.logger.warn(`Background email failed (${input.templateKey}): ${error instanceof Error ? error.message : String(error)}`);
+      });
     }
 
     await this.recordLog(
@@ -523,17 +529,21 @@ export class NotificationsService {
       return { status: "skipped", provider: "smtp", reason: "smtp-not-configured" };
     }
 
+    // Timeout ngắn để không treo ~2 phút (mặc định nodemailer) khi không kết nối được SMTP.
+    const timeouts = { connectionTimeout: 8000, greetingTimeout: 8000, socketTimeout: 15000 };
     const transporter = nodemailer.createTransport(
       settings.smtp.service
         ? {
             service: settings.smtp.service,
             auth: { user: username, pass: password },
+            ...timeouts,
           }
         : {
             host: settings.smtp.host ?? "smtp.gmail.com",
             port: settings.smtp.port ?? 587,
             secure: settings.smtp.secure,
             auth: { user: username, pass: password },
+            ...timeouts,
           },
     );
 
