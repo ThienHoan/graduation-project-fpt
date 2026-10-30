@@ -90,7 +90,7 @@ describe("RefundsService", () => {
     });
 
     it("throws NotFoundException when booking does not exist", async () => {
-      const { service, defaultBooking } = createService();
+      const { service } = createService();
       vi.spyOn(service["prisma"].booking, "findUnique").mockResolvedValue(null);
 
       await expect(service.calculate("non-existent")).rejects.toThrow(NotFoundException);
