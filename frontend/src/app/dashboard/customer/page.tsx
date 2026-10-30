@@ -9,6 +9,8 @@ import {
   getCustomerRefund,
   getDeliveryTrack,
   getCustomerBookingInspections,
+  getGarmentById,
+  getGarmentsGrouped,
 } from "@/lib/api";
 import type {
   BookingResponse,
@@ -76,6 +78,114 @@ function formatDate(iso: string) {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
+}
+
+function CustomerGarmentThumbnail({
+  imageUrl,
+  garmentId,
+  garmentName,
+  sizeLabel,
+  className = "relative h-28 w-28 sm:h-32 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs",
+}: {
+  imageUrl?: string | null;
+  garmentId?: string | null;
+  garmentName?: string | null;
+  sizeLabel?: string | null;
+  className?: string;
+}) {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(imageUrl ?? null);
+  const [hasError, setHasError] = useState(false);
+  const [resolving, setResolving] = useState(!imageUrl);
+
+  useEffect(() => {
+    if (imageUrl) {
+      setResolvedUrl(imageUrl);
+      setHasError(false);
+      setResolving(false);
+      return;
+    }
+
+    let isMounted = true;
+    setResolving(true);
+
+    async function resolve() {
+      // 1. Thử lấy ảnh trực tiếp từ garmentId nếu có
+      if (garmentId) {
+        try {
+          const res = await getGarmentById(garmentId);
+          if (isMounted && res.success && res.data) {
+            const firstImg = res.data.images?.[0]?.imageUrl;
+            if (firstImg) {
+              setResolvedUrl(firstImg);
+              setResolving(false);
+              return;
+            }
+          }
+        } catch {
+          // Bỏ qua lỗi, tiếp tục fallback sang bước 2
+        }
+      }
+
+      // 2. Fallback: Tìm theo tên trang phục trong danh mục (hỗ trợ các đơn gắn với bản ghi cũ hoặc seed ban đầu)
+      if (garmentName) {
+        try {
+          const searchRes = await getGarmentsGrouped(garmentName.trim());
+          if (isMounted && searchRes.success && searchRes.data && searchRes.data.length > 0) {
+            const match =
+              searchRes.data.find(
+                (g) => g.name.toLowerCase().trim() === garmentName.toLowerCase().trim(),
+              ) ?? searchRes.data[0];
+            const fallbackImg = match?.imageUrl || match?.images?.[0]?.imageUrl;
+            if (fallbackImg) {
+              setResolvedUrl(fallbackImg);
+              setResolving(false);
+              return;
+            }
+          }
+        } catch {
+          // Fallback cuối
+        }
+      }
+
+      if (isMounted) {
+        setResolving(false);
+      }
+    }
+
+    void resolve();
+    return () => {
+      isMounted = false;
+    };
+  }, [imageUrl, garmentId, garmentName]);
+
+  return (
+    <div className={className}>
+      {resolvedUrl && !hasError ? (
+        <img
+          src={resolvedUrl}
+          alt={garmentName ?? "Cổ phục"}
+          onError={() => setHasError(true)}
+          className="h-full w-full object-cover transition-opacity duration-300"
+          loading="lazy"
+        />
+      ) : resolving ? (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-sand/30 text-stone-400 p-2 text-center animate-pulse">
+          <Loader2 className="h-5 w-5 animate-spin text-lotus mb-1" />
+          <span className="text-[10px] font-medium leading-tight text-stone-500">Đang tải ảnh...</span>
+        </div>
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-sand/30 text-stone-400 p-2 text-center">
+          <Sparkles className="h-6 w-6 text-antique mb-1" />
+          <span className="text-[10px] font-medium leading-tight">Cổ phục di sản</span>
+        </div>
+      )}
+      {sizeLabel && (
+        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          Size {sizeLabel}
+        </span>
+      )}
+    </div>
+  );
 }
 
 const DEMO_DELIVERY_TRACK: DeliveryTrackData = {
@@ -747,25 +857,12 @@ export default function CustomerDashboardPage() {
                   {/* Garment Details & Financial Summary */}
                   <div className="flex flex-col sm:flex-row items-start gap-5">
                     {/* Visual Outfit Thumbnail */}
-                    <div className="relative h-28 w-28 sm:h-32 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs">
-                      {activeBooking.items[0]?.imageUrl ? (
-                        <img
-                          src={activeBooking.items[0].imageUrl}
-                          alt={activeBooking.items[0].garmentName ?? "Cổ phục"}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full flex-col items-center justify-center bg-sand/30 text-stone-400 p-2 text-center">
-                          <Sparkles className="h-6 w-6 text-antique mb-1" />
-                          <span className="text-[10px] font-medium leading-tight">Cổ phục di sản</span>
-                        </div>
-                      )}
-                      {activeBooking.items[0]?.sizeLabel && (
-                        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                          Size {activeBooking.items[0].sizeLabel}
-                        </span>
-                      )}
-                    </div>
+                    <CustomerGarmentThumbnail
+                      imageUrl={activeBooking.items[0]?.imageUrl}
+                      garmentId={activeBooking.items[0]?.garmentId}
+                      garmentName={activeBooking.items[0]?.garmentName}
+                      sizeLabel={activeBooking.items[0]?.sizeLabel}
+                    />
 
                     {/* Meta info */}
                     <div className="flex-1 min-w-0">
@@ -1097,21 +1194,29 @@ export default function CustomerDashboardPage() {
                           const st = statusOf(b.status);
                           return (
                             <tr key={b.id} className="transition hover:bg-mist/60">
-                              {/* Garment name & code */}
-                              <td className="px-5 py-4 max-w-[240px]">
-                                <div className="font-bold text-ink">
-                                  {b.items[0]?.garmentName ?? "Trang phục cổ"}
-                                </div>
-                                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-stone-400">
-                                  <span>#{b.id.slice(0, 8).toUpperCase()}</span>
-                                  {b.items[0]?.sizeLabel && (
-                                    <span>· Size {b.items[0].sizeLabel}</span>
-                                  )}
-                                  {b.items.length > 1 && (
-                                    <span className="rounded bg-sand/60 px-1 text-[9px] text-stone-600">
-                                      +{b.items.length - 1} món
-                                    </span>
-                                  )}
+                              {/* Garment name & code with thumbnail */}
+                              <td className="px-5 py-4 max-w-[280px]">
+                                <div className="flex items-center gap-3">
+                                  <CustomerGarmentThumbnail
+                                    imageUrl={b.items[0]?.imageUrl}
+                                    garmentId={b.items[0]?.garmentId}
+                                    garmentName={b.items[0]?.garmentName}
+                                    sizeLabel={b.items[0]?.sizeLabel}
+                                    className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-sand bg-stone-100 shadow-2xs"
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-ink truncate">
+                                      {b.items[0]?.garmentName ?? "Trang phục cổ"}
+                                    </div>
+                                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-stone-400">
+                                      <span>#{b.id.slice(0, 8).toUpperCase()}</span>
+                                      {b.items.length > 1 && (
+                                        <span className="rounded bg-sand/60 px-1 text-[9px] text-stone-600">
+                                          +{b.items.length - 1} món
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
                               </td>
 
@@ -1170,18 +1275,27 @@ export default function CustomerDashboardPage() {
                       const st = statusOf(b.status);
                       return (
                         <div key={b.id} className="p-4 space-y-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <h4 className="font-bold text-sm text-ink">
-                                {b.items[0]?.garmentName ?? "Trang phục cổ"}
-                              </h4>
+                          <div className="flex items-start gap-3">
+                            <CustomerGarmentThumbnail
+                              imageUrl={b.items[0]?.imageUrl}
+                              garmentId={b.items[0]?.garmentId}
+                              garmentName={b.items[0]?.garmentName}
+                              sizeLabel={b.items[0]?.sizeLabel}
+                              className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <h4 className="font-bold text-sm text-ink truncate">
+                                  {b.items[0]?.garmentName ?? "Trang phục cổ"}
+                                </h4>
+                                <span className={statusBadgeClass(st.color)}>
+                                  {st.label}
+                                </span>
+                              </div>
                               <p className="text-[11px] text-stone-400">
                                 #{b.id.slice(0, 8).toUpperCase()} · {formatDate(b.rentalStartDate)} – {formatDate(b.rentalEndDate)}
                               </p>
                             </div>
-                            <span className={statusBadgeClass(st.color)}>
-                              {st.label}
-                            </span>
                           </div>
 
                           <div className="grid grid-cols-2 gap-2 text-xs bg-mist/60 rounded-xl p-3 border border-sand/60">
