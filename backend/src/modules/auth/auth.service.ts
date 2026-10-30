@@ -393,7 +393,7 @@ export class AuthService {
       throw new UnauthorizedException("Google token không hợp lệ hoặc đã hết hạn.");
     }
 
-    const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+    const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim().replace(/^["']|["']$/g, "");
     if (!googleClientId) {
       throw new BadRequestException("Google login chưa được cấu hình.");
     }
