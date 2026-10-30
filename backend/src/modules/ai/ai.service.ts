@@ -669,7 +669,7 @@ export class AiService implements OnModuleInit {
         imageRes = await fetch(replicateUrl, { signal: controller.signal });
         clearTimeout(timer);
         if (!imageRes.ok) throw new Error(`HTTP ${imageRes.status}`);
-      } catch (directErr) {
+      } catch {
         // Fallback: Tải qua CDN Proxy an toàn vì domain replicate.delivery thường bị ISP Việt Nam chặn DNS / SNI reset
         const proxyUrl = this.toAccessibleImageUrl(replicateUrl);
         this.logger.debug(`[AI] Replicate CDN tải trực tiếp gặp sự cố, chuyển sang tải qua CDN Proxy an toàn: ${proxyUrl}`);
