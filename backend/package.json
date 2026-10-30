@@ -6,7 +6,7 @@
     "dev": "prisma generate && nest start --watch",
     "start": "node --max-old-space-size=384 dist/main.js",
     "start:dev": "pnpm run dev",
-    "build": "prisma generate && NODE_OPTIONS='--max-old-space-size=512' nest build",
+    "build": "prisma generate && nest build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
     "prisma:generate": "prisma generate",
