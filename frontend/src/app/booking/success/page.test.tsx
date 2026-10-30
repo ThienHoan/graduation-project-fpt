@@ -75,7 +75,7 @@ describe("BookingSuccessPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Đặt Giữ Lịch Thành Công")).toBeInTheDocument();
       expect(screen.getByText("Cổ Phục Đã Sẵn Sàng Chờ Bạn")).toBeInTheDocument();
-      expect(screen.getByText("#BOOK-SUC")).toBeInTheDocument();
+      expect(screen.getAllByText("#BOOK-SUC").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("Áo Nhật Bình Tơ Tằm")).toBeInTheDocument();
     });
   });
