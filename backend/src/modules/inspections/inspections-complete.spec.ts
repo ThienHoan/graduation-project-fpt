@@ -51,14 +51,6 @@ function createCompleteService(accessoryRows: Array<{ accessoryAssetId: string |
     bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
     refund: { findFirst: vi.fn().mockResolvedValue(null) },
   };
-  const mockSession = {
-    id: SESSION_ID,
-    bookingId: BOOKING_ID,
-    garmentAssetId: ASSET_ID,
-    status: "completed",
-    garmentAsset: { location: "store" },
-    booking: { id: BOOKING_ID, status: "completed", customerId: "cust-1" },
-  };
   const prisma = {
     runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
     // Service đọc lại session bằng prisma (ngoài transaction) để emit realtime và serialize.
