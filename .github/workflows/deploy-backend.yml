@@ -65,8 +65,10 @@ jobs:
             set -e
             cd ~/graduation-project-fpt/backend
 
-            # Pull latest source (for package.json, prisma schema, .env)
-            git pull origin main
+            # Luôn đưa source trên VPS về đúng main. `git pull` bị chặn khi VPS có thay đổi
+            # cục bộ (vd. backend/package.json) làm các bước sau không chạy. .env không bị ảnh hưởng.
+            git fetch origin main
+            git reset --hard origin/main
 
             # Install production dependencies only.
             # CI=true để pnpm không hỏi tương tác khi cần purge node_modules
