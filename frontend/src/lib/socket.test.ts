@@ -28,6 +28,11 @@ async function loadCreateChatSocket() {
   return mod.createChatSocket;
 }
 
+async function loadSocketConfig() {
+  vi.resetModules();
+  return await import("./socket-config");
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -70,17 +75,70 @@ describe("resolveChatSocketUrl", () => {
     expect(resolve()).toBe("/chat");
   });
 
-  it("tắt addTrailingSlash để không bị Next.js 308 làm mất header Upgrade", async () => {
-    // Next.js redirect `/socket.io/?...` → `/socket.io?...` bằng 308; browser
-    // không mang header `Upgrade: websocket` theo redirect nên handshake fail.
-    vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "https://cophuctruyenthong.tech/chat");
+  it("bật addTrailingSlash khi nối trực tiếp backend khác origin (localhost dev)", async () => {
+    // Backend local chỉ khớp `/socket.io/`; gọi `/socket.io` (không "/") trả 404.
+    vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://localhost:4000/api");
     const createChatSocket = await loadCreateChatSocket();
 
     createChatSocket("token-abc");
 
     expect(ioMock).toHaveBeenCalledWith(
-      "https://cophuctruyenthong.tech/chat",
+      "http://localhost:4000/chat",
+      expect.objectContaining({ addTrailingSlash: true }),
+    );
+  });
+
+  it("tắt addTrailingSlash khi đi qua proxy cùng origin (Vercel)", async () => {
+    // Next.js 308 bỏ "/" cuối và làm mất header Upgrade khi request cùng origin.
+    // jsdom mặc định origin là http://localhost:3000.
+    vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "http://localhost:3000/chat");
+    const createChatSocket = await loadCreateChatSocket();
+
+    createChatSocket("token-abc");
+
+    expect(ioMock).toHaveBeenCalledWith(
+      "http://localhost:3000/chat",
       expect.objectContaining({ addTrailingSlash: false }),
     );
+  });
+});
+
+describe("resolveSocketUrl", () => {
+  it("suy ra namespace /realtime từ NEXT_PUBLIC_API_URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://cophuctruyenthong.tech/backend-api");
+
+    const { resolveSocketUrl } = await loadSocketConfig();
+
+    expect(resolveSocketUrl("/realtime")).toBe("https://cophuctruyenthong.tech/realtime");
+    expect(resolveSocketUrl("/chat")).toBe("https://cophuctruyenthong.tech/chat");
+  });
+
+  it("đổi namespace khi NEXT_PUBLIC_SOCKET_URL đã có namespace", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "https://socket.example.com/realtime");
+
+    const { resolveSocketUrl } = await loadSocketConfig();
+
+    expect(resolveSocketUrl("/chat")).toBe("https://socket.example.com/chat");
+  });
+});
+
+describe("shouldAddTrailingSlash", () => {
+  it("true khi backend khác origin trang", async () => {
+    const { shouldAddTrailingSlash } = await loadSocketConfig();
+    expect(shouldAddTrailingSlash("http://localhost:4000/chat", "http://localhost:3000")).toBe(true);
+  });
+
+  it("false khi cùng origin (rewrite Vercel)", async () => {
+    const { shouldAddTrailingSlash } = await loadSocketConfig();
+    expect(
+      shouldAddTrailingSlash("https://www.cophuctruyenthong.tech/chat", "https://www.cophuctruyenthong.tech"),
+    ).toBe(false);
+  });
+
+  it("false với URL tương đối (cùng origin)", async () => {
+    const { shouldAddTrailingSlash } = await loadSocketConfig();
+    expect(shouldAddTrailingSlash("/chat", "https://www.cophuctruyenthong.tech")).toBe(false);
   });
 });

@@ -1,8 +1,10 @@
 import { io, type Socket } from "socket.io-client";
+import { resolveSocketUrl, shouldAddTrailingSlash } from "./socket-config";
 
-// Socket.IO dùng proxy rewrite của Vercel (/socket.io/* → VPS)
-// Không cần base URL — dùng origin hiện tại (relative) để browser tự ghép wss://domain/socket.io/
-const realtimeSocketUrl = `/realtime`;
+// Namespace `/realtime`. URL được suy ra giống `/chat` để localhost trỏ đúng
+// backend (trước đây hardcode "/realtime" nên ở dev lại đi qua rewrite của
+// Next.js và chạm nhầm VPS production).
+const realtimeSocketUrl = resolveSocketUrl("/realtime");
 
 let socket: Socket | null = null;
 let currentToken: string | null = null;
@@ -11,13 +13,13 @@ let subscriberCount = 0;
 function buildSocket(accessToken: string) {
   return io(realtimeSocketUrl, {
     auth: { token: `Bearer ${accessToken}` },
-    // Đi qua rewrite của Vercel chỉ có HTTP polling được proxy; yêu cầu
-    // WebSocket Upgrade bị trả 400. Vì vậy thử `polling` trước để kết nối
-    // thành công, sau đó client tự nâng cấp lên `websocket` khi hạ tầng cho phép.
+    // Đi qua rewrite của Vercel chỉ HTTP polling được proxy; yêu cầu WebSocket
+    // Upgrade bị trả 400. Vì vậy thử `polling` trước để kết nối thành công, sau
+    // đó client tự nâng cấp lên `websocket` khi hạ tầng cho phép.
     transports: ["polling", "websocket"],
-    // Xem `socket.ts`: tắt "/" cuối path để không bị Next.js 308 làm mất header
-    // Upgrade khi đi qua proxy rewrite của Vercel.
-    addTrailingSlash: false,
+    // Xem `socket-config.ts`: true khi nối trực tiếp backend, false khi qua
+    // rewrite cùng origin (Vercel 308 làm mất header Upgrade).
+    addTrailingSlash: shouldAddTrailingSlash(realtimeSocketUrl),
     reconnectionDelayMax: 30000,
     timeout: 30000,
   });
