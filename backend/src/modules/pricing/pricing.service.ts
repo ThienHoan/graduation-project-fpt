@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma, AssetStatus, BookingStatus } from "@prisma/client";
 import { ok } from "../../common/api-response";
+import { requestPricingBatch, type PricingBatchItem } from "./pricing-ai-batch";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import type { CreatePriceCalendarDto } from "./dto/create-price-calendar.dto";
@@ -349,83 +350,6 @@ export class PricingService {
     };
   }
 
-  private async callAdjustmentAI(input: AiAdjustmentInput): Promise<AiAdjustmentOutput> {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      this.logger.warn("OPENROUTER_API_KEY chưa cấu hình — dùng bộ tính mặc định (không gọi AI).");
-      return this.fallbackAdjustment(input);
-    }
-
-    const model = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
-    const systemPrompt = [
-      "Bạn là chuyên gia định giá cho cửa hàng cho thuê áo dài và trang phục truyền thống Việt Nam.",
-      "Bạn NHẬN ĐẦU VÀO là dữ liệu kinh doanh (giá gốc, giá vốn, nhu cầu, tồn kho, dịp lễ).",
-      "Bạn CHỈ trả về MỨC ĐIỀU CHỈNH TƯƠNG ĐỐI (phần trăm) so với giá gốc, KHÔNG bao giờ trả giá tiền tuyệt đối.",
-      "demandPressure là tốc độ đặt thuê gần đây so với trung bình: -1 = giảm mạnh, 0 = bình thường, +1 = tăng gấp đôi. Giá có thể giảm khi demandPressure âm.",
-      "bookingPressure là mức kín chỗ của kỳ sự kiện do booking đặt trước: 0 = còn trống, 1 = kín sạch.",
-      "Gợi ý hợp lý: tổng hợp các yếu tố dịp lễ + nhu cầu + đặt trước, giữ mức cân bằng, tránh tăng quá gắt.",
-      "Trả về JSON hợp lệ, không markdown, không giải thích thêm, đúng format:",
-      '{"recommendedAdjustmentPct": 18, "demandPressure": 0.8, "bookingPressure": 0.8, "confidence": 0.87, "reason": {"demand": "+10%", "booking": "+5%", "holiday": "+3%", "season": "0%"}}',
-    ].join("\n");
-
-    const userContent = JSON.stringify({
-      garmentName: input.garmentName,
-      basePrice: input.basePrice,
-      purchaseCost: input.purchaseCost,
-      demandPressure: input.demandPressure,
-      bookingPressure: input.bookingPressure,
-      holidays: input.holidays,
-      window: { fromDate: input.fromDate, toDate: input.toDate },
-    });
-
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent },
-          ],
-          max_tokens: 300,
-          response_format: { type: "json_object" },
-        }),
-      });
-
-      const text = await res.text();
-      if (!res.ok) {
-        this.logger.error(`OpenRouter pricing HTTP ${res.status}: ${text.substring(0, 300)}`);
-        return this.fallbackAdjustment(input);
-      }
-
-      const data = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) return this.fallbackAdjustment(input);
-
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      if (typeof parsed.recommendedAdjustmentPct !== "number" || Number.isNaN(Number(parsed.recommendedAdjustmentPct))) {
-        return this.fallbackAdjustment(input);
-      }
-      const num = (key: string): number | undefined =>
-        typeof parsed[key] === "number" ? (parsed[key] as number) : undefined;
-      return {
-        recommendedAdjustmentPct: Number(parsed.recommendedAdjustmentPct),
-        demandPressure: num("demandPressure") ?? num("demandScore") ?? input.demandPressure,
-        bookingPressure:
-          num("bookingPressure") ?? num("inventoryPressure") ?? num("inventoryScore") ?? input.bookingPressure,
-        confidence: num("confidence"),
-        reason: typeof parsed.reason === "object" && parsed.reason !== null ? (parsed.reason as AiAdjustmentOutput["reason"]) : undefined,
-      };
-    } catch (error) {
-      this.logger.error("Lỗi khi gọi OpenRouter pricing:", error instanceof Error ? error.message : String(error));
-      return this.fallbackAdjustment(input);
-    }
-  }
-
   // ── Calendar CRUD ──────────────────────────────────────────────────────────
 
   private parseDateStr(value: string, fieldName: string): Date {
@@ -653,6 +577,14 @@ export class PricingService {
     }> = [];
     const suggestions: string[] = [];
 
+    type Candidate = {
+      sizeId: string;
+      bounds: Awaited<ReturnType<typeof PricingService.prototype.computeBounds>>;
+      signals: Awaited<ReturnType<typeof PricingService.prototype.buildSignals>>;
+      aiKey: string;
+    };
+    const candidates: Candidate[] = [];
+
     for (const sizeId of sizeIds) {
       let bounds: Awaited<ReturnType<typeof PricingService.prototype.computeBounds>>;
       try {
@@ -675,57 +607,97 @@ export class PricingService {
       }
 
       const signals = await this.buildSignals(bounds, fromDate, toDate);
-      const ai = await this.callAdjustmentAI({
-        garmentName: bounds.name,
-        basePrice: bounds.basePrice,
-        purchaseCost: bounds.garmentFloorCost ?? 0,
-        demandPressure: signals.demandPressure,
-        bookingPressure: signals.bookingPressure,
-        holidays: signals.holidays,
-        fromDate: fromStr,
-        toDate: toStr,
-      });
+      candidates.push({ sizeId, bounds, signals, aiKey: `${sizeId}:${fromStr}:${toStr}` });
+    }
 
-      const suggestedPrice = bounds.basePrice * (1 + ai.recommendedAdjustmentPct / 100);
-      const validPrice = this.round2(Math.min(Math.max(suggestedPrice, bounds.minPrice), bounds.maxPrice));
+    // Kiểm tra trùng MỘT lần cho tất cả size, TRƯỚC khi gọi AI. Trước đây mỗi
+    // size vừa gọi AI vừa mới check trùng, nên bấm lại lần 2 vẫn tốn AI cho
+    // toàn bộ danh sách rồi mới báo "đã có đề xuất pending".
+    const existingPending = candidates.length
+      ? await this.prisma.price_suggestions.findMany({
+          where: {
+            garment_size_id: { in: candidates.map((c) => c.sizeId) },
+            from_date: fromDate,
+            to_date: toDate,
+            status: "pending",
+          },
+          select: { garment_size_id: true },
+        })
+      : [];
+    const pendingSet = new Set(existingPending.map((row) => row.garment_size_id));
 
-      const pendingCount = await this.prisma.price_suggestions.count({
-        where: {
-          garment_size_id: sizeId,
-          from_date: fromDate,
-          to_date: toDate,
-          status: "pending",
-        },
-      });
-      if (pendingCount > 0) {
+    const fresh: Candidate[] = [];
+    for (const candidate of candidates) {
+      if (pendingSet.has(candidate.sizeId)) {
         issues.push({
-          sizeId,
+          sizeId: candidate.sizeId,
           error: "Đã có đề xuất pending cho cùng khoảng ngày.",
-          garmentName: bounds.name,
-          sizeLabel: bounds.sizeLabel,
+          garmentName: candidate.bounds.name,
+          sizeLabel: candidate.bounds.sizeLabel,
         });
         continue;
       }
+      fresh.push({
+        ...candidate,
+        aiKey: `${candidate.sizeId}:${fromStr}:${toStr}`,
+      });
+    }
+
+    // Batch gọi AI: mỗi lô ≤ 10 size trong 1 request. Với quota free ~20 request
+    // thì 27 size chỉ tốn 3 request — 10 lần ít hơn so với từng size.
+    const batchItems: PricingBatchItem[] = fresh.map((c) => ({
+      key: c.aiKey,
+      garmentName: c.bounds.name,
+      basePrice: c.bounds.basePrice,
+      purchaseCost: c.bounds.garmentFloorCost ?? 0,
+      demandPressure: c.signals.demandPressure,
+      bookingPressure: c.signals.bookingPressure,
+      holidays: c.signals.holidays,
+    }));
+    const aiResults = await requestPricingBatch(batchItems);
+    this.logger.log(
+      `AI: gọi cho ${batchItems.length} size, có kết quả ${aiResults.size} — ${fresh.length - aiResults.size} size dùng công thức dự phòng.`,
+    );
+
+    for (const candidate of fresh) {
+      const ai = aiResults.get(candidate.aiKey);
+      // Size không có kết quả AI (lô lỗi / AI bỏ sót) → dùng công thức nội bộ
+      // thay vì để 0%, để đề xuất vẫn có cơ sở.
+      const fallback = ai
+        ? null
+        : this.fallbackAdjustment({
+            garmentName: candidate.bounds.name,
+            basePrice: candidate.bounds.basePrice,
+            purchaseCost: candidate.bounds.garmentFloorCost ?? 0,
+            demandPressure: candidate.signals.demandPressure,
+            bookingPressure: candidate.signals.bookingPressure,
+            holidays: candidate.signals.holidays,
+            fromDate: fromStr,
+            toDate: toStr,
+          });
+      const adjustmentPct = ai?.recommendedAdjustmentPct ?? fallback?.recommendedAdjustmentPct ?? 0;
+      const suggestedPrice = candidate.bounds.basePrice * (1 + adjustmentPct / 100);
+      const validPrice = this.round2(Math.min(Math.max(suggestedPrice, candidate.bounds.minPrice), candidate.bounds.maxPrice));
 
       try {
         const suggestion = await this.prisma.price_suggestions.create({
           data: {
-            garment_size_id: sizeId,
+            garment_size_id: candidate.sizeId,
             calendar_id: calendarId,
             from_date: fromDate,
             to_date: toDate,
-            base_price: bounds.basePrice,
-            purchase_cost: bounds.garmentFloorCost ?? 0,
+            base_price: candidate.bounds.basePrice,
+            purchase_cost: candidate.bounds.garmentFloorCost ?? 0,
             target_rental_days: config.targetRentalDays,
-            recommended_adjustment_pct: ai.recommendedAdjustmentPct,
+            recommended_adjustment_pct: adjustmentPct,
             suggested_price: this.round2(suggestedPrice),
-            min_price: bounds.minPrice,
-            max_price: bounds.maxPrice,
+            min_price: candidate.bounds.minPrice,
+            max_price: candidate.bounds.maxPrice,
             valid_price: validPrice,
-            demand_score: ai.demandPressure ?? signals.demandPressure,
-            booking_score: ai.bookingPressure ?? signals.bookingPressure,
-            confidence: ai.confidence ?? null,
-            reason_json: (ai.reason ?? {}) as Prisma.InputJsonValue,
+            demand_score: ai?.demandPressure ?? candidate.signals.demandPressure,
+            booking_score: ai?.bookingPressure ?? candidate.signals.bookingPressure,
+            confidence: ai?.confidence ?? fallback?.confidence ?? null,
+            reason_json: (ai?.reason ?? fallback?.reason ?? {}) as Prisma.InputJsonValue,
             status: "pending",
           },
           select: { id: true },
@@ -734,10 +706,10 @@ export class PricingService {
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
           issues.push({
-            sizeId,
+            sizeId: candidate.sizeId,
             error: "Đã có đề xuất pending cho cùng khoảng ngày.",
-            garmentName: bounds.name,
-            sizeLabel: bounds.sizeLabel,
+            garmentName: candidate.bounds.name,
+            sizeLabel: candidate.bounds.sizeLabel,
           });
         } else {
           throw error;

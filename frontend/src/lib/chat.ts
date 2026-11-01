@@ -2,6 +2,11 @@ import { apiRequest } from "./api";
 import { readStoredAccessToken } from "./auth";
 import { getChatSocket } from "./socket";
 
+export type ChatReplyPreview = {
+  id: string;
+  content: string;
+};
+
 export type ChatMessage = {
   id: string;
   conversation_id: string;
@@ -13,12 +18,47 @@ export type ChatMessage = {
   message_type?: string;
   sender_type?: string;
   metadata?: Record<string, unknown> | null;
+  /** Tin được trích dẫn khi staff/manager trả lời một tin cụ thể. */
+  replyTo?: ChatReplyPreview | null;
   user_accounts?: {
     id: string;
     email: string;
     role: string;
     profile?: { fullName?: string | null };
   };
+};
+
+export type StaffConversationTab =
+  | "unassigned"
+  | "resolved"
+  | "waiting_customer"
+  | "awaiting_reply"
+  | "needs_reply";
+
+export type ManagerSupportState = "active" | "waiting_customer" | "waiting_manager";
+
+export type ChatConversationCounts = {
+  needsReply: number;
+  awaitingReply: number;
+  unassigned: number;
+  waitingCustomer: number;
+  resolved: number;
+};
+
+export type ChatHandoffGroup = "complaint" | "payment" | "bot";
+
+/**
+ * Handoff đang mở của hội thoại (backend trả kèm mọi payload hội thoại).
+ * `expired` = đã quá TTL mà chưa có staff trả lời; staff vẫn cần thấy.
+ */
+export type ChatHandoff = {
+  reason: string;
+  label: string;
+  group: ChatHandoffGroup;
+  sensitive: boolean;
+  openedAt: string | null;
+  expired: boolean;
+  triggerMessageId: string | null;
 };
 
 export type ChatConversation = {
@@ -36,6 +76,19 @@ export type ChatConversation = {
   garmentName?: string | null;
   bookingId?: string | null;
   reopenedFromResolved: boolean;
+  managerSupportBy?: string | null;
+  managerSupportState?: ManagerSupportState | null;
+  managerSupportExpiresAt?: string | null;
+  handoff?: ChatHandoff | null;
+};
+
+export type ManagerSupportSnapshot = {
+  conversationId: string;
+  status: string;
+  staffId: string | null;
+  managerSupportBy: string | null;
+  managerSupportState: ManagerSupportState | null;
+  managerSupportExpiresAt: string | null;
 };
 
 export type ConversationLockStatus = {
@@ -94,6 +147,66 @@ export function getBookingCardData(msg: ChatMessage): { booking: BookingCardMess
 export function getBookingTopic(msg: ChatMessage): string | null {
   const data = getBookingCardData(msg);
   return data?.topic ?? null;
+}
+
+export type AdvisorHistoryRole = "customer" | "staff" | "ai";
+
+export type AdvisorHistoryItem = {
+  role: AdvisorHistoryRole;
+  content: string;
+  createdAt: string;
+};
+
+/**
+ * Dựng history gửi cho AI advisor từ danh sách tin nhắn.
+ *
+ * - AI phải giữ đúng vai "ai" (trước đây bị map thành "customer").
+ * - Mọi người gửi không phải khách (staff/manager) đều là "staff",
+ *   kể cả khi hội thoại đã được chuyển cho staff khác.
+ * - Card/ảnh/video được mô tả thành chữ để model hiểu ngữ cảnh.
+ */
+export function buildAdvisorHistory(params: {
+  messages: ChatMessage[];
+  customerId: string;
+  excludeMessageId?: string;
+  limit?: number;
+}): AdvisorHistoryItem[] {
+  const { messages, customerId, excludeMessageId, limit = 10 } = params;
+
+  return messages
+    .filter(
+      (m) =>
+        !m.deleted_at &&
+        (!m.message_type || ["text", "product_card", "booking_card", "image", "video"].includes(m.message_type)) &&
+        m.id !== excludeMessageId,
+    )
+    .slice(-limit)
+    .map((m) => {
+      let content = m.content;
+
+      if (m.message_type === "product_card") {
+        const product = getProductCardData(m);
+        if (product) {
+          const price = typeof product.price === "number" ? product.price.toLocaleString("vi-VN") : "";
+          content = `[Thẻ sản phẩm] ${product.name} | Size: ${product.size ?? "N/A"}${price ? ` | Giá: ${price}đ/ngày` : ""}`;
+        }
+      } else if (m.message_type === "booking_card") {
+        const data = getBookingCardData(m);
+        if (data) {
+          content = `[Thẻ đơn hàng] Mã ${data.booking.code} | Trạng thái: ${data.booking.statusLabel}`;
+        }
+      } else if (m.message_type === "image") {
+        content = "[Hình ảnh]";
+      } else if (m.message_type === "video") {
+        content = "[Video]";
+      }
+
+      const isCustomer = m.sender_id === customerId || m.user_accounts?.role === "customer";
+      const role: AdvisorHistoryRole =
+        m.sender_type === "ai" ? "ai" : isCustomer ? "customer" : "staff";
+
+      return { role, content, createdAt: m.created_at };
+    });
 }
 
 export async function sendBookingCardMessage(params: {
@@ -158,12 +271,7 @@ export async function getChatConversations(tab?: string) {
 }
 
 export async function getChatConversationCounts() {
-  return apiRequest<{
-    needsReply: number;
-    awaitingReply: number;
-    unassigned: number;
-    resolved: number;
-  }>("/chat/conversations/counts");
+  return apiRequest<ChatConversationCounts>("/chat/conversations/counts");
 }
 
 export async function getConversationMessages(conversationId: string, before?: string, limit = 15) {
@@ -180,8 +288,114 @@ export async function markConversationRead(conversationId: string) {
   });
 }
 
+export async function startManagerSupport(conversationId: string) {
+  return apiRequest<ManagerSupportSnapshot>(
+    `/chat/conversations/${conversationId}/manager-support/start`,
+    { method: "POST" },
+  );
+}
+
+export async function endManagerSupport(conversationId: string) {
+  return apiRequest<{
+    status: string;
+    staffId: string | null;
+    released: boolean;
+  }>(`/chat/conversations/${conversationId}/manager-support/end`, {
+    method: "POST",
+  });
+}
+
+export async function getConversationHandoff(conversationId: string) {
+  return apiRequest<{ handoff: ChatHandoff | null }>(
+    `/chat/conversations/${conversationId}/handoff`,
+  );
+}
+
 export async function getConversationLockStatus(conversationId: string) {
   return apiRequest<ConversationLockStatus>(`/chat/conversations/${conversationId}/lock-status`);
+}
+
+export type ChatSuggestionProduct = {
+  garmentId: string;
+  name: string;
+  imageUrl: string | null;
+  dailyPrice: number;
+  size: string | null;
+  reason?: string;
+};
+
+export type ChatSuggestionTopic = {
+  title: string;
+  assistantReply: string;
+  recommendedProductIds: string[];
+  reasons: Record<string, string>;
+  products: ChatSuggestionProduct[];
+};
+
+export type StaffSuggestionResponse = {
+  messageId: string | null;
+  topics: ChatSuggestionTopic[];
+  cached: boolean;
+};
+
+/**
+ * Gợi ý do backend định tuyến (STAFF > FAQ > DB > AI) và cache theo messageId.
+ * Chỉ staff phụ trách (hoặc manager đang hỗ trợ) gọi được; không tự gửi.
+ *
+ * `messageId`: tin khách mà staff chọn trả lời. Bỏ trống = tin khách mới nhất.
+ */
+export async function getStaffSuggestion(
+  conversationId: string,
+  messageId?: string | null,
+) {
+  return apiRequest<StaffSuggestionResponse>(
+    `/chat/conversations/${conversationId}/suggestion`,
+    {
+      method: "POST",
+      body: messageId ? JSON.stringify({ messageId }) : undefined,
+    },
+  );
+}
+
+export type FaqAdminItem = {
+  key: string;
+  intent: string;
+  answerTemplate: string;
+  requiredParams: string[];
+  values: Record<string, string>;
+  notApplicable: boolean;
+  notApplicableReply: string | null;
+  isActive: boolean;
+  exists: boolean;
+  missingKeys: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export type UpdateFaqItemPayload = {
+  intent?: string;
+  answerTemplate?: string;
+  requiredParams?: string[];
+  values?: Record<string, string>;
+  notApplicable?: boolean;
+  notApplicableReply?: string;
+  isActive?: boolean;
+  confirm?: boolean;
+};
+
+/** Danh sách FAQ cho manager/admin; key chưa lưu hiện dưới dạng placeholder. */
+export async function getFaqItems() {
+  return apiRequest<FaqAdminItem[]>("/chat/faq");
+}
+
+export async function updateFaqItem(
+  key: string,
+  payload: UpdateFaqItemPayload,
+) {
+  return apiRequest<FaqAdminItem>(`/chat/faq/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
 export type AIAdvisorProduct = {
@@ -209,7 +423,7 @@ export type AIAdvisorResponse = {
 
 export async function getProductAdvisor(params: {
   message: string;
-  history?: Array<{ role: "customer" | "staff"; content: string; createdAt: string }>;
+  history?: AdvisorHistoryItem[];
   rentalStartDate?: string;
   rentalEndDate?: string;
 }) {
@@ -237,12 +451,15 @@ export function emitChatMessage(params: {
   setMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   setFailedMessages: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   roomJoinedRef?: { current: boolean };
+  /** Staff/manager trả lời trích dẫn một tin cụ thể. */
+  replyToId?: string | null;
 }) {
   const { socket, conversationId, content, tempId, sendTimeoutRef, setMessages, setFailedMessages } = params;
   const roomJoinedRef = params.roomJoinedRef;
+  const replyToId = params.replyToId ?? null;
 
   const doEmit = () => {
-    socket.emit("send_message", { conversationId, content, tempId }, (ack: { success?: boolean; error?: string; tempId?: string } | undefined) => {
+    socket.emit("send_message", { conversationId, content, tempId, ...(replyToId ? { replyToId } : {}) }, (ack: { success?: boolean; error?: string; tempId?: string } | undefined) => {
       const t = sendTimeoutRef.current.get(tempId);
       if (t) { clearTimeout(t); sendTimeoutRef.current.delete(tempId); }
       if (ack && ack.success && ack.tempId) {

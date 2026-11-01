@@ -1,12 +1,15 @@
 "use client";
 
-import { useRef, useEffect, useState, type RefObject } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import type { ChatConversation, ChatMessage } from "@/lib/chat";
 import { getBookingCardData, getProductCardData, uploadChatFile } from "@/lib/chat";
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
+import { ChatTextarea } from "@/components/chat/chat-textarea";
 import { ProductCard } from "@/components/chat/product-card";
 import { Paperclip, X, RotateCcw, Minus, MessageCircle, Send, Bot, Loader2 } from "lucide-react";
+
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const CHAT_BUBBLE_OPEN_KEY = "co_phuc_chat_bubble_open";
 
@@ -27,6 +30,8 @@ interface CustomerChatBubbleProps {
   onDeleteMessage: (messageId: string) => void;
   failedMessages?: Set<string>;
   onRetryMessage?: (content: string) => void;
+  unreadCount?: number;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function CustomerChatBubble({
@@ -46,8 +51,12 @@ export function CustomerChatBubble({
   onDeleteMessage,
   failedMessages,
   onRetryMessage,
+  unreadCount = 0,
+  onOpenChange,
 }: CustomerChatBubbleProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
   // const [isOpen, setIsOpen] = useState(() => {
   //   // Restore open state from localStorage on page load
   //   if (typeof window === "undefined") return false;
@@ -59,6 +68,29 @@ export function CustomerChatBubble({
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const prevMessagesRef = useRef<ChatMessage[]>(messages);
+  const prevConversationIdRef = useRef<string | null>(conversation?.id ?? null);
+  const scrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  // true = khung chat đang bám đáy; chỉ đổi thành false khi người dùng chủ
+  // động cuộn lên xem tin cũ.
+  const stickToBottomRef = useRef(true);
+
+  function scrollToBottom() {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function handleMediaLoad() {
+    if (stickToBottomRef.current) scrollToBottom();
+  }
+
+  if (conversation?.id !== prevConversationIdRef.current) {
+    prevConversationIdRef.current = conversation?.id ?? null;
+    prevMessagesRef.current = [];
+    scrollSnapshotRef.current = null;
+  }
 
   function showToast(msg: string) {
     setToast(msg);
@@ -92,24 +124,113 @@ export function CustomerChatBubble({
 
   // Cho phép các màn khác (vd dashboard khách) ra hiệu mở khung chat.
   useEffect(() => {
-    const openChat = () => setIsOpen(true);
+    const openChat = () => {
+      setIsOpen(true);
+      onOpenChangeRef.current?.(true);
+    };
     window.addEventListener("chat:open", openChat);
     return () => window.removeEventListener("chat:open", openChat);
   }, []);
 
+  // Khi mở khung chat, cuộn xuống tin mới nhất. Chờ thêm 2 frame để khung đã
+  // có kích thước đầy đủ (trước đây đôi khi mở ra vẫn nằm ở đầu).
   useEffect(() => {
-    if (messagesEndRef.current?.scrollIntoView) {
-      messagesEndRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
+    if (!isOpen) {
+      scrollSnapshotRef.current = null;
+      return;
     }
-  }, [messages]);
+    stickToBottomRef.current = true;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      scrollToBottom();
+      raf2 = requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [isOpen, messagesContainerRef]);
+
+  useIsomorphicLayoutEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !isOpen) return;
+
+    const prevMessages = prevMessagesRef.current;
+    prevMessagesRef.current = messages;
+
+    // Kiểm tra xem có phải tin nhắn cũ hơn vừa được tải (prepended) hay không
+    const isPrepended =
+      prevMessages.length > 0 &&
+      messages.length > prevMessages.length &&
+      messages[messages.length - 1]?.id === prevMessages[prevMessages.length - 1]?.id &&
+      messages[0]?.id !== prevMessages[0]?.id;
+
+    if (isPrepended) {
+      stickToBottomRef.current = false;
+      const snapshot = scrollSnapshotRef.current;
+      if (snapshot && snapshot.scrollHeight > 0) {
+        // Giữ nguyên vị trí đọc của người dùng bằng độ chênh lệch chiều cao cuộn
+        const delta = container.scrollHeight - snapshot.scrollHeight;
+        container.scrollTop = delta + snapshot.scrollTop;
+      }
+      scrollSnapshotRef.current = null;
+      return;
+    }
+
+    // Lần đầu tải tin nhắn khi khung chat mở
+    const isInitialLoad = prevMessages.length === 0 && messages.length > 0;
+
+    // Tin nhắn mới được thêm vào cuối
+    const lastMsg = messages[messages.length - 1];
+    const prevLastMsg = prevMessages[prevMessages.length - 1];
+    const isNewMsg =
+      messages.length > prevMessages.length && lastMsg?.id !== prevLastMsg?.id;
+    const isMyMessage =
+      isNewMsg &&
+      (lastMsg?.sender_id === session?.user.id || lastMsg?.id?.startsWith("temp-"));
+
+    // Kiểm tra xem người dùng có đang ở sát đáy để tự động cuộn theo tin mới hay không
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+
+    if (isInitialLoad || isMyMessage || isNearBottom || stickToBottomRef.current) {
+      stickToBottomRef.current = true;
+      scrollToBottom();
+    }
+  }, [messages, isOpen, loadingMessages, messagesContainerRef, session?.user.id]);
 
   // Handle scroll to top to load older messages
   function handleMessagesScroll() {
     const container = messagesContainerRef.current;
-    if (!container || !hasMoreMessages || loadingOlderMessages) return;
+    if (!container) return;
+
+    // Trong lúc nội dung đang được thay thế (spinner ↔ danh sách tin) trình
+    // duyệt có thể tự đẩy scrollTop về 0; bỏ qua các sự kiện đó.
+    if (!loadingMessages) {
+      const distance =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      stickToBottomRef.current = distance < 120;
+    }
+
+    // Khi đang trong quá trình tải tin cũ, liên tục lưu lại snapshot vị trí cuộn
+    if (loadingOlderMessages) {
+      scrollSnapshotRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+      return;
+    }
+
+    if (!hasMoreMessages) return;
 
     // If scrolled near the top (within 50px), load older messages
     if (container.scrollTop <= 50) {
+      scrollSnapshotRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
       onLoadOlderMessages();
     }
   }
@@ -118,6 +239,7 @@ export function CustomerChatBubble({
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      onOpenChangeRef.current?.(false);
     };
   }, []);
 
@@ -127,10 +249,10 @@ export function CustomerChatBubble({
   if (!mounted) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col">
+    <div className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-2rem)] flex-col">
       {/* Chat Widget */}
       {isOpen && (
-        <div className="mb-3 flex h-[600px] w-88 flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
+        <div className="mb-3 flex h-[600px] max-h-[calc(100dvh-7rem)] w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-r from-oxblood to-lotus px-4 py-3.5 text-white">
             <div className="flex-1">
@@ -139,7 +261,10 @@ export function CustomerChatBubble({
             </div>
             <button
               type="button"
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                setIsOpen(false);
+                onOpenChange?.(false);
+              }}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
               aria-label="Đóng chat"
             >
@@ -151,7 +276,7 @@ export function CustomerChatBubble({
           <div
             ref={messagesContainerRef}
             onScroll={handleMessagesScroll}
-            className="flex-1 overflow-y-auto p-3 space-y-3 bg-parchment"
+            className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 bg-parchment"
           >
             {/* Loading older indicator */}
             {loadingOlderMessages && (
@@ -173,6 +298,19 @@ export function CustomerChatBubble({
               <>
                 {messages.map((message) => {
                   const isMine = message.sender_id === session?.user.id;
+                  // Tin nhắn do quản lý gửi trong phiên hỗ trợ có metadata
+                  // managerSupport; ngoài ra dựa vào role tài khoản gửi.
+                  const isManagerMessage =
+                    message.metadata?.managerSupport === true ||
+                    message.user_accounts?.role === "manager_owner";
+                  const senderRoleLabel =
+                    !isMine &&
+                    !message.deleted_at &&
+                    message.sender_type !== "ai"
+                      ? isManagerMessage
+                        ? "Quản lý"
+                        : "Nhân viên"
+                      : null;
                   return (
                     <div
                       key={message.id}
@@ -180,7 +318,16 @@ export function CustomerChatBubble({
                       onMouseEnter={() => setHoveredMessageId(message.id)}
                       onMouseLeave={() => setHoveredMessageId(null)}
                     >
-                      <div className={`${isMine ? "" : ""} max-w-[90%]`}>
+                      <div className="min-w-0 max-w-[90%]">
+                        {senderRoleLabel && (
+                          <p
+                            className={`mb-1 text-[10px] font-semibold ${
+                              isManagerMessage ? "text-oxblood" : "text-stone-500"
+                            }`}
+                          >
+                            {senderRoleLabel}
+                          </p>
+                        )}
                         {message.deleted_at ? (
                           <div className="italic text-stone-400 text-xs px-3 py-2">Tin nhắn đã bị xóa</div>
                         ) : message.message_type === "booking_card" ? (
@@ -199,6 +346,7 @@ export function CustomerChatBubble({
                               alt=""
                               className="rounded-lg border border-sand/70 shadow-sm w-full h-auto object-cover"
                               loading="lazy"
+                              onLoad={handleMediaLoad}
                             />
                             <span className="block text-[10px] mt-1 opacity-70 text-right">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
@@ -211,6 +359,7 @@ export function CustomerChatBubble({
                               controls
                               className="rounded-lg border border-sand/70 shadow-sm w-full h-auto max-h-[320px] object-contain bg-black"
                               preload="metadata"
+                              onLoadedMetadata={handleMediaLoad}
                             />
                             <span className="block text-[10px] mt-1 opacity-70 text-right">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
@@ -230,7 +379,7 @@ export function CustomerChatBubble({
                             <p className="flex items-center gap-1 text-[10px] font-semibold text-stone-500 mb-1">
                               <Bot className="h-3 w-3 text-lotus" /> Trợ lý Cổ Phục AI
                             </p>
-                            <p className="leading-5 text-stone-800">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words leading-5 text-stone-800">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70 text-stone-500">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                             </span>
@@ -241,7 +390,7 @@ export function CustomerChatBubble({
                               isMine ? "bg-lotus text-white" : "bg-white border border-sand/70 text-stone-900"
                             } rounded-xl px-3.5 py-2 text-xs shadow-xs`}
                           >
-                            <p className="leading-5">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words leading-5">{message.content}</p>
                             <span className="block text-[10px] mt-1 opacity-70">
                               {new Date(message.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                             </span>
@@ -313,16 +462,16 @@ export function CustomerChatBubble({
               >
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin text-lotus" /> : <Paperclip className="w-4 h-4" />}
               </button>
-              <textarea
+              <ChatTextarea
                 rows={2}
                 value={messageText}
-                onChange={(event) => setMessageText(event.currentTarget.value)}
+                onValueChange={setMessageText}
                 onFocus={() => onTyping(true)}
                 onBlur={() => onTyping(false)}
                 className="flex-1 rounded-xl border border-sand bg-mist px-3 py-2 text-xs outline-none focus:border-lotus focus:bg-white resize-none"
                 placeholder="Nhập tin nhắn..."
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
                     onSendMessage();
                   }
@@ -351,18 +500,33 @@ export function CustomerChatBubble({
       {/* Toggle Button - always visible */}
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`inline-flex items-center justify-center w-14 h-14 rounded-full shadow-xl font-semibold text-white transition transform active:scale-95 ${
+        onClick={() => {
+          const nextOpen = !isOpen;
+          setIsOpen(nextOpen);
+          onOpenChange?.(nextOpen);
+        }}
+        className={`relative inline-flex items-center justify-center w-14 h-14 rounded-full shadow-xl font-semibold text-white transition transform active:scale-95 ${
           isOpen
             ? "bg-stone-500 hover:bg-stone-600"
             : "bg-oxblood hover:bg-lotus"
         }`}
-        aria-label={isOpen ? "Đóng chat" : "Mở chat"}
+        aria-label={
+          isOpen
+            ? "Đóng chat"
+            : unreadCount > 0
+              ? `Mở chat (${unreadCount} tin nhắn chưa đọc)`
+              : "Mở chat"
+        }
       >
         {isOpen ? (
           <Minus className="h-6 w-6" />
         ) : (
           <MessageCircle className="h-6 w-6" />
+        )}
+        {!isOpen && unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-md ring-2 ring-white">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
         )}
       </button>
     </div>

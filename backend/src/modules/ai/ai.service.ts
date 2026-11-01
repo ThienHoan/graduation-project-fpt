@@ -2,14 +2,32 @@ import * as crypto from "node:crypto";
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { TryonStatus, Prisma, type TryonCategory } from "@prisma/client";
 import { ok } from "../../common/api-response";
+import { requestChatCompletion } from "../../common/ai-chat-client";
+import {
+  isOpenRouter,
+  readVisionModel,
+  readVisionProviderConfig,
+} from "../../common/ai-provider";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PricingService } from "../pricing/pricing.service";
 import type { CreateTryonDto, TryonMode } from "./dto/create-tryon.dto";
 import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
-import type { AdvisorProduct, OpenRouterResponse, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
+import type { AdvisorProduct, ExclusionTarget, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
 import { detectIntent } from "./utils/intent-detector";
-import { extractFilters, getCanonicalOccasions } from "./utils/filter-extractor";
+import { getCanonicalOccasions } from "./utils/filter-extractor";
+import { buildQueryScope, normalizeForMatch, tokenizeForMatch } from "./utils/query-scope";
 import { TryonQueueService } from "./tryon-queue.service";
+
+type AdvisorPromptOptions = {
+  isAutoReply?: boolean;
+  droppedOccasion?: string[];
+  droppedKeyword?: string;
+  droppedColor?: string[];
+  droppedSize?: string[];
+  droppedCategory?: string[];
+  exclusions?: ExclusionTarget[];
+  browse?: boolean;
+};
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 const DEFAULT_FACE_SWAP_MODEL = "cdingram/face-swap";
@@ -25,15 +43,27 @@ type AllowedMimeType = (typeof ALLOWED_MIME_TYPES)[number];
 function getHardcodedReply(text: string, isAutoReply: boolean): ProductAdvisorResponse | null {
   const lower = text.toLowerCase().trim();
 
+  // Chỉ coi là lời chào/cảm ơn khi TOÀN BỘ tin nhắn là lời chào/cảm ơn.
+  // Tránh "chào shop, còn áo dài đỏ không?" bị trả lời chung chung.
+  const normalized = lower
+    .replace(/[.!?,;:~…]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const greetingPattern =
+    /^(chào|chao|xin chào|hello|hi|hey|hí|hê lô|hế lô|alo)( (shop|bạn|ad|admin|mọi người))*$/;
+  const thanksPattern =
+    /^(cảm ơn|cám ơn|thanks|thank you|thank)( (shop|bạn|ad|admin|nhiều|rất nhiều|nhé|ạ))*$/;
+
   // Greetings
-  if (/(?:^|(?<=\s))(chào|hello|hi|hí|hê?lô|alo)(?=\s|$|[.,;:!?])/i.test(lower)) {
+  if (greetingPattern.test(normalized)) {
     return {
       topics: [{ title: "Chào hỏi", assistantReply: "Chào bạn! Em có thể giúp gì cho bạn về sản phẩm hôm nay ạ?", recommendedProductIds: [], reasons: {}, products: [] }],
     };
   }
 
   // Thanks
-  if (/(cảm ơn|cám ơn|thanks|thank you)/i.test(lower)) {
+  if (thanksPattern.test(normalized)) {
     return {
       topics: [{ title: "Cảm ơn", assistantReply: "Cảm ơn bạn! Nếu cần thêm thông tin gì, bạn cứ hỏi em nhé.", recommendedProductIds: [], reasons: {}, products: [] }],
     };
@@ -839,55 +869,102 @@ export class AiService implements OnModuleInit {
   }
 
   async productAdvisor(dto: ProductAdvisorDto, isAutoReply = false) {
-    const { intent, confidence } = detectIntent(dto.message);
-    this.logger.debug(`productAdvisor intent=${intent} confidence=${confidence}`);
+    // Auto-reply/suggestion đã đi qua router rule-based dùng chung. Bỏ hẳn
+    // detectIntent + hardcoded ở đây để không phân loại hai lần; chỉ route AI
+    // mới tới được hàm này. `/ai/product-advisor` (isAutoReply=false) giữ
+    // nguyên hành vi cũ.
+    let intent: string;
+    if (isAutoReply) {
+      intent = "search";
+    } else {
+      const detected = detectIntent(dto.message);
+      intent = detected.intent;
+      this.logger.debug(
+        `productAdvisor intent=${detected.intent} confidence=${detected.confidence}`,
+      );
 
-    const hardcoded = getHardcodedReply(dto.message, isAutoReply);
-    if (hardcoded) {
-      this.logger.debug("Hardcoded reply (no AI call)");
-      return ok(hardcoded);
+      const hardcoded = getHardcodedReply(dto.message, isAutoReply);
+      if (hardcoded) {
+        this.logger.debug("Hardcoded reply (no AI call)");
+        return ok(hardcoded);
+      }
     }
 
-    const filters: ProductFilters | undefined = intent === "search" ? extractFilters(dto.message) : undefined;
+    const scope = intent === "search" ? buildQueryScope(dto.message) : undefined;
+    const filters = scope?.filters;
+    const exclusions = scope?.exclusions ?? [];
+    let resolvedExclusions = exclusions;
     this.logger.debug(`Filters: ${JSON.stringify(filters)}`);
+    this.logger.debug(`Exclusions: ${JSON.stringify(exclusions)}`);
 
     let catalog: AdvisorProduct[] = [];
     let droppedOccasion: string[] | undefined;
     let droppedKeyword: string | undefined;
     let droppedColor: string[] | undefined;
     let droppedSize: string[] | undefined;
+    let droppedCategory: string[] | undefined;
 
-    if (intent === "search") {
+    if (intent === "search" && scope) {
       // Khách cung cấp ngày thuê → giá hiệu lực tính theo ngày TẠO booking hôm nay.
       const onDate = dto.rentalStartDate && dto.rentalEndDate ? new Date() : undefined;
-      catalog = await this.queryCatalog(filters, onDate);
+      const baseFilters: ProductFilters = {
+        ...filters,
+        ...this.buildExclusionFilters(exclusions),
+      };
+
+      catalog = await this.queryCatalog(baseFilters, onDate, scope.browse);
       this.logger.debug(`Catalog count: ${catalog.length}`);
 
-      if (catalog.length === 0 && filters?.occasion) {
+      if (catalog.length === 0 && baseFilters.occasion) {
         this.logger.debug("0 results with occasion, retrying without occasion");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined }, onDate);
-        if (catalog.length > 0) droppedOccasion = filters.occasion;
+        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined }, onDate, scope.browse);
+        if (catalog.length > 0) droppedOccasion = baseFilters.occasion;
       }
 
-      if (catalog.length === 0 && filters?.keyword) {
+      if (catalog.length === 0 && baseFilters.keyword) {
         this.logger.debug("0 results with keyword, retrying without keyword");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined }, onDate);
-        if (catalog.length > 0) droppedKeyword = filters.keyword;
+        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined }, onDate, scope.browse);
+        if (catalog.length > 0) droppedKeyword = baseFilters.keyword;
       }
 
-      if (catalog.length === 0 && filters?.color) {
+      if (catalog.length === 0 && baseFilters.color) {
         this.logger.debug("0 results with color, retrying without color");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined }, onDate);
-        if (catalog.length > 0) droppedColor = filters.color;
+        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined }, onDate, scope.browse);
+        if (catalog.length > 0) droppedColor = baseFilters.color;
       }
 
-      if (catalog.length === 0 && filters?.size) {
+      if (catalog.length === 0 && baseFilters.size) {
         this.logger.debug("0 results with size, retrying without size");
-        catalog = await this.queryCatalog({ ...filters, occasion: undefined, keyword: undefined, color: undefined, size: undefined }, onDate);
-        if (catalog.length > 0) droppedSize = filters.size;
+        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined, size: undefined }, onDate, scope.browse);
+        if (catalog.length > 0) droppedSize = baseFilters.size;
+      }
+
+      if (catalog.length === 0 && baseFilters.category) {
+        this.logger.debug("0 results with category, retrying without category");
+        catalog = await this.queryCatalog({
+          ...baseFilters,
+          occasion: undefined,
+          keyword: undefined,
+          color: undefined,
+          size: undefined,
+          category: undefined,
+        }, onDate, scope.browse);
+        if (catalog.length > 0) droppedCategory = baseFilters.category;
+      }
+
+      const productResolution = this.resolveProductExclusions(exclusions, catalog, dto.history);
+      resolvedExclusions = productResolution.exclusions;
+      if (productResolution.excludedIds.length > 0) {
+        const excludedIds = new Set(productResolution.excludedIds);
+        catalog = catalog.filter((product) => !excludedIds.has(product.garmentId));
       }
 
       if (catalog.length === 0) {
+        if (scope.isExclusionQuestion) {
+          const reply = this.buildExclusionEmptyReply(resolvedExclusions);
+          return ok({ topics: [{ title: "Chưa có mẫu khác", assistantReply: reply, recommendedProductIds: [], reasons: {}, products: [] }] });
+        }
+
         return ok({ topics: [{ title: "Không tìm thấy", assistantReply: "Hiện tại chưa có sản phẩm phù hợp với yêu cầu của bạn. Bạn có thể thử thay đổi tiêu chí hoặc liên hệ staff để được tư vấn thêm.", recommendedProductIds: [], reasons: {}, products: [] }] });
       }
     } else {
@@ -901,17 +978,156 @@ export class AiService implements OnModuleInit {
 
     const inStockCatalog = catalog.filter((p) => p.inStock);
     const promptCatalog = inStockCatalog.length > 0 ? inStockCatalog : catalog;
-    const systemPrompt = this.buildAdvisorPrompt(promptCatalog, isAutoReply, droppedOccasion, droppedKeyword, droppedColor, droppedSize);
+    const systemPrompt = this.buildAdvisorPrompt(promptCatalog, {
+      isAutoReply,
+      droppedOccasion,
+      droppedKeyword,
+      droppedColor,
+      droppedSize,
+      droppedCategory,
+      exclusions: resolvedExclusions,
+      browse: scope?.browse,
+    });
     const userContent = this.buildUserMessage(dto.message, dto.history, dto.rentalStartDate, dto.rentalEndDate);
     const raw = await this.callOpenRouter(systemPrompt, userContent);
     return ok(this.parseAdvisorResponse(raw, promptCatalog));
   }
 
-  private async queryCatalog(filters?: ProductFilters, onDate?: Date): Promise<AdvisorProduct[]> {
+  private buildExclusionFilters(exclusions: ExclusionTarget[]): ProductFilters {
+    const categories = [...new Set(
+      exclusions
+        .filter((target) => target.kind === "category")
+        .flatMap((target) => target.categories ?? []),
+    )];
+    const colors = [...new Set(
+      exclusions
+        .filter((target) => target.kind === "attribute")
+        .flatMap((target) => target.colors ?? [])
+        .map((color) => color.toLowerCase()),
+    )];
+    const sizes = [...new Set(
+      exclusions
+        .filter((target) => target.kind === "attribute")
+        .flatMap((target) => target.sizes ?? []),
+    )];
+    const occasions = [...new Set(
+      exclusions
+        .filter((target) => target.kind === "attribute")
+        .flatMap((target) => target.occasions ?? []),
+    )];
+
+    return {
+      ...(categories.length > 0 ? { excludeCategories: categories } : {}),
+      ...(colors.length > 0 ? { excludeColors: colors } : {}),
+      ...(sizes.length > 0 ? { excludeSizes: sizes } : {}),
+      ...(occasions.length > 0 ? { excludeOccasions: occasions } : {}),
+    };
+  }
+
+  private findLastProductName(history?: Array<{ content: string; createdAt: string }>): string | undefined {
+    const sorted = [...(history ?? [])].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    for (const item of sorted) {
+      const match = item.content.match(/\[Thẻ sản phẩm\]\s*([^|\n]+)/iu);
+      const name = match?.[1]?.trim();
+      if (name) return name;
+    }
+
+    return undefined;
+  }
+
+  private resolveProductExclusions(
+    exclusions: ExclusionTarget[],
+    catalog: AdvisorProduct[],
+    history?: Array<{ content: string; createdAt: string }>,
+  ): { exclusions: ExclusionTarget[]; excludedIds: string[] } {
+    const lastProductName = this.findLastProductName(history);
+    const excludedIds = new Set<string>();
+
+    const resolved = exclusions.map((target) => {
+      if (target.kind !== "product") return target;
+
+      let matches: AdvisorProduct[] = [];
+
+      if (target.refersToLastProduct) {
+        if (lastProductName) {
+          const normalizedLast = normalizeForMatch(lastProductName);
+          matches = catalog.filter((product) => normalizeForMatch(product.name) === normalizedLast);
+        }
+      } else if (target.nameTokens?.length) {
+        matches = catalog.filter((product) => {
+          const productTokens = new Set(tokenizeForMatch(product.name));
+          return target.nameTokens!.every((token) => productTokens.has(token));
+        });
+      }
+
+      if (matches.length === 0 && target.text) {
+        const normalizedText = normalizeForMatch(target.text);
+        matches = catalog.filter((product) => normalizeForMatch(product.name) === normalizedText);
+      }
+
+      for (const product of matches) {
+        excludedIds.add(product.garmentId);
+      }
+
+      return {
+        ...target,
+        matchedProductNames: matches.map((product) => product.name),
+      };
+    });
+
+    return {
+      exclusions: resolved,
+      excludedIds: [...excludedIds],
+    };
+  }
+
+  private describeExclusions(exclusions: ExclusionTarget[]): string {
+    const descriptions = exclusions.map((target) => {
+      if (target.kind === "category") {
+        return target.categories?.join(", ") ?? target.text;
+      }
+
+      if (target.kind === "product") {
+        return target.matchedProductNames?.length
+          ? target.matchedProductNames.join(", ")
+          : target.text || "mẫu vừa xem";
+      }
+
+      const details: string[] = [];
+      if (target.categories?.length) details.push(target.categories.join(", "));
+      if (target.colors?.length) details.push(`màu ${target.colors.join(", ")}`);
+      if (target.sizes?.length) details.push(`size ${target.sizes.join(", ")}`);
+      if (target.occasions?.length) details.push(`dịp ${target.occasions.join(", ")}`);
+      return details.join(", ") || target.text;
+    }).filter(Boolean);
+
+    return [...new Set(descriptions)].join("; ");
+  }
+
+  private buildExclusionEmptyReply(exclusions: ExclusionTarget[]): string {
+    const detail = this.describeExclusions(exclusions);
+    if (!detail) {
+      return "Hiện tại shop chưa có sản phẩm khác phù hợp. Bạn có thể thử mô tả khác hoặc liên hệ staff để được tư vấn thêm ạ.";
+    }
+
+    return `Hiện tại shop chưa có sản phẩm phù hợp ngoài ${detail}. Bạn có thể thử mô tả khác hoặc liên hệ staff để được tư vấn thêm ạ.`;
+  }
+
+  private async queryCatalog(filters?: ProductFilters, onDate?: Date, browse = false): Promise<AdvisorProduct[]> {
     const where: Record<string, unknown> = { isActive: true, deletedAt: null };
 
+    const categoryNameFilter: Record<string, unknown> = {};
     if (filters?.category?.length) {
-      where.category = { name: { in: filters.category } };
+      categoryNameFilter.in = filters.category;
+    }
+    if (filters?.excludeCategories?.length) {
+      categoryNameFilter.notIn = filters.excludeCategories;
+    }
+    if (Object.keys(categoryNameFilter).length > 0) {
+      where.category = { name: categoryNameFilter };
     }
 
     const andConds: Record<string, unknown>[] = [];
@@ -941,7 +1157,7 @@ export class AiService implements OnModuleInit {
             )
         `,
       );
-      where.id = { in: rows.map((r) => r.id) };
+      andConds.push({ id: { in: rows.map((r) => r.id) } });
     }
 
     if (filters?.keyword) {
@@ -963,6 +1179,35 @@ export class AiService implements OnModuleInit {
           ]),
         });
       }
+    }
+
+    if (filters?.excludeColors?.length) {
+      const uniqueColors = [...new Set(filters.excludeColors.map((color) => color.toLowerCase()))];
+      andConds.push({
+        NOT: {
+          OR: uniqueColors.map((color) => ({ color: { contains: color, mode: "insensitive" } })),
+        },
+      });
+    }
+
+    if (filters?.excludeSizes?.length) {
+      andConds.push({
+        NOT: {
+          garment_sizes: {
+            some: { size_label: { in: filters.excludeSizes }, is_active: true },
+          },
+        },
+      });
+    }
+
+    if (filters?.excludeOccasions?.length) {
+      andConds.push({
+        NOT: { occasion: { hasSome: filters.excludeOccasions } },
+      });
+    }
+
+    if (filters?.excludeProductIds?.length) {
+      andConds.push({ id: { notIn: filters.excludeProductIds } });
     }
 
     if (andConds.length > 0) {
@@ -992,7 +1237,7 @@ export class AiService implements OnModuleInit {
 
     const garments = await this.prisma.garment.findMany({
       where: where as never,
-      take: 50,
+      take: browse ? 100 : 50,
       include: {
         category: true,
         images: { orderBy: { sortOrder: "asc" }, take: 1 },
@@ -1015,9 +1260,9 @@ export class AiService implements OnModuleInit {
     // thay cho giá cơ sở khi hiển thị/lọc budget.
     const effectivePrices = onDate
       ? await this.pricing.effectiveDailyPriceMap(
-          garments.flatMap((g) => g.garment_sizes.map((s) => s.id)),
-          onDate,
-        )
+        garments.flatMap((g) => g.garment_sizes.map((s) => s.id)),
+        onDate,
+      )
       : null;
 
     return garments.map((g) => {
@@ -1049,12 +1294,25 @@ export class AiService implements OnModuleInit {
     });
   }
 
-  private buildAdvisorPrompt(catalog: AdvisorProduct[], isAutoReply = false, droppedOccasion?: string[], droppedKeyword?: string, droppedColor?: string[], droppedSize?: string[]): string {
-    const MAX_PRODUCTS = 30;
-    const limited = catalog.slice(0, MAX_PRODUCTS);
+  private buildAdvisorPrompt(catalog: AdvisorProduct[], options: AdvisorPromptOptions = {}): string {
+    const {
+      isAutoReply = false,
+      droppedOccasion,
+      droppedKeyword,
+      droppedColor,
+      droppedSize,
+      droppedCategory,
+      exclusions = [],
+      browse = false,
+    } = options;
+
+    const limited = this.selectPromptProducts(catalog, browse);
     const productLines = limited.map((p, i) =>
       `${i + 1}. ID: ${p.garmentId} | Tên: ${p.name} | Loại: ${p.category} | Màu: ${p.color} | Dịp: ${p.occasion || "—"} | Size: ${p.size} | Giá: ${p.dailyPrice.toLocaleString()}đ/ngày | Cọc: ${p.depositAmount.toLocaleString()}đ | Còn hàng: ${p.inStock ? "Có" : "Không"}`,
     ).join("\n");
+
+    const categorySummary = [...new Set(catalog.map((product) => product.category).filter(Boolean))].join(", ") || "—";
+    const exclusionDetails = this.describeExclusions(exclusions);
 
     const autoReplySection = isAutoReply
       ? `\n### CHẾ ĐỘ TỰ ĐỘNG TRẢ LỜI
@@ -1064,6 +1322,24 @@ Bạn đang tự động trả lời khách hàng khi staff offline.
 - Không hứa giảm giá, không tạo booking, không xử lý hoàn tiền.
 - Nếu khách hỏi về đơn hàng/giao dịch/cuộc hẹn → bảo họ đợi staff trả lời.
 - Không thêm thông tin ngoài danh sách sản phẩm.`
+      : "";
+
+    const exclusionSection = exclusions.length > 0
+      ? `\n\n### KHÁCH MUỐN XEM NGOÀI / KHÁC CÁC MỤC SAU
+Khách đang hỏi sản phẩm KHÁC với: ${exclusionDetails}.
+Khi trả lời:
+- TUYỆT ĐỐI không gợi ý lại sản phẩm, danh mục, màu, size hoặc dịp nằm trong danh sách loại trừ.
+- Nếu khách vẫn muốn xem trong cùng một loại (ví dụ "áo dài khác"), chỉ chọn các mẫu KHÁC trong danh sách bên dưới.
+- Nếu danh sách chỉ còn đúng mục bị loại trừ hoặc không còn mẫu khác, nói rõ shop chưa có mẫu khác; KHÔNG bịa thêm sản phẩm.
+- Nêu ngắn gọn các danh mục shop đang có để khách biết.`
+      : "";
+
+    const browseSection = browse
+      ? `\n\n### KHÁCH MUỐN DUYỆT / HỎI MỞ RỘNG
+- Ưu tiên gợi ý 3-4 sản phẩm tiêu biểu thuộc các danh mục KHÁC NHAU nếu danh sách có nhiều danh mục.
+- Không chỉ trả về một danh mục duy nhất nếu shop còn danh mục khác.
+- Nếu khách đã nêu một loại cụ thể (ví dụ "áo dài khác..."), chỉ gợi ý trong loại đó.
+- Nếu danh sách chỉ có một danh mục, nói rõ shop hiện chỉ có danh mục đó.`
       : "";
 
     const droppedNote = droppedKeyword
@@ -1078,12 +1354,17 @@ Bạn đang tự động trả lời khách hàng khi staff offline.
     const droppedSizeNote = droppedSize
       ? `\n\n### LƯU Ý: KHÔNG CÓ SẢN PHẨM SIZE NÀY\nKhông có sản phẩm nào size ${droppedSize.join(", ")} theo yêu cầu. Các sản phẩm bên dưới chỉ khớp tiêu chí còn lại (loại, màu, budget).\nKhi trả lời:\n- Nói rõ rằng shop chưa có size "${droppedSize.join(", ")}" như yêu cầu.\n- Gợi ý 3-4 sản phẩm đáp ứng các tiêu chí khác, giải thích lý do từng sản phẩm.\n- VÍ DỤ: "Shop hiện không còn size M. Em gợi ý các sản phẩm: [tên 1] màu [màu] size L, [tên 2] màu [màu] size L đáp ứng màu sắc và loại."`
       : "";
+    const droppedCategoryNote = droppedCategory
+      ? `\n\n### LƯU Ý: KHÔNG CÓ SẢN PHẨM THUỘC LOẠI NÀY\nShop chưa có sản phẩm thuộc loại "${droppedCategory.join(", ")}" phù hợp. Các sản phẩm bên dưới thuộc loại khác.\nKhi trả lời:\n- Nói rõ shop chưa có mẫu thuộc loại "${droppedCategory.join(", ")}".\n- Gợi ý 3-4 sản phẩm thuộc loại khác, giải thích ngắn gọn.\n- Không được nói là có sản phẩm thuộc loại khách yêu cầu nếu danh sách không có.`
+      : "";
 
-    return `Bạn là trợ lý AI tư vấn sản phẩm cho cửa hàng cho thuê áo dài và trang phục truyền thống Việt Nam. Bạn phân tích lịch sử chat và catalogue để tư vấn.${autoReplySection}${droppedNote}${droppedOccNote}${droppedColorNote}${droppedSizeNote}
+    return `Bạn là trợ lý AI tư vấn sản phẩm cho cửa hàng cho thuê áo dài và trang phục truyền thống Việt Nam. Bạn phân tích lịch sử chat và catalogue để tư vấn.${autoReplySection}${droppedNote}${droppedOccNote}${droppedColorNote}${droppedSizeNote}${droppedCategoryNote}${exclusionSection}${browseSection}
 
 Dưới đây là danh sách sản phẩm hiện có trong cửa hàng:
 
 ${productLines}
+
+Các danh mục hiện có trong danh sách: ${categorySummary}.
 
 ### QUY TẮC LỌC SẢN PHẨM THEO YÊU CẦU
 Khi khách yêu cầu sản phẩm theo các tiêu chí, bạn PHẢI lọc từ danh sách trên:
@@ -1093,15 +1374,18 @@ Khi khách yêu cầu sản phẩm theo các tiêu chí, bạn PHẢI lọc từ
 - **Màu sắc**: So sánh với cột "Màu". "Áo dài tím" → màu "tím". "Màu đỏ" → màu "đỏ".
 - **Dịp sử dụng**: So sánh với cột "Dịp". "Đi đám cưới" → Dịp chứa "Đám cưới". "Chụp kỷ yếu" → Dịp chứa "Kỷ yếu".
 - **Size**: So sánh với cột "Size". "Size M", "cỡ L" → size_label chứa M hoặc L.
-- **Loại sản phẩm**: So sánh với cột "Loại". "Áo dài" → Loại = "Áo dài".
+- **Loại sản phẩm**: So sánh với cột "Loại". "Áo dài" → Loại = "Áo dài". Quy tắc này KHÔNG áp dụng khi khách nói "ngoài/khác/trừ" một loại hoặc một mẫu.
+- **Ngoài/khác/trừ**: Khi khách hỏi "ngoài X", "khác X", "trừ X", không lọc theo X; chỉ gợi ý các mục còn lại. Nếu X là một mẫu cụ thể, bỏ đúng mẫu đó và vẫn giữ loại.
+- **Hỏi mở rộng**: Khi khách hỏi "còn gì", "những loại nào", "sản phẩm khác", hãy liệt kê theo nhóm danh mục và không lặp lại mục bị loại trừ.
 - **NẾU có sản phẩm thỏa mãn**: PHẢI đề xuất sản phẩm đó. KHÔNG được nói "không có" rồi lại liệt kê sản phẩm thỏa mãn trong cùng câu trả lời.
-- **NẾU không có sản phẩm nào**: Kiểm tra lại catalog một lần nữa trước khi kết luận.
+- **NẾU không có sản phẩm nào**: Kiểm tra lại catalog một lần nữa trước khi kết luận. Nếu shop chỉ có đúng danh mục/mẫu khách vừa loại trừ, nói rõ là chưa có mẫu khác.
 
 ### QUY TẮC XỬ LÝ HỘI THOẠI
 1. INTENT SEGMENTATION: Xác định các câu hỏi độc lập trong chuỗi tin nhắn gần đây của khách.
 2. TOPIC GROUPING: Gom các câu hỏi cùng sản phẩm hoặc chủ đề vào một nhóm.
 3. DEPENDENCY DETECTION: Nếu câu sau dùng "nó", "cái này", "size M", "còn không" → kế thừa context từ câu trước. Nếu đổi chủ đề → tạo topic mới.
 4. Ưu tiên câu hỏi MỚI NHẤT. Tin nhắn cũ hơn dùng làm context (màu sắc, dịp, budget, size đã đề cập).
+5. Nếu khách nói "mẫu trên", "vừa gửi", "cái này" → hiểu là sản phẩm gần nhất trong lịch sử chat.
 
 ### GUARDRAILS (TUYỆT ĐỐI TUÂN THỦ)
 - KHÔNG tạo booking, KHÔNG hứa giảm giá.
@@ -1126,6 +1410,29 @@ Trả về JSON hợp lệ, không markdown, không giải thích thêm:
 }
 Nếu không có gợi ý sản phẩm thì recommendedProductIds là mảng rỗng.
 Tối đa 3 topics.`;
+  }
+
+  private selectPromptProducts(catalog: AdvisorProduct[], browse: boolean): AdvisorProduct[] {
+    const MAX_PRODUCTS = 30;
+    if (!browse) return catalog.slice(0, MAX_PRODUCTS);
+
+    const grouped = new Map<string, AdvisorProduct[]>();
+    for (const product of catalog) {
+      const key = product.category || "Khác";
+      const items = grouped.get(key) ?? [];
+      items.push(product);
+      grouped.set(key, items);
+    }
+
+    const perCategory = grouped.size > 0
+      ? Math.max(1, Math.min(3, Math.floor(MAX_PRODUCTS / grouped.size)))
+      : 3;
+    const selected: AdvisorProduct[] = [];
+    for (const items of grouped.values()) {
+      selected.push(...items.slice(0, perCategory));
+    }
+
+    return selected.slice(0, MAX_PRODUCTS);
   }
 
   private sanitizeUserText(text: string): string {
@@ -1172,50 +1479,22 @@ Tối đa 3 topics.`;
   }
 
   private async callOpenRouter(systemPrompt: string, userMessage: string): Promise<string> {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
-
-    const model = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
-
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
-        max_tokens: 512,
-        response_format: { type: "json_object" },
-      }),
+    // Tên hàm giữ nguyên để không phải sửa nơi gọi; provider + retry + fallback
+    // model nằm trong requestChatCompletion (dùng chung với gợi ý giá).
+    return requestChatCompletion({
+      systemPrompt,
+      userMessage,
+      temperature: 0.2,
+      label: "Product advisor",
     });
-
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(`OpenRouter API ${res.status}: ${text.substring(0, 200)}`);
-    }
-
-    let data: OpenRouterResponse;
-    try {
-      data = JSON.parse(text) as OpenRouterResponse;
-    } catch {
-      throw new Error(`Invalid JSON from OpenRouter: ${text.substring(0, 200)}`);
-    }
-
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OpenRouter returned empty response");
-
-    return content;
   }
 
   private parseAdvisorResponse(raw: string, catalog: AdvisorProduct[]): ProductAdvisorResponse {
     let parsed: { topics?: Array<{ title?: string; assistantReply?: string; recommendedProductIds?: string[]; reasons?: Record<string, string> }> };
     try {
-      parsed = JSON.parse(raw);
+      // Một số model vẫn bọc JSON trong ```json ... ``` dù đã yêu cầu JSON thuần.
+      const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+      parsed = JSON.parse(cleaned);
     } catch {
       return {
         topics: [{
@@ -1248,7 +1527,7 @@ Tối đa 3 topics.`;
         : [];
       return {
         title: t.title ?? "Tư vấn sản phẩm",
-        assistantReply: t.assistantReply ?? "",
+        assistantReply: (t.assistantReply ?? "").trim(),
         recommendedProductIds: validIds,
         reasons: t.reasons ?? {},
         products: validIds.map((id) => {
@@ -1256,7 +1535,19 @@ Tối đa 3 topics.`;
           return { ...p, reason: t.reasons?.[id] ?? p.reason };
         }),
       };
-    });
+    }).filter((t) => t.assistantReply.length > 0);
+
+    if (topics.length === 0) {
+      return {
+        topics: [{
+          title: "Gợi ý sản phẩm",
+          assistantReply: "Hiện tại em chưa tìm được sản phẩm phù hợp. Bạn có thể thử mô tả khác hoặc liên hệ staff để được tư vấn thêm ạ.",
+          recommendedProductIds: [],
+          reasons: {},
+          products: [],
+        }],
+      };
+    }
 
     return { topics };
   }
@@ -1431,7 +1722,9 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
     }
 
     try {
-      const apiKey = process.env.OPENROUTER_API_KEY;
+      // Giám định ảnh giữ nguyên provider cũ (OpenRouter), không dùng AI_*.
+      const provider = readVisionProviderConfig();
+      const apiKey = provider.apiKey;
       if (!apiKey) {
         // Fallback giả lập thông minh khi chưa có API key để dev/test không bị chặn
         return {
@@ -1448,18 +1741,20 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         };
       }
 
-      const visionModel =
-        process.env.OPENROUTER_VISION_MODEL?.trim() ||
-        process.env.OPENROUTER_MODEL?.trim() ||
-        "openai/gpt-4o-mini";
+      const visionModel = readVisionModel() || "openai/gpt-4o-mini";
 
-      const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const orRes = await fetch(provider.chatCompletionsUrl, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
-          "X-Title": "Co Phuc Viet Nam Inspection AI",
+          // Header riêng của OpenRouter; provider khác (Gemini...) không cần.
+          ...(isOpenRouter(provider.baseUrl)
+            ? {
+                "HTTP-Referer": "http://localhost:3000",
+                "X-Title": "Co Phuc Viet Nam Inspection AI",
+              }
+            : {}),
         },
         body: JSON.stringify({
           model: visionModel,
@@ -1490,11 +1785,11 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
       const maxPenalty = garmentValue > 0 ? garmentValue : 10000000;
       let rawIssues = Array.isArray(parsed.detectedIssues)
         ? parsed.detectedIssues.map((issue: any) => ({
-            findingType: String(issue.findingType || "Lỗi kiểm tra"),
-            severity: ["low", "medium", "high", "severe"].includes(issue.severity) ? issue.severity : "low",
-            description: String(issue.description || ""),
-            suggestedPenalty: Math.max(0, Math.round(Number(issue.suggestedPenalty) || 0)),
-          }))
+          findingType: String(issue.findingType || "Lỗi kiểm tra"),
+          severity: ["low", "medium", "high", "severe"].includes(issue.severity) ? issue.severity : "low",
+          description: String(issue.description || ""),
+          suggestedPenalty: Math.max(0, Math.round(Number(issue.suggestedPenalty) || 0)),
+        }))
         : [];
 
       // ── BẢO VỆ TRẦN GIÁ TRỊ TRANG PHỤC (1 BỘ ĐỒ ĐỀN TỐI ĐA 100% GIÁ TRỊ) ──

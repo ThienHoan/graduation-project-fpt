@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -19,6 +20,8 @@ import {
   type ChatMessage,
 } from "@/lib/chat";
 import { CustomerChatBubble } from "@/app/chat/customer-chat-bubble";
+
+const MESSAGES_FRESH_MS = 10_000;
 
 interface CustomerChatProviderProps {
   children?: ReactNode;
@@ -55,13 +58,38 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [failedMessages, setFailedMessages] = useState<Set<string>>(new Set());
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const selectedConversationRef = useRef<ChatConversation | null>(null);
+  const chatOpenRef = useRef(false);
   const sendTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const socketRef =
     useRef<ReturnType<typeof createChatSocket> | null>(null);
   const roomJoinedRef = useRef(false);
+  const hasConnectedOnceRef = useRef(false);
+  // Giữ lại thời điểm nạp tin nhắn gần nhất để không gọi lại API khi vừa mở
+  // bubble (dữ liệu còn mới) và để gộp các lần gọi trùng nhau.
+  const messagesLoadedAtRef = useRef(0);
+  const messagesLoadedConvRef = useRef<string | null>(null);
+  const loadMessagesInFlightRef = useRef<Promise<void> | null>(null);
+  const loadMessagesInFlightConvRef = useRef<string | null>(null);
+
+  const refreshUnreadCount = useCallback(async () => {
+    const result = await getMyChatConversation();
+    if (!result.success || !result.data) return;
+
+    const conv = result.data;
+    if (!chatOpenRef.current) {
+      // Không hạ badge xuống thấp hơn số vừa tăng từ socket: response API
+      // có thể cũ nếu nó bắt đầu trước tin nhắn mới.
+      setUnreadCount((prev) => Math.max(prev, conv.unreadCount ?? 0));
+      return;
+    }
+
+    setUnreadCount(0);
+    void markConversationRead(conv.id);
+  }, []);
 
   // =============================
   // SOCKET INIT
@@ -75,6 +103,8 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
 
     const onConnect = () => {
       setTypingUsers({});
+      const isReconnect = hasConnectedOnceRef.current;
+      hasConnectedOnceRef.current = true;
       const conv = selectedConversationRef.current;
       if (!conv) return;
 
@@ -82,13 +112,21 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         roomJoinedRef.current = true;
       });
       socket.emit("open_conversation", { conversationId: conv.id });
-      void loadMessages(conv.id);
+      void loadMessages(conv.id, {
+        force: isReconnect,
+        silent: !chatOpenRef.current,
+      });
+      // Có thể đã lỡ tin nhắn trong lúc socket mất kết nối/đang kết nối.
+      void refreshUnreadCount();
     };
 
     const onMessageReceived = (payload: any) => {
       //console.log("MESSAGE_RECEIVED", payload.message.id, payload.message.content);
+      const isOwnMessage = payload.message.sender_id === session?.user.id;
+      const isCurrentConversation = payload.conversationId === selectedConversationRef.current?.id;
+
       // If the message is from current user, remove only the first matching optimistic message (fallback)
-      if (payload.message.sender_id === session?.user.id) {
+      if (isOwnMessage) {
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id.startsWith("temp-") && m.content === payload.message.content);
           if (idx === -1) return prev;
@@ -102,11 +140,21 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
           return next;
         });
       }
-      if (payload.conversationId === selectedConversationRef.current?.id) {
-        setMessages((prev) => [...prev, payload.message]);
-        // Mark read via REST when receiving message from staff
-        if (payload.message.sender_id !== selectedConversationRef.current?.customerId) {
-          void markConversationRead(payload.conversationId);
+      if (isCurrentConversation) {
+        setMessages((prev) => {
+          // Socket có thể phát lại cùng một message sau khi reconnect.
+          if (prev.some((m) => m.id === payload.message.id)) return prev;
+          return [...prev, payload.message];
+        });
+        if (!isOwnMessage) {
+          if (chatOpenRef.current) {
+            // Đang mở bubble: khách đã thấy tin, đánh dấu đã đọc ngay.
+            setUnreadCount(0);
+            void markConversationRead(payload.conversationId);
+          } else {
+            // Bubble đang đóng: tăng badge để khách biết có tin mới.
+            setUnreadCount((prev) => prev + 1);
+          }
         }
       }
     };
@@ -185,7 +233,7 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [session?.accessToken, isCustomer, enabled, authSignOut, refreshUser]);
+  }, [session?.accessToken, isCustomer, enabled, authSignOut, refreshUser, refreshUnreadCount]);
 
   // =============================
   // CLEANUP SOCKET
@@ -203,9 +251,9 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
   // LOAD CONVERSATION
   // =============================
   useEffect(() => {
-    if (!session || !isCustomer || !enabled) return;
+    if (!session?.accessToken || !isCustomer || !enabled) return;
     void loadConversation();
-  }, [session, isCustomer, enabled]);
+  }, [session?.accessToken, isCustomer, enabled]);
 
   // Lắng nghe sự kiện mở chat từ các màn hình (vd: Tư vấn size, gửi khiếu nại)
   // để nạp lại tin nhắn mới nhất ngay lập tức
@@ -223,6 +271,24 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
     return () => window.removeEventListener("chat:open", handleChatOpen);
   }, [enabled]);
 
+  useEffect(() => {
+    if (!enabled) return;
+    const refresh = () => {
+      if (chatOpenRef.current) return;
+      void refreshUnreadCount();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [enabled, refreshUnreadCount]);
+
   async function loadConversation() {
     const result = await getMyChatConversation();
 
@@ -231,6 +297,10 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
 
       setConversation(conv);
       selectedConversationRef.current = conv;
+      setUnreadCount((prev) => {
+        if (chatOpenRef.current) return 0;
+        return Math.max(prev, conv.unreadCount ?? 0);
+      });
 
       const socket = socketRef.current;
 
@@ -239,30 +309,84 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         socket.emit("open_conversation", { conversationId: conv.id });
       }
 
-      void loadMessages(conv.id);
+      // Nạp tin nhắn nền: không bật spinner khi bubble đang đóng để mở chat
+      // là thấy ngay nội dung đã có, không phải chờ.
+      void loadMessages(conv.id, { silent: !chatOpenRef.current });
 
-      // Mark read via REST when customer opens chat bubble
-      void markConversationRead(conv.id);
+      // Chỉ đánh dấu đã đọc khi bubble thực sự đang mở. Nếu đóng,
+      // giữ unreadCount để hiện badge trên nút chat.
+      if (chatOpenRef.current) {
+        setUnreadCount(0);
+        void markConversationRead(conv.id);
+      }
     }
   }
 
-  async function loadMessages(conversationId: string) {
-    //console.log("LOAD", conversationId);
+  function handleChatOpenChange(open: boolean) {
+    chatOpenRef.current = open;
+    if (!open) return;
 
-    const result = await getConversationMessages(conversationId);
+    setUnreadCount(0);
+    const conv = selectedConversationRef.current;
+    if (!conv) return;
 
-    //console.log("RESULT", result.success);
-    //console.log("COUNT", result.data?.length);
+    void markConversationRead(conv.id);
+    // Nếu vừa nạp xong (vd lúc mở app) thì bỏ qua; còn dữ liệu cũ mới refetch.
+    void loadMessages(conv.id);
+  }
 
-    if (result.success && result.data) {
-      setMessages(result.data);
+  async function loadMessages(
+    conversationId: string,
+    options?: { silent?: boolean; force?: boolean },
+  ) {
+    const isSameConversation = messagesLoadedConvRef.current === conversationId;
+    const isFresh =
+      isSameConversation &&
+      Date.now() - messagesLoadedAtRef.current < MESSAGES_FRESH_MS;
+    if (!options?.force && isFresh) return;
+
+    const inFlight = loadMessagesInFlightRef.current;
+    if (inFlight && loadMessagesInFlightConvRef.current === conversationId) {
+      return inFlight;
     }
+
+    const silent = options?.silent ?? isSameConversation;
+    if (!silent) setLoadingMessages(true);
+
+    const request = (async () => {
+      try {
+        const result = await getConversationMessages(conversationId);
+        if (result.success && result.data) {
+          setMessages(result.data);
+          // Trang mặc định trả 15 tin mới nhất. Chỉ khi đủ 15 mới có thể còn
+          // tin cũ hơn để cuộn lên tải tiếp.
+          setHasMoreMessages(result.data.length >= 15);
+          messagesLoadedConvRef.current = conversationId;
+          messagesLoadedAtRef.current = Date.now();
+        }
+      } finally {
+        setLoadingMessages(false);
+      }
+    })();
+
+    loadMessagesInFlightRef.current = request;
+    loadMessagesInFlightConvRef.current = conversationId;
+    void request
+      .finally(() => {
+        if (loadMessagesInFlightRef.current === request) {
+          loadMessagesInFlightRef.current = null;
+          loadMessagesInFlightConvRef.current = null;
+        }
+      })
+      .catch(() => {});
+    return request;
   }
 
   async function loadOlderMessages() {
     if (
       !conversation ||
       messages.length === 0 ||
+      !hasMoreMessages ||
       loadingOlderMessages
     )
       return;
@@ -272,26 +396,32 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
 
     const container = messagesContainerRef.current;
     const prevScrollHeight = container?.scrollHeight ?? 0;
+    const prevScrollTop = container?.scrollTop ?? 0;
 
-    const result = await getConversationMessages(
-      conversation.id,
-      oldestMessage.id
-    );
+    try {
+      const result = await getConversationMessages(
+        conversation.id,
+        oldestMessage.id
+      );
 
-    if (result.success && result.data) {
-      if (result.data.length < 15) setHasMoreMessages(false);
+      if (result.success && result.data) {
+        if (result.data.length < 15) setHasMoreMessages(false);
 
-      setMessages((prev) => [...(result.data ?? []), ...prev]);
+        setMessages((prev) => [...(result.data ?? []), ...prev]);
 
-      requestAnimationFrame(() => {
-        if (container) {
-          container.scrollTop =
-            container.scrollHeight - prevScrollHeight;
-        }
-      });
+        requestAnimationFrame(() => {
+          if (container && prevScrollHeight > 0) {
+            // Dự phòng nếu CustomerChatBubble chưa điều chỉnh vị trí cuộn
+            if (container.scrollTop <= prevScrollTop + 50) {
+              container.scrollTop =
+                container.scrollHeight - prevScrollHeight + prevScrollTop;
+            }
+          }
+        });
+      }
+    } finally {
+      setLoadingOlderMessages(false);
     }
-
-    setLoadingOlderMessages(false);
   }
 
   // =============================
@@ -305,8 +435,8 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
     const content = messageText.trim();
     setMessageText("");
 
-    setTypingUsers((prev) => ({ ...prev, "ai-assistant": true }));
-
+    // Server chỉ phát "AI đang nhập" khi tin nhắn thực sự được đưa vào hàng đợi
+    // (không phải tin rỗng/emoji hay hội thoại đang có staff xử lý).
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const optimistic: ChatMessage = {
       id: tempId,
@@ -395,6 +525,8 @@ export function CustomerChatProvider({ children }: CustomerChatProviderProps) {
         onDeleteMessage={deleteMessage}
         failedMessages={failedMessages}
         onRetryMessage={retrySendMessage}
+        unreadCount={unreadCount}
+        onOpenChange={handleChatOpenChange}
       />
     </>
   );

@@ -7,6 +7,11 @@ type MemoryCacheEntry = {
   expiresAt: number | null;
 };
 
+type MemoryWindowEntry = {
+  count: number;
+  expiresAt: number;
+};
+
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
@@ -16,6 +21,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   // In-memory fallback map if Redis is not configured or offline
   private readonly memoryStore = new Map<string, MemoryCacheEntry>();
   private readonly memoryCounters = new Map<string, number>();
+  private readonly memoryWindows = new Map<string, MemoryWindowEntry>();
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -153,6 +159,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.memoryStore.delete(key);
+    this.memoryWindows.delete(key);
   }
 
   /** Xóa theo pattern (ví dụ: garments:*) */
@@ -173,6 +180,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     for (const k of this.memoryStore.keys()) {
       if (regex.test(k)) {
         this.memoryStore.delete(k);
+      }
+    }
+    for (const k of this.memoryWindows.keys()) {
+      if (regex.test(k)) {
+        this.memoryWindows.delete(k);
       }
     }
   }
@@ -213,5 +225,77 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       expiresAt: Date.now() + ttlSeconds * 1000,
     });
     return true;
+  }
+
+  /**
+   * Xoá key chỉ khi giá trị còn khớp (compare-and-delete).
+   * Dùng để nhả distributed lock mà không xoá nhầm lock của instance khác
+   * trong trường hợp lock cũ đã hết TTL và instance khác vừa giành được.
+   */
+  async delIfValue(key: string, value: string): Promise<boolean> {
+    if (this.isConnected && this.client) {
+      try {
+        const deleted = await this.client.eval(
+          "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+          1,
+          key,
+          value,
+        );
+        return Number(deleted) === 1;
+      } catch {
+        // fallback to memory
+      }
+    }
+
+    const entry = this.memoryStore.get(key);
+    const isAlive = entry && (!entry.expiresAt || Date.now() <= entry.expiresAt);
+    if (isAlive && entry.value === value) {
+      this.memoryStore.delete(key);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fixed-window counter dùng cho rate limiting phân tán.
+   * Trả về số lần đã tăng và TTL còn lại (ms) của window.
+   */
+  async incrementWindow(
+    key: string,
+    ttlMs: number,
+  ): Promise<{ count: number; ttlMs: number }> {
+    const safeTtlMs = Math.max(1000, Math.floor(ttlMs));
+
+    if (this.isConnected && this.client) {
+      try {
+        const result = (await this.client.eval(
+          [
+            "local current = redis.call('INCR', KEYS[1])",
+            "if current == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end",
+            "local pttl = redis.call('PTTL', KEYS[1])",
+            "return {current, pttl}",
+          ].join("\n"),
+          1,
+          key,
+          String(safeTtlMs),
+        )) as [number, number];
+        return {
+          count: Number(result[0]),
+          ttlMs: Math.max(0, Number(result[1])),
+        };
+      } catch {
+        // fallback to memory
+      }
+    }
+
+    const now = Date.now();
+    const existing = this.memoryWindows.get(key);
+    if (!existing || existing.expiresAt <= now) {
+      this.memoryWindows.set(key, { count: 1, expiresAt: now + safeTtlMs });
+      return { count: 1, ttlMs: safeTtlMs };
+    }
+
+    existing.count += 1;
+    return { count: existing.count, ttlMs: Math.max(0, existing.expiresAt - now) };
   }
 }

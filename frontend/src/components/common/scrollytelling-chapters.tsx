@@ -141,34 +141,44 @@ export function ScrollytellingChapters({
     restDelta: 0.0005,
   });
 
+  // Khi người dùng bật reduce-motion: dùng scrollYProgress thô (không spring) để tránh
+  // hiệu ứng trượt mượt. Vẫn giữ opacity/y transforms để các chương không chồng lên nhau.
+  const progress = shouldReduceMotion ? scrollYProgress : smoothProgress;
+
   // Chuyển đổi tiến độ cuộn cho 4 chương rõ ràng không bị đè chữ
   // Chương 1: [0, 0.21]
-  const opacity1 = useTransform(smoothProgress, [0, 0.15, 0.21], [1, 1, 0]);
-  const y1 = useTransform(smoothProgress, [0, 0.21], [0, -40]);
+  const opacity1 = useTransform(progress, [0, 0.15, 0.21], [1, 1, 0]);
+  const y1 = useTransform(progress, [0, 0.21], [0, -40]);
 
   // Chương 2: [0.23, 0.49] -> TÍCH HỢP ZOOM CAMERA & HIỆU ỨNG TÁCH LỚP ĐỘNG
-  const opacity2 = useTransform(smoothProgress, [0.23, 0.28, 0.45, 0.49], [0, 1, 1, 0]);
-  const y2 = useTransform(smoothProgress, [0.23, 0.28, 0.49], [40, 0, -40]);
+  const opacity2 = useTransform(progress, [0.23, 0.28, 0.45, 0.49], [0, 1, 1, 0]);
+  const y2 = useTransform(progress, [0.23, 0.28, 0.49], [40, 0, -40]);
   // Camera Zoom từ toàn thân áo phóng to vào cổ áo và ngực thêu
-  const chapter2Zoom = useTransform(smoothProgress, [0.28, 0.43], [1, 1.25]);
-  const chapter2PanY = useTransform(smoothProgress, [0.28, 0.43], ["0%", "-10%"]);
+  const chapter2Zoom = useTransform(progress, [0.28, 0.43], [1, 1.25]);
+  const chapter2PanY = useTransform(progress, [0.28, 0.43], ["0%", "-10%"]);
   // Độ rực của sợi chỉ vàng tăng dần khi cuộn
   const goldThreadGlow = useTransform(
-    smoothProgress,
+    progress,
     [0.28, 0.36, 0.46],
     [0.2, 0.8, 0.4]
   );
 
   // Chương 3: [0.51, 0.74]
-  const opacity3 = useTransform(smoothProgress, [0.51, 0.56, 0.7, 0.74], [0, 1, 1, 0]);
-  const y3 = useTransform(smoothProgress, [0.51, 0.56, 0.74], [40, 0, -40]);
+  const opacity3 = useTransform(progress, [0.51, 0.56, 0.7, 0.74], [0, 1, 1, 0]);
+  const y3 = useTransform(progress, [0.51, 0.56, 0.74], [40, 0, -40]);
 
   // Chương 4: [0.76, 1]
-  const opacity4 = useTransform(smoothProgress, [0.76, 0.82, 1], [0, 1, 1]);
-  const y4 = useTransform(smoothProgress, [0.76, 0.82], [40, 0]);
+  const opacity4 = useTransform(progress, [0.76, 0.82, 1], [0, 1, 1]);
+  const y4 = useTransform(progress, [0.76, 0.82], [40, 0]);
 
   // Thanh tiến trình
-  const progressPercent = useTransform(smoothProgress, [0, 1], ["0%", "100%"]);
+  const progressPercent = useTransform(progress, [0, 1], ["0%", "100%"]);
+
+  // pointerEvents: chỉ cho phép tương tác khi chương hiện diện (opacity > 0)
+  const pointerEvents1 = useTransform(opacity1, [0, 0.01], ["none", "auto"]);
+  const pointerEvents2 = useTransform(opacity2, [0, 0.01], ["none", "auto"]);
+  const pointerEvents3 = useTransform(opacity3, [0, 0.01], ["none", "auto"]);
+  const pointerEvents4 = useTransform(opacity4, [0, 0.01], ["none", "auto"]);
 
   // Chuyển nhanh tới chương bất kỳ
   const scrollToChapter = (index: number) => {
@@ -233,7 +243,7 @@ export function ScrollytellingChapters({
         <div className="relative mx-auto flex h-full w-full max-w-7xl items-center justify-center">
           {/* ================= CHƯƠNG 01: KHỞI NGUYÊN DI SẢN ================= */}
           <motion.div
-            style={shouldReduceMotion ? {} : { opacity: opacity1, y: y1 }}
+            style={{ opacity: opacity1, y: y1, pointerEvents: pointerEvents1 }}
             className="absolute inset-0 flex flex-col justify-center items-center text-center px-4"
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-xs font-semibold text-amber-300 backdrop-blur-md shadow-lg">
@@ -266,8 +276,8 @@ export function ScrollytellingChapters({
 
           {/* ================= CHƯƠNG 02: TUYỆT KỸ DỆT THÊU & MỔ XẺ CHI TIẾT ================= */}
           <motion.div
-            style={shouldReduceMotion ? {} : { opacity: opacity2, y: y2 }}
-            className="pointer-events-auto absolute inset-0 grid grid-cols-1 items-center gap-6 lg:grid-cols-12 px-4 max-w-7xl mx-auto w-full"
+            style={{ opacity: opacity2, y: y2, pointerEvents: pointerEvents2 }}
+            className="absolute inset-0 grid grid-cols-1 items-center gap-8 lg:grid-cols-12 px-4 max-w-7xl mx-auto w-full"
           >
             {/* Cột 1 (4 cols): Nội dung thuyết minh & Bộ chọn cấu trúc dệt tương tác */}
             <div className="lg:col-span-4 text-left">
@@ -498,8 +508,8 @@ export function ScrollytellingChapters({
 
           {/* ================= CHƯƠNG 03: GƯƠNG THẦN AI ================= */}
           <motion.div
-            style={shouldReduceMotion ? {} : { opacity: opacity3, y: y3 }}
-            className="pointer-events-auto absolute inset-0 grid grid-cols-1 items-center gap-8 lg:grid-cols-12 px-4"
+            style={{ opacity: opacity3, y: y3, pointerEvents: pointerEvents3 }}
+            className="absolute inset-0 grid grid-cols-1 items-center gap-8 lg:grid-cols-12 px-4"
           >
             <div className="lg:col-span-5 text-left">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-300 backdrop-blur-md">
@@ -568,8 +578,8 @@ export function ScrollytellingChapters({
 
           {/* ================= CHƯƠNG 04: NGHI THỨC BÀN GIAO ================= */}
           <motion.div
-            style={shouldReduceMotion ? {} : { opacity: opacity4, y: y4 }}
-            className="pointer-events-auto absolute inset-0 flex flex-col justify-center items-center text-center px-4"
+            style={{ opacity: opacity4, y: y4, pointerEvents: pointerEvents4 }}
+            className="absolute inset-0 flex flex-col justify-center items-center text-center px-4"
           >
             <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3.5 py-1 text-xs font-semibold text-amber-300 backdrop-blur-md">
               <Box className="h-4 w-4 text-amber-400" />

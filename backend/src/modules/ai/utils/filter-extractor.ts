@@ -3,7 +3,9 @@ import type { ProductFilters } from "../interfaces/ai-response.interface";
 // \b does not work with Vietnamese characters (non-ASCII \W).
 // Use (?:^|(?<=\s)) / (?=\s|$|[.,;:!?]) instead.
 
-const CATEGORY_MAP: Record<string, string[]> = {
+export const CATEGORY_MAP: Record<string, string[]> = {
+  "áo dài truyền thống": ["Áo dài truyền thống"],
+  "áo dài cách tân": ["Áo dài cách tân"],
   "áo dài": ["Áo dài truyền thống", "Áo dài cách tân"],
   "váy cưới": ["Váy cưới"],
   "váy": ["Váy cưới"],
@@ -13,7 +15,7 @@ const CATEGORY_MAP: Record<string, string[]> = {
   "suit": ["Vest & Suit"],
 };
 
-const COLOR_SYNONYMS: Record<string, string[]> = {
+export const COLOR_SYNONYMS: Record<string, string[]> = {
   "tím": ["tím", "tím sen", "tím than", "tím nhạt", "tím pastel", "tím hoa cà", "tím lavender", "tím hồng"],
   "đỏ": ["đỏ", "đỏ tươi", "đỏ thắm", "đỏ rượu", "đô", "đỏ hồng"],
   "hồng": ["hồng", "hồng phấn", "hồng cánh sen", "hồng nhạt", "hồng đậm", "hồng tím"],
@@ -53,6 +55,9 @@ const GENERAL_STOP_WORDS = new Set([
   "về", "ngừng", "nhập", "tạm", "thuê", "mướn",
   "phù", "hợp", "dành", "mặc", "đi", "dự", "tham",
   "ngân sách", "budget",
+  // Từ nối/xu hướng khi khách hỏi mở rộng hoặc loại trừ.
+  "ngoài", "khác", "bên", "cạnh", "so", "các", "những", "đồ", "ra", "nữa", "thêm",
+  "trang", "phục",
 ]);
 
 // 14 giá trị canonical cho dịp sử dụng. Mọi cách khách nói đều quy về các giá trị này.
@@ -134,7 +139,7 @@ const OCCASION_PHRASES: Record<string, string> = {
 };
 
 // Cụm dài trước để "chụp ảnh cưới" không bị "chụp ảnh" cắt mất.
-const OCCASION_KEYS_BY_LENGTH = Object.keys(OCCASION_PHRASES).sort(
+export const OCCASION_KEYS_BY_LENGTH = Object.keys(OCCASION_PHRASES).sort(
   (a, b) => b.length - a.length,
 );
 
@@ -147,7 +152,7 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function extractOccasion(text: string): string[] | undefined {
+export function extractOccasion(text: string): string[] | undefined {
   let lower = text.toLowerCase();
   const found = new Set<string>();
   for (const phrase of OCCASION_KEYS_BY_LENGTH) {
@@ -159,18 +164,21 @@ function extractOccasion(text: string): string[] | undefined {
   return found.size > 0 ? [...found] : undefined;
 }
 
-function extractCategory(text: string): string[] | undefined {
-  const lower = text.toLowerCase();
+export function extractCategory(text: string): string[] | undefined {
+  let lower = text.toLowerCase();
   const matches: string[] = [];
-  for (const [key, categories] of Object.entries(CATEGORY_MAP)) {
-    if (lower.includes(key)) {
-      matches.push(...categories);
-    }
+  const keys = Object.keys(CATEGORY_MAP).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (!lower.includes(key)) continue;
+    matches.push(...CATEGORY_MAP[key]);
+    // Xoá cụm đã khớp để "áo dài cách tân" không bị "áo dài" khớp lại
+    // và mở rộng nhầm thành cả hai danh mục.
+    lower = lower.split(key).join(" ");
   }
   return matches.length > 0 ? [...new Set(matches)] : undefined;
 }
 
-function extractColor(text: string): string[] | undefined {
+export function extractColor(text: string): string[] | undefined {
   const lower = text.toLowerCase();
   const found: string[] = [];
 
@@ -195,7 +203,7 @@ function extractColor(text: string): string[] | undefined {
   return result;
 }
 
-function extractSize(text: string): string[] | undefined {
+export function extractSize(text: string): string[] | undefined {
   // Match "size|cỡ|số" followed by a size label (allow Vietnamese chars)
   const sizeRegex = /(?:size|cỡ|số)\s+(\S{1,8})/gi;
   const found: string[] = [];
@@ -336,7 +344,7 @@ function extractKeyword(text: string): string | undefined {
   let cleaned = text.toLowerCase().trim().replace(/(\d)\s+([.,])/g, "$1$2");
 
   // Remove common generic phrases that are not product-related
-  const genericPhrases = ["sản phẩm", "còn hàng", "hết hàng", "liên hệ", "inbox", "cho thuê", "cho thuê áo dài"];
+  const genericPhrases = ["sản phẩm", "trang phục", "còn hàng", "hết hàng", "liên hệ", "inbox", "cho thuê", "cho thuê áo dài"];
   for (const phrase of genericPhrases) {
     cleaned = cleaned.replace(new RegExp(phrase, "gi"), "");
   }

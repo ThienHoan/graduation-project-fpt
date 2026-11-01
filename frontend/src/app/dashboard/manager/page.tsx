@@ -1329,7 +1329,8 @@ export default function ManagerDashboardPage() {
           key !== "pricing" &&
           key !== "accessories" &&
           key !== "vouchers" &&
-          key !== "product-stats"
+          key !== "product-stats" &&
+          key !== "faq"
         )
           goToTab(key);
       }}

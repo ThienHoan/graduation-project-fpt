@@ -29,7 +29,10 @@ export function CountUp({
   const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true, amount: 0.3 });
   const shouldReduceMotion = useReducedMotion();
-  const [displayValue, setDisplayValue] = useState(shouldReduceMotion ? end : start);
+  // Khởi tạo luôn bằng `start` để server và client render giống nhau.
+  // `useReducedMotion()` trả null ở server nên không được dùng để khởi tạo state
+  // (sẽ gây lỗi hydration: server render 0, client render end).
+  const [displayValue, setDisplayValue] = useState(start);
 
   useEffect(() => {
     if (!isInView || shouldReduceMotion) {
@@ -64,9 +67,9 @@ export function CountUp({
     };
   }, [isInView, end, start, duration, shouldReduceMotion]);
 
-  const formatted = decimals > 0
-    ? displayValue.toFixed(decimals)
-    : Math.round(displayValue).toLocaleString("vi-VN");
+  // Format số thủ công thay vì toLocaleString: server (Node ICU) và browser có thể
+  // dùng bộ dữ liệu locale khác nhau, gây mismatch text trong quá trình hydration.
+  const formatted = formatNumber(displayValue, decimals);
 
   return (
     <span ref={ref} className={className}>
@@ -75,4 +78,19 @@ export function CountUp({
       {suffix}
     </span>
   );
+}
+
+/**
+ * Định dạng số kiểu vi-VN (dấu chấm phân tách nghìn) một cách tất định,
+ * không phụ thuộc vào ICU của runtime.
+ */
+function formatNumber(value: number, decimals: number): string {
+  if (!Number.isFinite(value)) return "0";
+
+  const fixed = Math.abs(value).toFixed(decimals);
+  const [intPart, fracPart] = fixed.split(".");
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const sign = value < 0 ? "-" : "";
+
+  return fracPart ? `${sign}${grouped},${fracPart}` : `${sign}${grouped}`;
 }
