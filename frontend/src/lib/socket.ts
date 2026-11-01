@@ -55,6 +55,11 @@ export function createChatSocket(accessToken: string) {
 
   socket = io(chatSocketUrl, {
     auth: { token },
+    // Next.js/Vercel redirect mọi URL có dấu "/" thừa ở cuối (vd `/socket.io/?EIO=...`)
+    // bằng 308; trình duyệt KHÔNG mang header `Upgrade: websocket` theo redirect nên
+    // kết nối WebSocket qua proxy rewrite luôn thất bại. engine.io-client mặc định
+    // thêm "/" cuối path → tắt để giữ đúng "/socket.io?..." mà rewrite khớp.
+    addTrailingSlash: false,
     reconnectionDelayMax: 30000,
     timeout: 30000,
   });

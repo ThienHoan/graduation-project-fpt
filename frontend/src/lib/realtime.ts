@@ -12,6 +12,9 @@ function buildSocket(accessToken: string) {
   return io(realtimeSocketUrl, {
     auth: { token: `Bearer ${accessToken}` },
     transports: ["websocket", "polling"],
+    // Xem `socket.ts`: tắt "/" cuối path để không bị Next.js 308 làm mất header
+    // Upgrade khi đi qua proxy rewrite của Vercel.
+    addTrailingSlash: false,
     reconnectionDelayMax: 30000,
     timeout: 30000,
   });
