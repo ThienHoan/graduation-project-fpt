@@ -322,7 +322,7 @@ export class FaqAdminService {
     }
 
     if (config.isActive) {
-      const snapshot = this.faqService.inspect(config, config.key);
+      const snapshot = this.faqService.inspect(config);
       if (snapshot && snapshot.missingKeys.length > 0) {
         throw new BadRequestException(
           `Cannot activate FAQ '${config.key}' while values are missing: ${snapshot.missingKeys.join(
@@ -374,7 +374,7 @@ export class FaqAdminService {
   }
 
   private toItem(config: FaqConfig, row: FaqRow | null): FaqAdminItem {
-    const snapshot = this.faqService.inspect(config, config.key);
+    const snapshot = this.faqService.inspect(config);
     return {
       ...config,
       exists: Boolean(row),
