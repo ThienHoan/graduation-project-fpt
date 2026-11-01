@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import type { BookingStatus } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
-import type { ClassifierSlots } from "./classification.types";
+//import type { ClassifierSlots } from "./classification.types";
 import type { DbHandlerInput, DbHandlerResult } from "./assistant.types";
 import { foldVietnamese, normalizeForMatch } from "./text-utils";
 import { addDaysUtc, formatDateOnly, parseRequestedDate } from "./date-utils";

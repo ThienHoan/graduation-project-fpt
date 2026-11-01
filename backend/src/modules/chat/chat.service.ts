@@ -597,7 +597,7 @@ export class ChatService {
     }
 
     const conversation = await this.getOrCreateConversationForCustomer(customerId);
-    const lastMessage = conversation.messages.length > 0 ? conversation.messages[conversation.messages.length - 1] : null;
+    
 
     // Khi mở một hội thoại đã resolved (vd khách đã tư vấn xong nhưng manager
     // cần liên hệ để xin thông tin chuyển khoản hoàn cọc): tự động khởi động

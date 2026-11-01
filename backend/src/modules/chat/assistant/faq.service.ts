@@ -152,7 +152,7 @@ export class FaqService {
   }
 
   /** Dùng cho trang admin: biết ngay field nào còn thiếu trước khi bật FAQ. */
-  inspect(config: FaqConfig | null, key: string): FaqSnapshot | null {
+  inspect(config: FaqConfig | null): FaqSnapshot | null {
     if (!config) return null;
     return {
       config,
