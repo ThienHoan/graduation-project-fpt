@@ -2,6 +2,11 @@ import { apiRequest } from "./api";
 import { readStoredAccessToken } from "./auth";
 import { getChatSocket } from "./socket";
 
+export type ChatReplyPreview = {
+  id: string;
+  content: string;
+};
+
 export type ChatMessage = {
   id: string;
   conversation_id: string;
@@ -13,6 +18,8 @@ export type ChatMessage = {
   message_type?: string;
   sender_type?: string;
   metadata?: Record<string, unknown> | null;
+  /** Tin được trích dẫn khi staff/manager trả lời một tin cụ thể. */
+  replyTo?: ChatReplyPreview | null;
   user_accounts?: {
     id: string;
     email: string;
@@ -38,6 +45,22 @@ export type ChatConversationCounts = {
   resolved: number;
 };
 
+export type ChatHandoffGroup = "complaint" | "payment" | "bot";
+
+/**
+ * Handoff đang mở của hội thoại (backend trả kèm mọi payload hội thoại).
+ * `expired` = đã quá TTL mà chưa có staff trả lời; staff vẫn cần thấy.
+ */
+export type ChatHandoff = {
+  reason: string;
+  label: string;
+  group: ChatHandoffGroup;
+  sensitive: boolean;
+  openedAt: string | null;
+  expired: boolean;
+  triggerMessageId: string | null;
+};
+
 export type ChatConversation = {
   id: string;
   customerId: string;
@@ -56,6 +79,7 @@ export type ChatConversation = {
   managerSupportBy?: string | null;
   managerSupportState?: ManagerSupportState | null;
   managerSupportExpiresAt?: string | null;
+  handoff?: ChatHandoff | null;
 };
 
 export type ManagerSupportSnapshot = {
@@ -281,8 +305,97 @@ export async function endManagerSupport(conversationId: string) {
   });
 }
 
+export async function getConversationHandoff(conversationId: string) {
+  return apiRequest<{ handoff: ChatHandoff | null }>(
+    `/chat/conversations/${conversationId}/handoff`,
+  );
+}
+
 export async function getConversationLockStatus(conversationId: string) {
   return apiRequest<ConversationLockStatus>(`/chat/conversations/${conversationId}/lock-status`);
+}
+
+export type ChatSuggestionProduct = {
+  garmentId: string;
+  name: string;
+  imageUrl: string | null;
+  dailyPrice: number;
+  size: string | null;
+  reason?: string;
+};
+
+export type ChatSuggestionTopic = {
+  title: string;
+  assistantReply: string;
+  recommendedProductIds: string[];
+  reasons: Record<string, string>;
+  products: ChatSuggestionProduct[];
+};
+
+export type StaffSuggestionResponse = {
+  messageId: string | null;
+  topics: ChatSuggestionTopic[];
+  cached: boolean;
+};
+
+/**
+ * Gợi ý do backend định tuyến (STAFF > FAQ > DB > AI) và cache theo messageId.
+ * Chỉ staff phụ trách (hoặc manager đang hỗ trợ) gọi được; không tự gửi.
+ *
+ * `messageId`: tin khách mà staff chọn trả lời. Bỏ trống = tin khách mới nhất.
+ */
+export async function getStaffSuggestion(
+  conversationId: string,
+  messageId?: string | null,
+) {
+  return apiRequest<StaffSuggestionResponse>(
+    `/chat/conversations/${conversationId}/suggestion`,
+    {
+      method: "POST",
+      body: messageId ? JSON.stringify({ messageId }) : undefined,
+    },
+  );
+}
+
+export type FaqAdminItem = {
+  key: string;
+  intent: string;
+  answerTemplate: string;
+  requiredParams: string[];
+  values: Record<string, string>;
+  notApplicable: boolean;
+  notApplicableReply: string | null;
+  isActive: boolean;
+  exists: boolean;
+  missingKeys: string[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+};
+
+export type UpdateFaqItemPayload = {
+  intent?: string;
+  answerTemplate?: string;
+  requiredParams?: string[];
+  values?: Record<string, string>;
+  notApplicable?: boolean;
+  notApplicableReply?: string;
+  isActive?: boolean;
+  confirm?: boolean;
+};
+
+/** Danh sách FAQ cho manager/admin; key chưa lưu hiện dưới dạng placeholder. */
+export async function getFaqItems() {
+  return apiRequest<FaqAdminItem[]>("/chat/faq");
+}
+
+export async function updateFaqItem(
+  key: string,
+  payload: UpdateFaqItemPayload,
+) {
+  return apiRequest<FaqAdminItem>(`/chat/faq/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
 export type AIAdvisorProduct = {
@@ -338,12 +451,15 @@ export function emitChatMessage(params: {
   setMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   setFailedMessages: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   roomJoinedRef?: { current: boolean };
+  /** Staff/manager trả lời trích dẫn một tin cụ thể. */
+  replyToId?: string | null;
 }) {
   const { socket, conversationId, content, tempId, sendTimeoutRef, setMessages, setFailedMessages } = params;
   const roomJoinedRef = params.roomJoinedRef;
+  const replyToId = params.replyToId ?? null;
 
   const doEmit = () => {
-    socket.emit("send_message", { conversationId, content, tempId }, (ack: { success?: boolean; error?: string; tempId?: string } | undefined) => {
+    socket.emit("send_message", { conversationId, content, tempId, ...(replyToId ? { replyToId } : {}) }, (ack: { success?: boolean; error?: string; tempId?: string } | undefined) => {
       const t = sendTimeoutRef.current.get(tempId);
       if (t) { clearTimeout(t); sendTimeoutRef.current.delete(tempId); }
       if (ack && ack.success && ack.tempId) {

@@ -298,6 +298,34 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
     }
 
     client.join(body.conversationId);
+
+    // Handoff đã mở từ trước (không phát lại qua socket): gửi kèm cho mọi
+    // staff đang mở hội thoại để list/divider có dữ liệu ngay.
+    if (this.isStaffSide(user.role)) {
+      try {
+        const conversation = await this.prisma.conversations.findUnique({
+          where: { id: body.conversationId },
+          select: {
+            handoff_state: true,
+            handoff_reason: true,
+            handoff_sensitive: true,
+            handoff_opened_at: true,
+            handoff_trigger_message_id: true,
+          },
+        });
+        const handoffFields = conversation
+          ? this.chatService.getHandoffFields?.(conversation)
+          : null;
+        if (handoffFields?.handoff) {
+          client.emit("handoff_updated", {
+            conversationId: body.conversationId,
+            ...handoffFields,
+          });
+        }
+      } catch {
+        // Handoff chỉ là thông tin phụ cho UI — không được chặn join phòng.
+      }
+    }
     //console.log("JOIN ROOM SUCCESS", client.id, body.conversationId, Array.from(client.rooms));
   }
 
@@ -422,6 +450,16 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       staffName: user.fullName,
       status: conversation.status,
     });
+    // Handoff có thể mở từ trước khi staff vào phòng (không có sự kiện socket
+    // nào phát lại). Gửi kèm để UI hiện badge "Khiếu nại"/"Bot chuyển" ngay,
+    // không phải chờ tin khách kế tiếp.
+    const handoffFields = this.chatService.getHandoffFields?.(conversation);
+    if (handoffFields?.handoff) {
+      client.emit("handoff_updated", {
+        conversationId: body.conversationId,
+        ...handoffFields,
+      });
+    }
     client.broadcast.to("staff").emit("chat_locked", {
       conversationId: body.conversationId,
       staffName: user.fullName,
@@ -468,7 +506,14 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
 
   @SubscribeMessage("send_message")
   async handleSendMessage(
-    @MessageBody() body: { conversationId: string; content: string; tempId?: string },
+    @MessageBody()
+    body: {
+      conversationId: string;
+      content: string;
+      tempId?: string;
+      /** Staff/manager trả lời trích dẫn một tin cụ thể (kiểu reply của Messenger). */
+      replyToId?: string;
+    },
     @ConnectedSocket() client: AuthSocket,
   ): Promise<{ success: boolean; error?: string; tempId?: string }> {
     const user = client.data.user;
@@ -530,7 +575,20 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       }
     }
 
-    const message = await this.chatService.sendMessage(user.userId, user.role, body.conversationId, body.content);
+    const message = body.replyToId
+      ? await this.chatService.sendMessage(
+          user.userId,
+          user.role,
+          body.conversationId,
+          body.content,
+          { replyToId: body.replyToId },
+        )
+      : await this.chatService.sendMessage(
+          user.userId,
+          user.role,
+          body.conversationId,
+          body.content,
+        );
 
     const updatedConv = await this.prisma.conversations.findUnique({
       where: { id: body.conversationId },
@@ -540,6 +598,11 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         manager_support_by: true,
         manager_support_state: true,
         manager_support_expires_at: true,
+        handoff_state: true,
+        handoff_reason: true,
+        handoff_sensitive: true,
+        handoff_opened_at: true,
+        handoff_trigger_message_id: true,
       },
     });
     if (!client.rooms.has(body.conversationId)) {
@@ -551,6 +614,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
       staffId: updatedConv?.staff_id ?? null,
       status: updatedConv?.status ?? "open",
       ...(updatedConv ? (this.chatService.getManagerSupportFields?.(updatedConv) ?? {}) : {}),
+      ...(updatedConv ? (this.chatService.getHandoffFields?.(updatedConv) ?? {}) : {}),
     });
 
     if (user.role === "customer") {
@@ -608,7 +672,15 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
           // staffId=null làm UI tưởng hội thoại vừa bị nhả và hiện lại nút nhận.
           const aiConv = await this.prisma.conversations.findUnique({
             where: { id: convId },
-            select: { staff_id: true, status: true },
+            select: {
+              staff_id: true,
+              status: true,
+              handoff_state: true,
+              handoff_reason: true,
+              handoff_sensitive: true,
+              handoff_opened_at: true,
+              handoff_trigger_message_id: true,
+            },
           });
           for (const aiMsg of aiMsgs) {
             this.server.to(convId).emit("message_received", {
@@ -616,6 +688,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
               message: aiMsg,
               staffId: aiConv?.staff_id ?? null,
               status: aiConv?.status ?? "open",
+              ...(aiConv ? (this.chatService.getHandoffFields?.(aiConv) ?? {}) : {}),
             });
           }
         }).catch(() => {
@@ -833,6 +906,7 @@ export class ChatGateway implements OnModuleInit, OnModuleDestroy, OnGatewayConn
         message: aiMsg,
         staffId: null,
         status: "open",
+        handoff: null,
       });
     }
   }

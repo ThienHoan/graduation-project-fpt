@@ -7,6 +7,7 @@ import {
   emitChatMessage,
   getChatConversations,
   getConversationLockStatus,
+  getConversationHandoff,
   getConversationMessages,
   getMyChatConversation,
   getConversationWithCustomer,
@@ -45,6 +46,12 @@ export default function ChatPage() {
   const [sidebarTab, setSidebarTab] = useState<StaffConversationTab>("needs_reply");
   const [notification, setNotification] = useState<string | null>(null);
   const [managerSupportLoading, setManagerSupportLoading] = useState(false);
+  // Tin đang được trích dẫn để trả lời (chỉ staff/manager dùng).
+  const [replyTarget, setReplyTarget] = useState<{
+    id: string;
+    content: string;
+    senderLabel: string;
+  } | null>(null);
 
 
   const previousConversationIdRef = useRef<string | null>(null);
@@ -97,6 +104,11 @@ export default function ChatPage() {
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Đổi hội thoại: bỏ trích dẫn đang chờ để không gửi reply sang hội thoại khác.
+  useEffect(() => {
+    setReplyTarget(null);
+  }, [selectedConversation?.id]);
 
   // Mở đúng cuộc trò chuyện với khách khi vào /chat?customer=<id>&booking=<bookingId>
   // (vd từ nút "Nhắn khách xin thông tin chuyển khoản" ở màn duyệt hoàn cọc)
@@ -157,7 +169,7 @@ export default function ChatPage() {
 
     const conv = () => selectedConversationRef.current;
 
-    const onMessageReceived = (payload: { conversationId: string; message: ChatMessage; staffId?: string | null; status?: string; managerSupportBy?: string | null; managerSupportState?: ChatConversation["managerSupportState"]; managerSupportExpiresAt?: string | null }) => {
+    const onMessageReceived = (payload: { conversationId: string; message: ChatMessage; staffId?: string | null; status?: string; managerSupportBy?: string | null; managerSupportState?: ChatConversation["managerSupportState"]; managerSupportExpiresAt?: string | null; handoff?: ChatConversation["handoff"] | null }) => {
 
       const isOwnMessage = payload.message.sender_id === session?.user.id;
       const isSelectedConversation = payload.conversationId === conv()?.id;
@@ -225,6 +237,7 @@ export default function ChatPage() {
             ...(payload.managerSupportBy !== undefined ? { managerSupportBy: payload.managerSupportBy } : {}),
             ...(payload.managerSupportState !== undefined ? { managerSupportState: payload.managerSupportState } : {}),
             ...(payload.managerSupportExpiresAt !== undefined ? { managerSupportExpiresAt: payload.managerSupportExpiresAt } : {}),
+            ...(payload.handoff !== undefined ? { handoff: payload.handoff } : {}),
             ...(payload.message.sender_id === c.customerId ? topicExtras : {}),
           };
           if (payload.conversationId === conv()?.id && Object.keys(topicExtras).length > 0) {
@@ -244,6 +257,7 @@ export default function ChatPage() {
           if (payload.managerSupportBy !== undefined) updates.managerSupportBy = payload.managerSupportBy;
           if (payload.managerSupportState !== undefined) updates.managerSupportState = payload.managerSupportState;
           if (payload.managerSupportExpiresAt !== undefined) updates.managerSupportExpiresAt = payload.managerSupportExpiresAt;
+          if (payload.handoff !== undefined) updates.handoff = payload.handoff;
           if (updatedTopicFields) Object.assign(updates, updatedTopicFields);
           return Object.keys(updates).length > 0 ? { ...prev, ...updates } : prev;
         });
@@ -485,6 +499,18 @@ export default function ChatPage() {
       }
       scheduleSidebarRefresh(sidebarTabRef.current);
     };
+    const onHandoffUpdated = (payload: { conversationId: string; handoff?: ChatConversation["handoff"] | null }) => {
+      // Backend gửi lại handoff khi join phòng / khi có tin mới. Đồng bộ cả
+      // sidebar lẫn header để badge không bị lệch sau khi reconnect.
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === payload.conversationId ? { ...c, handoff: payload.handoff ?? null } : c,
+        ),
+      );
+      setSelectedConversation((prev) =>
+        prev?.id === payload.conversationId ? { ...prev, handoff: payload.handoff ?? null } : prev,
+      );
+    };
     const onNewUnassignedMessage = (payload: { conversationId: string; customerName: string; content: string }) => {
       setNotification(`Có tin nhắn mới từ khách hàng ${payload.customerName}`);
       if (notificationTimerRef.current) {
@@ -559,6 +585,7 @@ export default function ChatPage() {
     socket.on("manager_support_updated", onManagerSupportUpdated);
     socket.on("manager_support_reply", onManagerSupportReply);
     socket.on("manager_support_ended", onManagerSupportEnded);
+    socket.on("handoff_updated", onHandoffUpdated);
 
     return () => {
       socket.off("message_received", onMessageReceived);
@@ -576,6 +603,7 @@ export default function ChatPage() {
       socket.off("manager_support_updated", onManagerSupportUpdated);
       socket.off("manager_support_reply", onManagerSupportReply);
       socket.off("manager_support_ended", onManagerSupportEnded);
+      socket.off("handoff_updated", onHandoffUpdated);
     };
   }, [socket, isStaff, session]);
 
@@ -752,6 +780,21 @@ export default function ChatPage() {
     setStaffLockError(null);
     await loadMessages(conversationId);
 
+    // Đồng bộ handoff qua REST: socket chỉ phát khi có sự kiện mới. Nếu hội
+    // thoại đã có handoff mở từ trước (vd mở lại sau reload), phải lấy tại đây.
+    if (isStaff) {
+      void getConversationHandoff(conversationId).then((res) => {
+        if (!res.success) return;
+        const handoff = res.data?.handoff ?? null;
+        setSelectedConversation((prev) =>
+          prev?.id === conversationId ? { ...prev, handoff } : prev,
+        );
+        setConversations((prev) =>
+          prev.map((c) => (c.id === conversationId ? { ...c, handoff } : c)),
+        );
+      });
+    }
+
     // Mark read via REST when assigned staff opens a conversation, or when the
     // current manager is running a manager-support session on a resolved one.
     const managerSupportMine =
@@ -889,6 +932,7 @@ export default function ChatPage() {
     setMessageText("");
 
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const pendingReply = replyTarget;
     const optimistic: ChatMessage = {
       id: tempId,
       conversation_id: convId,
@@ -897,14 +941,38 @@ export default function ChatPage() {
       content,
       message_type: "text",
       metadata: null,
+      replyTo: pendingReply
+        ? { id: pendingReply.id, content: pendingReply.content }
+        : null,
       created_at: new Date().toISOString(),
       deleted_at: null,
       deleted_by: null,
     };
 
     setMessages((prev) => [...prev, optimistic]);
+    setReplyTarget(null);
 
-    emitChatMessage({ socket, conversationId: convId, content, tempId, sendTimeoutRef, setMessages, setFailedMessages });
+    emitChatMessage({ socket, conversationId: convId, content, tempId, sendTimeoutRef, setMessages, setFailedMessages, replyToId: pendingReply?.id });
+  }
+
+  function startReply(message: ChatMessage) {
+    if (!isStaff) return;
+    const label =
+      message.sender_id === selectedConversation?.customerId
+        ? selectedConversation?.customerName ?? "khách"
+        : message.sender_type === "ai"
+          ? "Trợ lý AI"
+          : message.user_accounts?.profile?.fullName ??
+            message.user_accounts?.email ??
+            "nhân viên";
+    setReplyTarget({
+      id: message.id,
+      content:
+        message.message_type && message.message_type !== "text"
+          ? `[${message.message_type}]`
+          : message.content.slice(0, 300),
+      senderLabel: label,
+    });
   }
 
   function retrySendMessage(messageContent: string) {
@@ -1077,6 +1145,9 @@ const chatContent = (
       canDeleteMessages={staffCanReply}
       failedMessages={failedMessages}
       onRetryMessage={retrySendMessage}
+      replyTarget={replyTarget}
+      onReplyToMessage={startReply}
+      onCancelReply={() => setReplyTarget(null)}
     />
   </>
 );

@@ -143,12 +143,24 @@ describe("AiService", () => {
     originalFetch = global.fetch;
     prisma = createMockPrisma();
     service = new AiService(prisma as never, createMockPricing());
-    process.env.OPENROUTER_API_KEY = "sk-or-v1-test-key";
-    process.env.OPENROUTER_MODEL = "openai/gpt-4o";
+    // Đặt cả biến mới lẫn cũ để test không phụ thuộc nội dung backend/.env
+    // (vitest nạp .env, nên nếu máy đang trỏ sang provider khác thì kết quả sẽ lệch).
+    process.env.AI_API_KEY = "test-key";
+    process.env.AI_MODEL = "openai/gpt-4o";
+    delete process.env.AI_BASE_URL;
+    delete process.env.AI_FALLBACK_MODEL;
+    delete process.env.VISION_BASE_URL;
+    delete process.env.VISION_API_KEY;
+    delete process.env.VISION_MODEL;
+    delete process.env.OPENROUTER_BASE_URL;
+    delete process.env.OPENROUTER_FALLBACK_MODEL;
+    delete process.env.OPENROUTER_VISION_MODEL;
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    delete process.env.AI_API_KEY;
+    delete process.env.AI_MODEL;
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_MODEL;
   });
@@ -282,6 +294,7 @@ describe("AiService", () => {
     });
 
     it("throws when API key is missing", async () => {
+      delete process.env.AI_API_KEY;
       delete process.env.OPENROUTER_API_KEY;
       prisma.garment.findMany.mockResolvedValue(MOCK_CATALOG as any);
 
@@ -301,7 +314,7 @@ describe("AiService", () => {
 
       await expect(
         service.productAdvisor({ message: "Có gì đẹp?" }),
-      ).rejects.toThrow("OpenRouter API");
+      ).rejects.toThrow("AI API");
     });
 
     it("excludes cổ phục instead of locking the query to it", async () => {

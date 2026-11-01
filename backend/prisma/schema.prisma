@@ -479,6 +479,50 @@ model SystemSetting {
   @@map("system_settings")
 }
 
+/// Cấu hình FAQ cho chat CSKH. Giá trị tham số nằm trong `values`,
+/// template dùng placeholder {{param}} khớp `requiredParams`.
+model FaqItem {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key                String   @unique
+  intent             String
+  patterns           Json     @default("[]")
+  answerTemplate     String   @map("answer_template")
+  requiredParams     Json     @default("[]") @map("required_params")
+  values             Json     @default("{}")
+  notApplicable      Boolean  @default(false) @map("not_applicable")
+  notApplicableReply String?  @map("not_applicable_reply")
+  isActive           Boolean  @default(true) @map("is_active")
+  updatedBy          String?  @map("updated_by") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@map("faq_items")
+}
+
+/// Log/metrics nhẹ cho bộ định tuyến chat. Không chứa nội dung tin nhắn.
+/// Không đặt FK tới conversations để log không bị xoá theo hội thoại;
+/// dọn theo tuổi bằng CHAT_EVENTS_RETENTION_DAYS.
+model ChatAssistantEvent {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String?  @map("conversation_id") @db.Uuid
+  routeType      String   @map("route_type")
+  intent         String?
+  reason         String?
+  handler        String?
+  llmCalled      Boolean  @default(false) @map("llm_called")
+  handoffReason  String?  @map("handoff_reason")
+  tokenInput     Int?     @map("token_input")
+  tokenOutput    Int?     @map("token_output")
+  durationMs     Int?     @map("duration_ms")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@index([conversationId])
+  @@index([routeType])
+  @@map("chat_assistant_events")
+}
+
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model garment_sizes {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -528,6 +572,20 @@ model conversations {
   manager_support_started_at                             DateTime?    @db.Timestamptz(6)
   manager_support_last_read_at                           DateTime?    @db.Timestamptz(6)
   manager_support_expires_at                             DateTime?    @db.Timestamptz(6)
+  // Handoff nhẹ: chỉ để nhắc staff và chống gửi lặp câu tiếp nhận.
+  // KHÔNG dùng để chặn FAQ/DB; staff lock hiện có vẫn là nguồn duy nhất
+  // quyết định AI có được chen vào hay không.
+  handoff_state                                          String?      @db.VarChar(20)
+  handoff_reason                                         String?      @db.VarChar(60)
+  handoff_sensitive                                      Boolean      @default(false)
+  handoff_opened_at                                      DateTime?    @db.Timestamptz(6)
+  handoff_ack_sent_at                                    DateTime?    @db.Timestamptz(6)
+  handoff_last_customer_msg_at                           DateTime?    @db.Timestamptz(6)
+  handoff_pending_count                                  Int          @default(0)
+  // Tin khách đã kích hoạt lượt handoff hiện tại. Dùng để đặt divider
+  // "Bot chuyển nhân viên" đúng vị trí trong khung chat. Không đặt FK vì tin
+  // nhắn có thể bị xóa mềm sau đó.
+  handoff_trigger_message_id                             String?      @db.Uuid
   user_accounts_conversations_customer_idTouser_accounts UserAccount  @relation("conversations_customer_idTouser_accounts", fields: [customer_id], references: [id], onDelete: Cascade)
   user_accounts_conversations_staff_idTouser_accounts    UserAccount? @relation("conversations_staff_idTouser_accounts", fields: [staff_id], references: [id])
   messages                                               messages[]

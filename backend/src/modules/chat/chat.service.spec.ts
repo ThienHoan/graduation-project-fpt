@@ -246,6 +246,7 @@ describe("ChatService", () => {
       sender_id: "staff-1",
       content: "Hello",
       created_at: now,
+      replyTo: null,
     });
   });
 

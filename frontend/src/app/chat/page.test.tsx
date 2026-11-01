@@ -43,6 +43,7 @@ vi.mock("@/lib/chat", () => ({
   getChatConversations: (...args: unknown[]) => mockGetChatConversations(...args),
   getConversationMessages: (conversationId: string) => mockGetConversationMessages(conversationId),
   getConversationLockStatus: (conversationId: string) => mockGetConversationLockStatus(conversationId),
+  getConversationHandoff: vi.fn().mockResolvedValue({ success: true, data: { handoff: null } }),
   getMyChatConversation: () => mockGetMyChatConversation(),
   getChatConversationCounts: () => mockGetChatConversationCounts(),
   buildAdvisorHistory: () => [],
