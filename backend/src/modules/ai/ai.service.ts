@@ -2,11 +2,17 @@ import * as crypto from "node:crypto";
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { TryonStatus, Prisma, type TryonCategory } from "@prisma/client";
 import { ok } from "../../common/api-response";
+import { requestChatCompletion } from "../../common/ai-chat-client";
+import {
+  isOpenRouter,
+  readVisionModel,
+  readVisionProviderConfig,
+} from "../../common/ai-provider";
 import { PrismaService } from "../../prisma/prisma.service";
 import { PricingService } from "../pricing/pricing.service";
 import type { CreateTryonDto, TryonMode } from "./dto/create-tryon.dto";
 import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
-import type { AdvisorProduct, ExclusionTarget, OpenRouterResponse, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
+import type { AdvisorProduct, ExclusionTarget, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
 import { detectIntent } from "./utils/intent-detector";
 import { getCanonicalOccasions } from "./utils/filter-extractor";
 import { buildQueryScope, normalizeForMatch, tokenizeForMatch } from "./utils/query-scope";
@@ -863,13 +869,25 @@ export class AiService implements OnModuleInit {
   }
 
   async productAdvisor(dto: ProductAdvisorDto, isAutoReply = false) {
-    const { intent, confidence } = detectIntent(dto.message);
-    this.logger.debug(`productAdvisor intent=${intent} confidence=${confidence}`);
+    // Auto-reply/suggestion đã đi qua router rule-based dùng chung. Bỏ hẳn
+    // detectIntent + hardcoded ở đây để không phân loại hai lần; chỉ route AI
+    // mới tới được hàm này. `/ai/product-advisor` (isAutoReply=false) giữ
+    // nguyên hành vi cũ.
+    let intent: string;
+    if (isAutoReply) {
+      intent = "search";
+    } else {
+      const detected = detectIntent(dto.message);
+      intent = detected.intent;
+      this.logger.debug(
+        `productAdvisor intent=${detected.intent} confidence=${detected.confidence}`,
+      );
 
-    const hardcoded = getHardcodedReply(dto.message, isAutoReply);
-    if (hardcoded) {
-      this.logger.debug("Hardcoded reply (no AI call)");
-      return ok(hardcoded);
+      const hardcoded = getHardcodedReply(dto.message, isAutoReply);
+      if (hardcoded) {
+        this.logger.debug("Hardcoded reply (no AI call)");
+        return ok(hardcoded);
+      }
     }
 
     const scope = intent === "search" ? buildQueryScope(dto.message) : undefined;
@@ -1461,96 +1479,14 @@ Tối đa 3 topics.`;
   }
 
   private async callOpenRouter(systemPrompt: string, userMessage: string): Promise<string> {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
-
-    const primaryModel = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
-    const fallbackModel = process.env.OPENROUTER_FALLBACK_MODEL?.trim();
-    const models = [...new Set([primaryModel, fallbackModel].filter(Boolean))] as string[];
-    const timeoutMs = this.getPositiveNumberEnv("OPENROUTER_TIMEOUT_MS", 25_000);
-    const maxTokens = this.getPositiveNumberEnv("OPENROUTER_MAX_TOKENS", 1024);
-
-    let lastError: Error | null = null;
-
-    for (const model of models) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-        try {
-          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userMessage },
-              ],
-              max_tokens: maxTokens,
-              temperature: 0.2,
-              response_format: { type: "json_object" },
-            }),
-            signal: controller.signal,
-          });
-
-          const text = await res.text();
-          if (!res.ok) {
-            const retryable = res.status === 429 || res.status >= 500;
-            const error = new Error(`OpenRouter API ${res.status}: ${text.substring(0, 200)}`);
-            if (retryable && attempt === 1) {
-              lastError = error;
-              this.logger.warn(`OpenRouter ${res.status} (model=${model}) — retrying once`);
-              await this.sleep(500);
-              continue;
-            }
-            throw error;
-          }
-
-          let data: OpenRouterResponse;
-          try {
-            data = JSON.parse(text) as OpenRouterResponse;
-          } catch {
-            throw new Error(`Invalid JSON from OpenRouter: ${text.substring(0, 200)}`);
-          }
-
-          const choice = data.choices?.[0];
-          const content = choice?.message?.content;
-          if (!content) throw new Error("OpenRouter returned empty response");
-          if (choice?.finish_reason === "length") {
-            this.logger.warn("OpenRouter response truncated (finish_reason=length)");
-          }
-
-          return content;
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          const isAbort = err.name === "AbortError";
-          const isNetworkError = err instanceof TypeError || /fetch failed|network|timeout|aborted/i.test(err.message);
-          lastError = isAbort ? new Error(`OpenRouter timeout after ${timeoutMs}ms`) : err;
-          this.logger.warn(
-            `OpenRouter call failed (model=${model}, attempt=${attempt}): ${lastError.message}`,
-          );
-
-          if ((isAbort || isNetworkError) && attempt === 1) {
-            await this.sleep(500);
-            continue;
-          }
-          // Thử model fallback (nếu có) trước khi bỏ cuộc.
-          break;
-        } finally {
-          clearTimeout(timeout);
-        }
-      }
-    }
-
-    throw lastError ?? new Error("OpenRouter call failed");
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    // Tên hàm giữ nguyên để không phải sửa nơi gọi; provider + retry + fallback
+    // model nằm trong requestChatCompletion (dùng chung với gợi ý giá).
+    return requestChatCompletion({
+      systemPrompt,
+      userMessage,
+      temperature: 0.2,
+      label: "Product advisor",
+    });
   }
 
   private parseAdvisorResponse(raw: string, catalog: AdvisorProduct[]): ProductAdvisorResponse {
@@ -1786,7 +1722,9 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
     }
 
     try {
-      const apiKey = process.env.OPENROUTER_API_KEY;
+      // Giám định ảnh giữ nguyên provider cũ (OpenRouter), không dùng AI_*.
+      const provider = readVisionProviderConfig();
+      const apiKey = provider.apiKey;
       if (!apiKey) {
         // Fallback giả lập thông minh khi chưa có API key để dev/test không bị chặn
         return {
@@ -1803,18 +1741,20 @@ Tính phạt theo % GIÁ TRỊ BỘ ĐỒ (${valFormatted} VNĐ). Báo cáo THI�
         };
       }
 
-      const visionModel =
-        process.env.OPENROUTER_VISION_MODEL?.trim() ||
-        process.env.OPENROUTER_MODEL?.trim() ||
-        "openai/gpt-4o-mini";
+      const visionModel = readVisionModel() || "openai/gpt-4o-mini";
 
-      const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const orRes = await fetch(provider.chatCompletionsUrl, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
-          "X-Title": "Co Phuc Viet Nam Inspection AI",
+          // Header riêng của OpenRouter; provider khác (Gemini...) không cần.
+          ...(isOpenRouter(provider.baseUrl)
+            ? {
+                "HTTP-Referer": "http://localhost:3000",
+                "X-Title": "Co Phuc Viet Nam Inspection AI",
+              }
+            : {}),
         },
         body: JSON.stringify({
           model: visionModel,

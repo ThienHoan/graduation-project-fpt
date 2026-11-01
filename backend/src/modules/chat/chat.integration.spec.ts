@@ -3,6 +3,7 @@ import { INestApplication } from "@nestjs/common";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ChatGateway } from "./chat.gateway";
 import { ChatService } from "./chat.service";
+import { AssistantRouterService } from "./assistant/assistant-router.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AiService } from "../ai/ai.service";
 import { JwtModule, JwtService } from "@nestjs/jwt";
@@ -85,6 +86,13 @@ describe("Chat integration (live sockets)", () => {
         ChatGateway,
         { provide: PrismaService, useValue: fakePrisma },
         { provide: AiService, useValue: { productAdvisor: vi.fn(), callOpenRouter: vi.fn() } },
+        {
+          provide: AssistantRouterService,
+          useValue: {
+            routeConversation: vi.fn(),
+            handleStaffReply: vi.fn(),
+          },
+        },
       ],
     }).compile();
 

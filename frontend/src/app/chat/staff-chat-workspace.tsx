@@ -1,9 +1,9 @@
 "use client";
 
 import { useRef, useEffect, useState, type RefObject } from "react";
-import type { ChatConversation, ChatMessage, ConversationLockStatus, StaffConversationTab } from "@/lib/chat";
-import { buildAdvisorHistory, getBookingCardData, getProductCardData, uploadChatFile, getProductAdvisor, sendProductCardMessage, getChatConversationCounts, type AIAdvisorTopic } from "@/lib/chat";
-import { Paperclip, Sparkles, Send, Loader2, CheckCircle2, Bot, X, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
+import type { ChatConversation, ChatHandoff, ChatMessage, ConversationLockStatus, StaffConversationTab } from "@/lib/chat";
+import { getBookingCardData, getProductCardData, uploadChatFile, getStaffSuggestion, sendProductCardMessage, getChatConversationCounts, type ChatSuggestionTopic } from "@/lib/chat";
+import { Paperclip, Sparkles, Send, Loader2, CheckCircle2, Bot, X, RotateCcw, ChevronDown, ChevronUp, CornerUpLeft, AlertTriangle } from "lucide-react";
 import type { AuthSession } from "@/lib/auth";
 import { BookingCard } from "@/components/chat/booking-card";
 import { ChatTextarea } from "@/components/chat/chat-textarea";
@@ -19,6 +19,64 @@ const DEFAULT_PRODUCT_IMAGE = "https://dep.com.vn/wp-content/uploads/2020/11/ao-
 // timeout, quá tải, dữ liệu không hợp lệ...). Tránh hiển thị "Bad Request".
 const AI_UNAVAILABLE_MESSAGE =
   "Trợ lý AI hiện không thể hỗ trợ vấn đề này. Vui lòng thử lại sau hoặc trả lời khách trực tiếp.";
+
+const HANDOFF_TONE: Record<ChatHandoff["group"], string> = {
+  complaint: "border-red-200 bg-red-50 text-red-700",
+  payment: "border-amber-200 bg-amber-50 text-amber-800",
+  bot: "border-stone-200 bg-stone-100 text-stone-600",
+};
+
+/** Nhãn lý do chuyển nhân viên. Không hiển thị số tin: con số đó là số lần
+ * bot phải đẩy handoff, không phải số tin khách chờ và rất dễ hiểu sai. */
+function HandoffBadge({ handoff, className = "" }: { handoff: ChatHandoff; className?: string }) {
+  const tone = handoff.expired
+    ? "border-stone-200 bg-white text-stone-400"
+    : HANDOFF_TONE[handoff.group];
+  const openedAt = handoff.openedAt
+    ? new Date(handoff.openedAt).toLocaleString("vi-VN", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
+  return (
+    <span
+      title={[
+        openedAt ? `Bot chuyển nhân viên lúc ${openedAt}` : "Bot chuyển nhân viên",
+        handoff.label,
+        handoff.sensitive ? "Nhạy cảm — bot đang bị chặn tư vấn" : null,
+        handoff.expired ? "Đã quá hạn xử lý" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${tone} ${className}`}
+    >
+      {handoff.sensitive && <AlertTriangle className="h-3 w-3 shrink-0" />}
+      <span>{handoff.label}</span>
+      {handoff.expired && <span className="font-normal normal-case tracking-normal">· Quá hạn</span>}
+    </span>
+  );
+}
+
+function handoffTooltip(handoff: ChatHandoff) {
+  const openedAt = handoff.openedAt
+    ? new Date(handoff.openedAt).toLocaleString("vi-VN", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+  return [
+    openedAt ? `Bot chuyển nhân viên lúc ${openedAt}` : "Bot chuyển nhân viên",
+    handoff.label,
+    handoff.sensitive ? "Hội thoại nhạy cảm: bot tạm dừng tư vấn" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 interface StaffChatWorkspaceProps {
   conversations: ChatConversation[];
@@ -55,6 +113,10 @@ interface StaffChatWorkspaceProps {
   canDeleteMessages: boolean;
   failedMessages?: Set<string>;
   onRetryMessage?: (content: string) => void;
+  /** Tin đang được trích dẫn để trả lời (kiểu reply Messenger). */
+  replyTarget?: { id: string; content: string; senderLabel: string } | null;
+  onReplyToMessage?: (message: ChatMessage) => void;
+  onCancelReply?: () => void;
 }
 
 export function StaffChatWorkspace({
@@ -90,6 +152,9 @@ export function StaffChatWorkspace({
   canDeleteMessages,
   failedMessages,
   onRetryMessage,
+  replyTarget,
+  onReplyToMessage,
+  onCancelReply,
 }: StaffChatWorkspaceProps) {
   // Cleanup toast timer on unmount
   useEffect(() => {
@@ -100,6 +165,8 @@ export function StaffChatWorkspace({
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  // Tin gây ra handoff: cuộn tới đúng divider khi staff bấm badge.
+  const handoffDividerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [tabCounts, setTabCounts] = useState({
     needsReply: 0,
@@ -122,10 +189,16 @@ export function StaffChatWorkspace({
 
   const [aiSuggestion, setAiSuggestion] = useState<{
     loading: boolean;
-    topics: AIAdvisorTopic[];
+    topics: ChatSuggestionTopic[];
     error: string | null;
   }>({ loading: false, topics: [], error: null });
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  // Nội dung tin khách mà gợi ý đang trả lời (tin được chọn hoặc tin mới nhất)
+  // — chỉ để hiển thị, không gửi đi.
+  const [aiSuggestionTarget, setAiSuggestionTarget] = useState<{
+    content: string;
+    selected: boolean;
+  } | null>(null);
   // Tăng mỗi khi đổi hội thoại / bắt đầu request mới để bỏ qua response cũ.
   const aiRequestIdRef = useRef(0);
   const [aiToast, setAiToast] = useState<string | null>(null);
@@ -222,6 +295,7 @@ export function StaffChatWorkspace({
   useEffect(() => {
     aiRequestIdRef.current += 1;
     setAiSuggestion({ loading: false, topics: [], error: null });
+    setAiSuggestionTarget(null);
     setAiPanelOpen(false);
   }, [selectedConversation?.id]);
 
@@ -231,14 +305,30 @@ export function StaffChatWorkspace({
 
     setAiPanelOpen(true);
 
+    // Nếu staff đang chọn "trả lời" một tin của khách thì gợi ý phải trả lời
+    // đúng tin đó, với ngữ cảnh là ~5 tin ngay trước nó. Chọn nhầm tin của
+    // staff/hệ thống thì quay lại hành vi mặc định (tin khách mới nhất).
+    const targetMsg = replyTarget
+      ? messages.find(
+          (m) =>
+            m.id === replyTarget.id &&
+            m.sender_id === selectedConversation.customerId &&
+            !m.deleted_at &&
+            (!m.message_type || m.message_type === "text") &&
+            /[\p{L}\p{N}]/u.test(m.content ?? ""),
+        )
+      : undefined;
+
     // Chỉ tin nhắn thật của khách mới dùng làm nội dung gợi ý.
-    const lastCustomerMsg = [...messages].reverse().find(
-      (m) =>
-        m.sender_id === selectedConversation.customerId &&
-        !m.deleted_at &&
-        (!m.message_type || m.message_type === "text") &&
-        /[\p{L}\p{N}]/u.test(m.content ?? ""),
-    );
+    const lastCustomerMsg =
+      targetMsg ??
+      [...messages].reverse().find(
+        (m) =>
+          m.sender_id === selectedConversation.customerId &&
+          !m.deleted_at &&
+          (!m.message_type || m.message_type === "text") &&
+          /[\p{L}\p{N}]/u.test(m.content ?? ""),
+      );
     if (!lastCustomerMsg) {
       const noMessage = "Chưa có tin nhắn văn bản nào từ khách để gợi ý.";
       setAiSuggestion({ loading: false, topics: [], error: noMessage });
@@ -248,22 +338,20 @@ export function StaffChatWorkspace({
 
     // Response của request cũ (hội thoại khác / lần gợi ý trước) bị bỏ qua.
     const requestId = ++aiRequestIdRef.current;
+    setAiSuggestionTarget({
+      content: lastCustomerMsg.content ?? "",
+      selected: Boolean(targetMsg),
+    });
     setAiSuggestion({ loading: true, topics: [], error: null });
 
-    // 10 tin trước đó làm ngữ cảnh; tin mới nhất được gửi riêng ở `message`
-    // nên loại khỏi history để model không đọc lặp.
-    const historyMessages = buildAdvisorHistory({
-      messages,
-      customerId: selectedConversation.customerId,
-      excludeMessageId: lastCustomerMsg.id,
-      limit: 10,
-    });
-
     try {
-      const res = await getProductAdvisor({
-        message: lastCustomerMsg.content,
-        history: historyMessages,
-      });
+      // Backend định tuyến STAFF > FAQ > DB > AI, cache theo messageId —
+      // không gọi thẳng model từ trình duyệt. messageId = tin khách được chọn
+      // (nếu có) để ngữ cảnh và câu trả lời bám đúng tin đó.
+      const res = await getStaffSuggestion(
+        selectedConversation.id,
+        lastCustomerMsg.id,
+      );
       if (aiRequestIdRef.current !== requestId) return;
 
       if (res.success && res.data) {
@@ -407,6 +495,11 @@ export function StaffChatWorkspace({
                         {conversation.managerSupportBy === session?.user.id ? "Bạn đang hỗ trợ" : "Quản lý đang hỗ trợ"}
                       </span>
                     )}
+                    {conversation.handoff && (
+                      <span className="mt-1 block">
+                        <HandoffBadge handoff={conversation.handoff} />
+                      </span>
+                    )}
                     {conversation.topic && (
                       <div className="mt-1.5 flex items-center gap-1.5">
                         {conversation.topic === "product_advice" && conversation.garmentName ? (
@@ -511,6 +604,21 @@ export function StaffChatWorkspace({
                   <span className="inline-flex items-center gap-1 rounded-full bg-stone-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-stone-600">
                     Đã tư vấn
                   </span>
+                )}
+                {selectedConversation.handoff && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handoffDividerRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "center",
+                      })
+                    }
+                    title={handoffTooltip(selectedConversation.handoff)}
+                    className="cursor-pointer"
+                  >
+                    <HandoffBadge handoff={selectedConversation.handoff} />
+                  </button>
                 )}
               </div>
             )}
@@ -665,22 +773,56 @@ export function StaffChatWorkspace({
                         : `${message.user_accounts?.profile?.fullName ?? message.user_accounts?.email ?? message.sender_id}${
                             message.metadata?.managerSupport ? " (Quản lý)" : ""
                           }`;
+                    // Divider ngay trước tin khách đã kích hoạt handoff: staff mở
+                    // hội thoại là thấy chính xác tin nào khiến bot chuyển người.
+                    const handoff = selectedConversation?.handoff ?? null;
+                    const isHandoffAnchor =
+                      Boolean(handoff?.triggerMessageId) &&
+                      handoff!.triggerMessageId === message.id;
+                    // Tin gốc mà tin này trích dẫn (nếu có).
+                    const replyTo = message.replyTo ?? null;
                     return (
-                      <div
-                        key={message.id}
-                        className={`group relative ${alignRight ? "ml-auto" : "mr-auto"} max-w-[85%]`}
-                        onMouseEnter={() => setHoveredMessageId(message.id)}
-                        onMouseLeave={() => setHoveredMessageId(null)}
-                      >
-                        <div className={`${bubbleClass} rounded-lg border px-4 py-3 shadow-sm`}>
-                          <div className="mb-2 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-stone-400">
-                            <span className="inline-flex items-center gap-1.5">
-                              {isAi && <Bot className="h-3.5 w-3.5 text-jade" />}
-                              {senderLabel}
+                      <div key={message.id}>
+                        {isHandoffAnchor && handoff && (
+                          <div
+                            ref={handoffDividerRef}
+                            title={handoffTooltip(handoff)}
+                            className="my-3 flex items-center gap-2"
+                          >
+                            <span className="h-px flex-1 bg-red-200" />
+                            <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-red-700">
+                              {handoff.sensitive && <AlertTriangle className="h-3 w-3" />}
+                              Bot chuyển nhân viên · {handoff.label}
+                              {handoff.openedAt
+                                ? ` · ${new Date(handoff.openedAt).toLocaleTimeString("vi-VN", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}`
+                                : ""}
                             </span>
-                            <span>{new Date(message.created_at).toLocaleTimeString("vi-VN")}</span>
+                            <span className="h-px flex-1 bg-red-200" />
                           </div>
-                          {message.deleted_at ? (
+                        )}
+                        <div
+                          className={`group relative ${alignRight ? "ml-auto" : "mr-auto"} max-w-[85%]`}
+                          onMouseEnter={() => setHoveredMessageId(message.id)}
+                          onMouseLeave={() => setHoveredMessageId(null)}
+                        >
+                          <div className={`${bubbleClass} rounded-lg border px-4 py-3 shadow-sm`}>
+                            <div className="mb-2 flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-stone-400">
+                              <span className="inline-flex items-center gap-1.5">
+                                {isAi && <Bot className="h-3.5 w-3.5 text-jade" />}
+                                {senderLabel}
+                              </span>
+                              <span>{new Date(message.created_at).toLocaleTimeString("vi-VN")}</span>
+                            </div>
+                            {replyTo && !message.deleted_at && (
+                              <div className="mb-2 rounded-md border-l-2 border-lotus/60 bg-white/70 px-2 py-1 text-xs text-stone-500">
+                                <span className="block font-semibold text-lotus">Trả lời tin nhắn</span>
+                                <span className="line-clamp-2 break-words">{replyTo.content}</span>
+                              </div>
+                            )}
+                            {message.deleted_at ? (
                             <p className="text-sm italic text-stone-400">Tin nhắn đã bị xóa</p>
                           ) : message.message_type === "image" && message.metadata?.url ? (
                             <img
@@ -719,8 +861,24 @@ export function StaffChatWorkspace({
                           ) : (
                             <p className="text-sm leading-6">{message.content}</p>
                           )}
-                        </div>
-                        {/* Delete button - only for own messages while holding the reply lock */}
+                          </div>
+                          {/* Trả lời trích dẫn: chỉ staff/manager, chỉ khi tin
+                              không bị xoá và không phải tin tạm đang gửi. */}
+                          {!isAi &&
+                            !message.deleted_at &&
+                            !message.id.startsWith("temp-") &&
+                            canReplyNow &&
+                            hoveredMessageId === message.id && (
+                              <button
+                                type="button"
+                                onClick={() => onReplyToMessage?.(message)}
+                                className={`absolute -top-3 ${alignRight ? "-left-3" : "-right-3"} inline-flex items-center justify-center w-6 h-6 rounded-full bg-lotus text-white shadow-sm hover:bg-oxblood transition`}
+                                title="Trả lời tin nhắn này"
+                              >
+                                <CornerUpLeft className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          {/* Delete button - only for own messages while holding the reply lock */}
                         {isMine && canDeleteMessages && !message.deleted_at && hoveredMessageId === message.id && (
                           <button
                             type="button"
@@ -742,6 +900,7 @@ export function StaffChatWorkspace({
                             <RotateCcw className="h-3.5 w-3.5" />
                           </button>
                         )}
+                        </div>
                       </div>
                     );
                   })}
@@ -798,8 +957,15 @@ export function StaffChatWorkspace({
                 {aiPanelOpen && hasAiSuggestion && (
                   <div className="border-t border-sand/70 px-4 py-3 space-y-3 max-h-[400px] overflow-y-auto">
                     <p className="border-b border-sand/60 pb-2 text-[11px] uppercase tracking-wider text-stone-400">
-                      Dựa trên tin nhắn mới nhất của khách
+                      {aiSuggestionTarget?.selected
+                        ? "Dựa trên tin nhắn khách đang được trả lời"
+                        : "Dựa trên tin nhắn mới nhất của khách"}
                     </p>
+                    {aiSuggestionTarget && (
+                      <p className="truncate rounded-lg border-l-2 border-lotus/60 bg-lotus/5 px-2 py-1 text-xs text-stone-600">
+                        “{aiSuggestionTarget.content}”
+                      </p>
+                    )}
                     {aiSuggestion.loading ? (
                       <div className="flex items-center gap-2 text-sm text-stone-500 py-2">
                         <span className="inline-block w-4 h-4 border-2 border-lotus border-t-transparent rounded-full animate-spin" />
@@ -909,6 +1075,26 @@ export function StaffChatWorkspace({
             )}
 
             <div className="flex flex-col gap-3 shrink-0">
+              {replyTarget && (
+                <div className="flex items-start justify-between gap-3 rounded-lg border border-sand bg-parchment px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-lotus">
+                      Trả lời {replyTarget.senderLabel}
+                    </p>
+                    <p className="line-clamp-2 break-words text-xs text-stone-600">
+                      {replyTarget.content}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onCancelReply}
+                    className="shrink-0 rounded-full p-1 text-stone-400 transition hover:bg-sand/60 hover:text-stone-600"
+                    title="Huỷ trả lời"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
               <div className="relative">
                 <ChatTextarea
                   rows={4}

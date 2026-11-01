@@ -21,6 +21,7 @@ import {
   Star,
   MessageSquare,
   Headphones,
+  BookOpen,
   ChevronDown,
   Plus,
   PanelLeftClose,
@@ -96,6 +97,7 @@ export const MANAGER_NAV_GROUPS: NavGroupConfig[] = [
     icon: MessageSquare,
     items: [
       { key: "reviews", label: "Đánh giá", icon: Star, href: "/dashboard/manager/reviews", badge: "reviews" },
+      { key: "faq", label: "Cấu hình FAQ", icon: BookOpen, href: "/dashboard/manager/faq" },
       { key: "chat", label: "CSKH & Tin nhắn", icon: MessageSquare, href: "/chat", badge: "chat" },
     ],
   },

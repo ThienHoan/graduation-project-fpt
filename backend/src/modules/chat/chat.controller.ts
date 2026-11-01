@@ -5,7 +5,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { ChatService } from "./chat.service";
 import { ChatGateway } from "./chat.gateway";
-import type { AutoReplyTrigger } from "./auto-reply-policy";
+import type { AutoReplyTrigger } from "./auto-reply-trigger";
 import { ok } from "../../common/api-response";
 
 @Controller("chat")
@@ -210,6 +210,42 @@ export class ChatController {
     });
 
     return ok(result);
+  }
+
+  /**
+   * Handoff đang mở của một hội thoại, cho staff/manager.
+   *
+   * Tách khỏi REST danh sách vì UI cần đồng bộ lại sau khi reconnect hoặc khi
+   * mở hội thoại chưa từng nhận sự kiện socket nào (handoff mở trước đó).
+   */
+  @Get("conversations/:id/handoff")
+  async getHandoff(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) conversationId: string,
+  ) {
+    if (user.role === "customer") {
+      throw new ForbiddenException("Only staff can view handoff state.");
+    }
+
+    const conversation = await this.chatService.getConversationById(conversationId);
+    return ok(this.chatService.getHandoffFields(conversation));
+  }
+
+  @Post("conversations/:id/suggestion")
+  async getSuggestion(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) conversationId: string,
+    @Body() body?: { messageId?: string },
+  ) {
+    return ok(
+      await this.chatService.suggestReplyForStaff(
+        user,
+        conversationId,
+        typeof body?.messageId === "string" && body.messageId.trim()
+          ? body.messageId.trim()
+          : undefined,
+      ),
+    );
   }
 
   @Post("conversations/:id/product-card")

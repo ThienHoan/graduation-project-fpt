@@ -290,7 +290,19 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
   const [modal, setModal] = useState<{ open: boolean; editing: PriceCalendarEntry | null }>({ open: false, editing: null });
   const [deleteTarget, setDeleteTarget] = useState<PriceCalendarEntry | null>(null);
   const [generating, setGenerating] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const [generateResult, setGenerateResult] = useState<{ eventName: string; result: GenerateSuggestionsResult } | null>(null);
+
+  // Đồng hồ đếm giây khi sinh đề xuất: giúp phân biệt "đang chạy" với "treo".
+  useEffect(() => {
+    if (!generating) {
+      setElapsed(0);
+      return;
+    }
+    setElapsed(0);
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,11 +328,27 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
   }, [load]);
 
   const handleGenerate = async (evt: PriceCalendarEntry) => {
+    if (generating) return;
     setGenerating(evt.id);
-    const res = await generatePricingSuggestions({ calendarId: evt.id });
+    let res: Awaited<ReturnType<typeof generatePricingSuggestions>>;
+    try {
+      res = await generatePricingSuggestions({ calendarId: evt.id });
+    } catch {
+      // Mất mạng giữa chừng: backend vẫn có thể đã tạo xong đề xuất.
+      setGenerating(null);
+      showToast("error", "Mất kết nối khi sinh đề xuất. Kiểm tra lại tab Đề xuất giá.");
+      return;
+    }
     setGenerating(null);
     if (res.success && res.data) {
       setGenerateResult({ eventName: evt.name, result: res.data });
+      const created = res.data.generated ?? 0;
+      showToast(
+        "success",
+        created > 0
+          ? `Đã tạo ${created} đề xuất cho "${evt.name}". Xem ở tab Đề xuất giá.`
+          : `Không có đề xuất mới cho "${evt.name}".`,
+      );
     } else {
       showToast("error", res.message || "Không thể sinh đề xuất");
     }
@@ -430,11 +458,11 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
                       <button
                         type="button"
                         onClick={() => handleGenerate(evt)}
-                        disabled={generating === evt.id}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-50"
+                        disabled={generating !== null}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
-                        {generating === evt.id ? "Đang sinh..." : "Sinh đề xuất"}
+                        {generating === evt.id ? `Đang sinh… ${elapsed}s` : "Sinh đề xuất"}
                       </button>
                       <button
                         type="button"
@@ -499,6 +527,9 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
             <p className="mt-2 text-sm text-stone-600">
               Sự kiện <span className="font-semibold">{generateResult.eventName}</span> — tạo được{" "}
               <span className="font-semibold text-lotus">{generateResult.result.generated}</span> đề xuất.
+            </p>
+            <p className="mt-1 text-xs text-stone-500">
+              Đề xuất mới nằm ở tab <span className="font-semibold">Đề xuất giá</span> với trạng thái Chờ duyệt.
             </p>
             {generateResult.result.skipped.length > 0 && (
               <div className="mt-4 max-h-60 overflow-y-auto rounded-lg border border-sand bg-stone-50 p-3 space-y-2">

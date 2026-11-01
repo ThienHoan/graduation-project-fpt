@@ -9,9 +9,13 @@ import { RedisService } from "../redis/redis.service";
 import sharp from "sharp";
 import {
   normalizeTrigger,
-  planAutoReply,
   type AutoReplyTrigger,
-} from "./auto-reply-policy";
+} from "./auto-reply-trigger";
+import { AssistantRouterService } from "./assistant/assistant-router.service";
+import type { AssistantRouteOutput } from "./assistant/assistant.types";
+import { handoffAckForReason } from "./assistant/handoff-messages";
+import { handoffBadgeForReason, type HandoffGroup } from "./assistant/handoff-labels";
+import { isHandoffExpired } from "./assistant/assistant-config";
 
 const AI_USER_ID = "00000000-0000-0000-0000-000000000000";
 // Gộp các tin nhắn liên tiếp của khách thành 1 lượt trả lời duy nhất.
@@ -19,9 +23,43 @@ const AI_DEBOUNCE_MS = 1500;
 const AI_FALLBACK_REPLY =
   "Em đã ghi nhận câu hỏi của bạn. Nhân viên sẽ phản hồi bạn trong ít phút ạ.";
 const AI_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
-// Khoá phân tán quanh một lượt auto-reply. TTL đủ dài để phủ cả timeout model
-// chính + model dự phòng, nhưng vẫn tự mở nếu instance giữ lock bị crash.
-const AI_AUTO_REPLY_LOCK_TTL_SECONDS = 90;
+// Tổng thời gian tối đa cho một lượt gọi model (gồm cả catalog + retry bên
+// trong AiService). Sau mốc này router coi như lỗi và dùng fallback.
+export const AI_TOTAL_TIMEOUT_MS = (() => {
+  const configured = Number(process.env.AI_TOTAL_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured >= 5_000
+    ? Math.floor(configured)
+    : 60_000;
+})();
+// Khoá phân tán phải sống lâu hơn tổng timeout của model, nếu không instance
+// khác có thể chen vào đúng lúc lượt trước còn đang chạy.
+export const AI_AUTO_REPLY_LOCK_TTL_SECONDS = Math.max(
+  90,
+  Math.ceil(AI_TOTAL_TIMEOUT_MS / 1000) + 30,
+);
+// Bump version khi đổi logic classifier/router để không trả lại gợi ý đã cache
+// theo cách hiểu cũ (cache 10 phút, khoá theo messageId).
+const SUGGESTION_CACHE_PREFIX = "chat:suggestion:v2:";
+const SUGGESTION_CACHE_TTL_SECONDS = 10 * 60;
+const MAX_SUGGESTION_TOPICS = 3;
+const MAX_SUGGESTION_PRODUCTS = 3;
+
+export type ChatSuggestionProduct = {
+  garmentId: string;
+  name: string;
+  imageUrl: string | null;
+  dailyPrice: number;
+  size: string | null;
+  reason?: string;
+};
+
+export type ChatSuggestionTopic = {
+  title: string;
+  assistantReply: string;
+  recommendedProductIds: string[];
+  reasons: Record<string, string>;
+  products: ChatSuggestionProduct[];
+};
 
 // Phiên quản lý hỗ trợ tự hết hạn sau khoảng này. Mỗi lần quản lý gửi/đọc tin
 // hoặc khách trả lời, thời hạn được gia hạn thêm.
@@ -50,6 +88,19 @@ type ManagerSupportConversationFields = {
   manager_support_started_at?: Date | null;
   manager_support_last_read_at?: Date | null;
   manager_support_expires_at?: Date | null;
+};
+
+/** Handoff còn hiệu lực để staff thấy trên UI (chưa hết TTL, chưa có staff trả lời). */
+export type ConversationHandoffFields = {
+  handoff: {
+    reason: string;
+    label: string;
+    group: HandoffGroup;
+    sensitive: boolean;
+    openedAt: Date | null;
+    expired: boolean;
+    triggerMessageId: string | null;
+  } | null;
 };
 
 type PendingAutoReply = {
@@ -110,6 +161,10 @@ export class ChatService {
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
     @Optional() private readonly redisService?: RedisService,
+    // Router dùng chung với classifier. Không đánh @Optional: nếu Nest không
+    // inject được, app phải fail lúc khởi động thay vì âm thầm bỏ auto-reply.
+    // Unit test dựng tay truyền thẳng router vào tham số này.
+    private readonly assistantRouter?: AssistantRouterService,
   ) { }
 
   /**
@@ -159,6 +214,43 @@ export class ChatService {
       managerSupportState:
         (conversation.manager_support_state as ManagerSupportState | null) ?? null,
       managerSupportExpiresAt: conversation.manager_support_expires_at ?? null,
+    };
+  }
+
+  /**
+   * Field handoff trả về UI staff.
+   *
+   * Chỉ trả khi handoff đang mở trong DB. Quá TTL vẫn trả để UI hiện "Quá hạn"
+   * (staff cần biết có khách từng bị bỏ rơi), nhưng bật cờ `expired` để nhãn
+   * khác đi so với handoff còn hiệu lực.
+   */
+  getHandoffFields(
+    conversation: {
+      handoff_state?: string | null;
+      handoff_reason?: string | null;
+      handoff_sensitive?: boolean | null;
+      handoff_opened_at?: Date | null;
+      handoff_trigger_message_id?: string | null;
+    },
+    now = new Date(),
+  ): ConversationHandoffFields {
+    if (conversation.handoff_state !== "open" || !conversation.handoff_reason) {
+      return { handoff: null };
+    }
+
+    const sensitive = Boolean(conversation.handoff_sensitive);
+    const badge = handoffBadgeForReason(conversation.handoff_reason);
+
+    return {
+      handoff: {
+        reason: conversation.handoff_reason,
+        label: badge.label,
+        group: badge.group,
+        sensitive,
+        openedAt: conversation.handoff_opened_at ?? null,
+        expired: isHandoffExpired(conversation.handoff_opened_at, sensitive, now),
+        triggerMessageId: conversation.handoff_trigger_message_id ?? null,
+      },
     };
   }
 
@@ -292,10 +384,11 @@ export class ChatService {
       },
     });
 
+    if (role !== "customer") await this.onStaffReplied(conversationId);
+
     // Update conversation timestamps and topic context
     let productUpdateData: Record<string, unknown>;
-    if (role === "customer") {
-      productUpdateData = this.buildCustomerReplyUpdate(conversation, now, {
+    if (role === "customer") {      productUpdateData = this.buildCustomerReplyUpdate(conversation, now, {
         topic: "product_advice",
         garment_id: garmentId,
       });
@@ -428,6 +521,8 @@ export class ChatService {
       },
     });
 
+    if (role !== "customer") await this.onStaffReplied(conversationId);
+
     const cardContext = { topic, booking_id: bookingId, garment_id: null };
     if (role === "customer") {
       const updateData = this.buildCustomerReplyUpdate(conversation, now, cardContext);
@@ -543,6 +638,7 @@ export class ChatService {
       bookingId: refreshed.booking_id ?? null,
       reopenedFromResolved: refreshed.reopened_from_resolved,
       ...this.getManagerSupportFields(refreshed),
+      ...this.getHandoffFields(refreshed),
     };
   }
 
@@ -591,7 +687,13 @@ export class ChatService {
     return { ...created, unreadCount: 0 };
   }
 
-  async sendMessage(userId: string, role: AppRole, conversationId: string, content: string) {
+  async sendMessage(
+    userId: string,
+    role: AppRole,
+    conversationId: string,
+    content: string,
+    options?: { replyToId?: string | null },
+  ) {
     const trimmed = content?.trim() ?? "";
     if (trimmed.length === 0) {
       throw new ForbiddenException("Message content cannot be empty.");
@@ -643,17 +745,46 @@ export class ChatService {
       );
     }
 
+    // Trích dẫn tin nhắn (kiểu reply Messenger) chỉ dành cho staff/manager.
+    // Tin gốc phải nằm trong cùng hội thoại, nếu không thì bỏ qua trích dẫn
+    // thay vì chặn cả tin nhắn.
+    let replyTo: { id: string; content: string } | null = null;
+    const replyToId = options?.replyToId?.trim();
+    if (replyToId && role !== "customer") {
+      const quoted = await this.prisma.messages.findFirst({
+        where: { id: replyToId, conversation_id: conversationId },
+        select: { id: true, content: true, message_type: true, deleted_at: true },
+      });
+      if (quoted && !quoted.deleted_at) {
+        replyTo = {
+          id: quoted.id,
+          content:
+            quoted.message_type && quoted.message_type !== "text"
+              ? `[${quoted.message_type}]`
+              : quoted.content.slice(0, 300),
+        };
+      }
+    }
+
     const message = await this.prisma.messages.create({
       data: {
         conversation_id: conversationId,
         sender_id: userId,
         content,
+        // Trích dẫn tin khách (chỉ staff/manager dùng). Giới hạn trong cùng
+        // hội thoại và bỏ qua nếu tin gốc không tồn tại để không ghi rác.
+        ...(replyTo
+          ? { metadata: { replyTo: { id: replyTo.id, content: replyTo.content } } }
+          : {}),
         ...(managerSupportMessage
           ? {
               metadata: {
                 managerSupport: true,
                 managerId: userId,
                 originalStaffId: conversation.staff_id ?? null,
+                ...(replyTo
+                  ? { replyTo: { id: replyTo.id, content: replyTo.content } }
+                  : {}),
               },
             }
           : {}),
@@ -663,11 +794,12 @@ export class ChatService {
         : {}),
     });
 
+    if (role !== "customer") await this.onStaffReplied(conversationId);
+
     let updateData: Record<string, unknown>;
     if (role === "customer") {
       updateData = this.buildCustomerReplyUpdate(conversation, now);
-    } else if (managerSupportMessage) {
-      updateData = {
+    } else if (managerSupportMessage) {      updateData = {
         manager_support_state: "waiting_customer",
         manager_support_last_read_at: now,
         manager_support_expires_at: this.nextManagerSupportExpiry(now),
@@ -683,7 +815,7 @@ export class ChatService {
       await this.prisma.conversations.update({ where: { id: conversationId }, data: updateData });
     }
 
-    return message;
+    return this.withReplyPreview(message);
   }
 
   async maybeAutoReply(
@@ -695,11 +827,13 @@ export class ChatService {
     const requireUnassigned = options?.requireUnassigned ?? false;
     if (options?.shouldAbort?.()) return [];
 
-    // Tin rỗng/emoji/câu xác nhận ngắn không cần chạm DB.
-    // (Policy cho text không phụ thuộc topic hội thoại.)
-    const preliminary = planAutoReply(trigger);
-    if (preliminary.kind === "skip") {
-      this.logger.debug(`Skip auto-reply for ${conversationId}: ${preliminary.reason}`);
+    // Tin text rỗng/emoji-only không cần chạm DB; router cũng sẽ SKIP nhưng
+    // chặn sớm ở đây để đỡ một query mỗi tin.
+    if (
+      (trigger.messageType ?? "text") === "text" &&
+      !/[\p{L}\p{N}]/u.test(trigger.content ?? "")
+    ) {
+      this.logger.debug(`Skip auto-reply for ${conversationId}: empty_or_emoji`);
       return [];
     }
 
@@ -709,16 +843,6 @@ export class ChatService {
     });
     if (!conversation || conversation.status === "resolved") return [];
     if (requireUnassigned && (conversation.status !== "open" || conversation.staff_id !== null)) return [];
-
-    // Chỉ nhường cho staff khi chính staff của hội thoại này đang giữ reply lock.
-    // Không dùng cờ "có staff online" toàn cục: staff mở dashboard ở tab khác
-    // không được làm AI im lặng với mọi khách hàng.
-    // khiếu nại phải chuyển staff thay vì chỉ nhận ảnh).
-    const plan = planAutoReply(trigger, conversation.topic);
-    if (plan.kind === "skip") {
-      this.logger.debug(`Skip auto-reply for ${conversationId}: ${plan.reason}`);
-      return [];
-    }
 
     options?.onAccepted?.();
     return this.enqueueAutoReply(conversationId, trigger, requireUnassigned, options?.shouldAbort);
@@ -843,54 +967,115 @@ export class ChatService {
     });
     if (!latest || latest.sender_id !== conversation.customer_id) return [];
 
-    // Tính lại plan tại thời điểm gửi: topic hội thoại có thể đã đổi
-    // (ví dụ khách vừa gửi booking card khiếu nại).
-    const plan = planAutoReply(trigger, conversation.topic);
-    if (plan.kind === "skip") return [];
+    // Một router duy nhất cho auto-reply và staff suggestion: STAFF > FAQ > DB
+    // > AI. Chỉ nhánh AI mới gọi model, mọi nhánh còn lại trả ngay từ rule/DB.
+    this.logger.debug(`Auto-reply via assistant router for ${conversationId}`);
+    return this.doPerformRoutedAutoReply(
+      conversationId,
+      conversation.customer_id,
+      trigger,
+      requireUnassigned,
+      shouldAbort,
+    );
+  }
 
-    if (plan.kind === "canned") {
-      this.logger.debug(`Canned auto-reply for ${conversationId}: ${plan.reason}`);
+  /**
+   * Router là provider bắt buộc của ChatModule. Tham số constructor vẫn để
+   * optional để unit test cũ dựng tay được, nhưng thiếu router là lỗi lập trình
+   * nên phải ném ra thay vì âm thầm bỏ qua auto-reply.
+   */
+  private requireRouter(): AssistantRouterService {
+    if (!this.assistantRouter) {
+      throw new Error("AssistantRouterService was not injected into ChatService");
+    }
+    return this.assistantRouter;
+  }
+
+  /**
+   * Nhánh auto-reply dùng router chung: STAFF > FAQ > DB > AI.
+   * Chỉ action "llm" mới gọi model; mọi action còn lại ghi câu trả lời cố
+   * định (hoặc im lặng khi handoff đã mở trước đó).
+   */
+  private async doPerformRoutedAutoReply(
+    conversationId: string,
+    customerId: string,
+    trigger: AutoReplyTrigger,
+    requireUnassigned: boolean,
+    shouldAbort?: () => boolean,
+  ): Promise<messages[]> {
+    const output = await this.requireRouter().routeConversation({
+      conversationId,
+      customerId,
+      messageId: trigger.messageId,
+      trigger,
+    });
+
+    this.logger.debug(
+      `Assistant route for ${conversationId}: route=${output.route} reason=${output.reason} action=${output.action} llm=${output.usedLlm}`,
+    );
+
+    if (shouldAbort?.()) return [];
+
+    if (output.action === "none") return [];
+
+    if (output.action === "reply" || output.action === "handoff") {
+      // Handoff luôn phải có thông báo cho khách. Nếu router không kèm câu
+      // (ví dụ handoff đã mở trước đó), dùng câu thông báo mặc định thay vì
+      // im lặng.
+      const reply =
+        output.reply ??
+        (output.action === "handoff" ? handoffAckForReason(output.reason) : null);
+      if (!reply) return [];
       return this.persistAiReply(
         conversationId,
-        conversation.customer_id,
-        plan.reply,
-        [],
-        { auto_reply: plan.reason },
+        customerId,
+        reply,
+        output.productIds ?? [],
+        this.assistantReplyMetadata(output),
         requireUnassigned,
         shouldAbort,
       );
     }
 
+    // action === "llm"
     const history = await this.buildAutoReplyHistory(
       conversationId,
-      conversation.customer_id,
+      customerId,
       trigger.messageId,
     );
 
     let result;
     try {
-      result = await this.aiService.productAdvisor({ message: plan.request, history }, true);
+      result = await this.withAiDeadline(
+        this.aiService.productAdvisor(
+          { message: output.llmRequest ?? trigger.content, history },
+          true,
+        ),
+      );
     } catch (error) {
       this.logger.warn(
-        `AI advisor error for conversation ${conversationId}: ${error instanceof Error ? error.message : String(error)}`,
+        `AI advisor error for conversation ${conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
       return this.createAutoReplyFallback(
         conversationId,
-        conversation.customer_id,
+        customerId,
         requireUnassigned,
         shouldAbort,
       );
     }
 
-    const topics = result.data?.topics ?? [];
-    const replyTopic = topics.find(
-      (t) => typeof t.assistantReply === "string" && t.assistantReply.trim().length > 0,
+    const replyTopic = (result.data?.topics ?? []).find(
+      (topic) =>
+        typeof topic.assistantReply === "string" &&
+        topic.assistantReply.trim().length > 0,
     );
     if (!replyTopic) {
       this.logger.warn(`AI advisor returned no reply for conversation ${conversationId}`);
       return this.createAutoReplyFallback(
         conversationId,
-        conversation.customer_id,
+        customerId,
         requireUnassigned,
         shouldAbort,
       );
@@ -898,13 +1083,303 @@ export class ChatService {
 
     return this.persistAiReply(
       conversationId,
-      conversation.customer_id,
+      customerId,
       replyTopic.assistantReply.trim(),
-      replyTopic.recommendedProductIds ?? [],
-      undefined,
+      (replyTopic.recommendedProductIds ?? []).slice(0, MAX_SUGGESTION_PRODUCTS),
+      this.assistantReplyMetadata(output),
       requireUnassigned,
       shouldAbort,
     );
+  }
+
+  /**
+   * Gợi ý cho staff — chỉ chạy khi staff bấm nút, không tự động gửi.
+   * Cùng router với auto-reply, cache theo messageId để bấm lại không tốn
+   * thêm lượt model. Tối đa 3 chủ đề × 3 sản phẩm.
+   *
+   * `targetMessageId`: khi staff chọn "trả lời" một tin cũ của khách, gợi ý
+   * phải trả lời đúng tin đó chứ không phải tin mới nhất. Ngữ cảnh lấy từ
+   * ~5 tin ngay trước tin được chọn.
+   */
+  async suggestReplyForStaff(
+    user: AuthenticatedUser,
+    conversationId: string,
+    targetMessageId?: string,
+  ): Promise<{
+    messageId: string | null;
+    topics: ChatSuggestionTopic[];
+    cached: boolean;
+  }> {
+    if (user.role === "customer") {
+      throw new ForbiddenException("Only staff can request AI suggestions.");
+    }
+
+    const conversation = await this.prisma.conversations.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation) throw new NotFoundException("Conversation not found.");
+
+    if (user.role === "staff" && conversation.staff_id !== user.id) {
+      throw new ForbiddenException(
+        "Only the assigned staff can request suggestions for this conversation.",
+      );
+    }
+    if (
+      user.role === "manager_owner" &&
+      conversation.staff_id !== user.id &&
+      !this.isManagerSupportActiveFor(conversation, user.id)
+    ) {
+      throw new ForbiddenException(
+        "Start manager support before requesting suggestions.",
+      );
+    }
+
+    const lastCustomerMessage = targetMessageId
+      ? await this.prisma.messages.findFirst({
+          where: {
+            id: targetMessageId,
+            conversation_id: conversationId,
+            deleted_at: null,
+            sender_id: conversation.customer_id,
+            message_type: "text",
+          },
+          select: {
+            id: true,
+            content: true,
+            message_type: true,
+            metadata: true,
+            created_at: true,
+          },
+        })
+      : null;
+
+    // Tin staff chọn không hợp lệ (không phải tin khách / đã xoá) → quay lại
+    // hành vi cũ: gợi ý cho tin khách mới nhất.
+    const anchorMessage =
+      lastCustomerMessage &&
+      /[\p{L}\p{N}]/u.test(lastCustomerMessage.content?.trim() ?? "")
+        ? lastCustomerMessage
+        : await this.prisma.messages.findFirst({
+            where: {
+              conversation_id: conversationId,
+              deleted_at: null,
+              sender_id: conversation.customer_id,
+              message_type: "text",
+            },
+            orderBy: { created_at: "desc" },
+            select: {
+              id: true,
+              content: true,
+              message_type: true,
+              metadata: true,
+              created_at: true,
+            },
+          });
+
+    const content = anchorMessage?.content?.trim() ?? "";
+    if (!anchorMessage || !/[\p{L}\p{N}]/u.test(content)) {
+      return { messageId: null, topics: [], cached: false };
+    }
+
+    const cacheKey = `${SUGGESTION_CACHE_PREFIX}${anchorMessage.id}`;
+    const cached = await this.redisService?.get<ChatSuggestionTopic[]>(cacheKey);
+    if (cached) {
+      return { messageId: anchorMessage.id, topics: cached, cached: true };
+    }
+
+    const output = await this.requireRouter().routeConversation({
+      conversationId,
+      customerId: conversation.customer_id,
+      messageId: anchorMessage.id,
+      trigger: {
+        content,
+        messageType: "text",
+        metadata:
+          (anchorMessage.metadata as Record<string, unknown> | null) ?? null,
+        messageId: anchorMessage.id,
+      },
+      mode: "suggestion",
+    });
+
+    let topics: ChatSuggestionTopic[] = [];
+
+    if (output.action === "reply" && output.reply?.trim()) {
+      const productIds = (output.productIds ?? []).slice(0, MAX_SUGGESTION_PRODUCTS);
+      topics = [
+        {
+          title: this.suggestionTitle(output),
+          assistantReply: output.reply.trim(),
+          recommendedProductIds: productIds,
+          reasons: {},
+          products: await this.loadSuggestionProducts(productIds),
+        },
+      ];
+    } else if (output.action === "llm") {
+      // Ngữ cảnh: các tin ngay TRƯỚC tin được chọn (tối đa 6) — đủ để hiểu
+      // "cái đó", "mẫu kia" mà không kéo cả hội thoại dài vào prompt.
+      const history = await this.buildAutoReplyHistory(
+        conversationId,
+        conversation.customer_id,
+        anchorMessage.id,
+        { before: anchorMessage.created_at, limit: 6 },
+      );
+      try {
+        const result = await this.withAiDeadline(
+          this.aiService.productAdvisor(
+            { message: output.llmRequest ?? content, history },
+            true,
+          ),
+        );
+        topics = this.normalizeSuggestionTopics(result.data?.topics ?? []);
+      } catch (error) {
+        this.logger.warn(
+          `Suggestion model error for conversation ${conversationId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        topics = [];
+      }
+    }
+
+    await this.redisService?.set(cacheKey, topics, SUGGESTION_CACHE_TTL_SECONDS);
+    return { messageId: anchorMessage.id, topics, cached: false };
+  }
+
+  /** Staff đã trả lời: mở lại chu kỳ auto-reply và reset chống lặp. */
+  private async onStaffReplied(conversationId: string): Promise<void> {
+    try {
+      await this.requireRouter().handleStaffReply(conversationId);
+    } catch (error) {
+      this.logger.warn(
+        `Could not reset assistant state for ${conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private withAiDeadline<T>(
+    promise: Promise<T>,
+    timeoutMs = AI_TOTAL_TIMEOUT_MS,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`AI total timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  private assistantReplyMetadata(output: AssistantRouteOutput): Prisma.InputJsonValue {
+    return {
+      assistant_route: output.route,
+      assistant_reason: output.reason,
+    };
+  }
+
+  private suggestionTitle(output: AssistantRouteOutput): string {
+    switch (output.route) {
+      case "FAQ":
+        return "Trả lời từ FAQ";
+      case "DB":
+        return "Thông tin từ shop";
+      case "TEMPLATE":
+        return "Trả lời nhanh";
+      case "STAFF":
+        return "Chuyển nhân viên";
+      default:
+        return "Gợi ý sản phẩm";
+    }
+  }
+
+  private normalizeSuggestionTopics(rawTopics: unknown[]): ChatSuggestionTopic[] {
+    return rawTopics
+      .filter(
+        (topic): topic is Record<string, unknown> & { assistantReply: string } =>
+          Boolean(topic) &&
+          typeof topic === "object" &&
+          typeof (topic as Record<string, unknown>).assistantReply === "string" &&
+          ((topic as Record<string, unknown>).assistantReply as string).trim().length > 0,
+      )
+      .slice(0, MAX_SUGGESTION_TOPICS)
+      .map((topic) => {
+        const rawProducts = Array.isArray(topic.products) ? topic.products : [];
+        const products = rawProducts
+          .filter(
+            (product): product is Record<string, unknown> =>
+              Boolean(product) && typeof product === "object",
+          )
+          .slice(0, MAX_SUGGESTION_PRODUCTS)
+          .map((product) => ({
+            garmentId: String(product.garmentId ?? ""),
+            name: String(product.name ?? ""),
+            imageUrl:
+              typeof product.imageUrl === "string" ? product.imageUrl : null,
+            dailyPrice: Number(product.dailyPrice ?? 0),
+            size: typeof product.size === "string" ? product.size : null,
+            ...(typeof product.reason === "string"
+              ? { reason: product.reason }
+              : {}),
+          }))
+          .filter((product) => product.garmentId !== "");
+
+        const recommended = Array.isArray(topic.recommendedProductIds)
+          ? topic.recommendedProductIds
+              .filter((id): id is string => typeof id === "string")
+              .slice(0, MAX_SUGGESTION_PRODUCTS)
+          : products.map((product) => product.garmentId);
+
+        return {
+          title:
+            typeof topic.title === "string" && topic.title.trim()
+              ? topic.title.trim()
+              : "Gợi ý sản phẩm",
+          assistantReply: topic.assistantReply.trim(),
+          recommendedProductIds: recommended,
+          reasons:
+            topic.reasons && typeof topic.reasons === "object"
+              ? (topic.reasons as Record<string, string>)
+              : {},
+          products,
+        };
+      });
+  }
+
+  private async loadSuggestionProducts(
+    ids: string[],
+  ): Promise<ChatSuggestionProduct[]> {
+    const uniqueIds = [...new Set(ids)].slice(0, MAX_SUGGESTION_PRODUCTS);
+    if (uniqueIds.length === 0) return [];
+
+    const garments = await this.prisma.garment.findMany({
+      where: { id: { in: uniqueIds } },
+      include: {
+        images: { orderBy: { sortOrder: "asc" }, take: 1 },
+        garment_sizes: {
+          where: { is_active: true },
+          orderBy: { daily_price: "asc" },
+          take: 1,
+        },
+      },
+    });
+
+    return garments.map((garment) => ({
+      garmentId: garment.id,
+      name: garment.name,
+      imageUrl: garment.images[0]?.imageUrl ?? null,
+      dailyPrice: Number(garment.garment_sizes[0]?.daily_price ?? 0),
+      size: garment.garment_sizes[0]?.size_label ?? null,
+    }));
   }
 
   /**
@@ -915,15 +1390,17 @@ export class ChatService {
     conversationId: string,
     customerId: string,
     excludeMessageId?: string,
+    options: { before?: Date; limit?: number } = {},
   ): Promise<Array<{ role: "customer" | "staff" | "ai"; content: string; createdAt: string }>> {
     const recentMessages = await this.prisma.messages.findMany({
       where: {
         conversation_id: conversationId,
         deleted_at: null,
         message_type: { in: ["text", "product_card", "booking_card", "image", "video"] },
+        ...(options.before ? { created_at: { lt: options.before } } : {}),
       },
       orderBy: { created_at: "desc" },
-      take: 15,
+      take: options.limit ?? 15,
     });
 
     return recentMessages
@@ -1601,7 +2078,9 @@ export class ChatService {
           },
         },
       });
-      return Promise.all(msgs.reverse().map((m) => this.attachSignedUrl(m)));
+      return Promise.all(
+        msgs.reverse().map(async (m) => this.withReplyPreview(await this.attachSignedUrl(m))),
+      );
     };
 
     if (!before) {
@@ -1860,6 +2339,7 @@ export class ChatService {
         bookingId: conversation.booking_id ?? null,
         reopenedFromResolved: conversation.reopened_from_resolved,
         ...this.getManagerSupportFields(conversation),
+        ...this.getHandoffFields(conversation),
       };
     })
     );
@@ -2086,7 +2566,7 @@ export class ChatService {
         },
       },
     });
-    return fullMsg ? this.attachSignedUrl(fullMsg) : null;
+    return fullMsg ? this.withReplyPreview(await this.attachSignedUrl(fullMsg)) : null;
   }
 
   private async attachSignedUrl<T extends { message_type?: string | null; metadata?: unknown }>(msg: T): Promise<T> {
@@ -2097,6 +2577,26 @@ export class ChatService {
       }
     }
     return msg;
+  }
+
+  /**
+   * Tách `metadata.replyTo` (do sendMessage ghi khi staff trả lời trích dẫn)
+   * thành field `replyTo` ở gốc message để UI không phải biết cấu trúc JSON.
+   */
+  private withReplyPreview<T extends { metadata?: unknown }>(
+    msg: T,
+  ): T & { replyTo: { id: string; content: string } | null } {
+    const meta = (msg.metadata ?? null) as Record<string, unknown> | null;
+    const raw = meta?.replyTo;
+    const replyTo =
+      raw && typeof raw === "object" &&
+      typeof (raw as Record<string, unknown>).id === "string"
+        ? {
+            id: (raw as Record<string, unknown>).id as string,
+            content: String((raw as Record<string, unknown>).content ?? ""),
+          }
+        : null;
+    return { ...msg, replyTo };
   }
 
   private getSupabaseStorage() {
