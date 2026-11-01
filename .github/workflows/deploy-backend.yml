@@ -47,7 +47,9 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           source: "backend/dist"
           target: "~/graduation-project-fpt/backend"
-          strip_components: 2
+          # backend/dist -> bỏ 1 cấp "backend" để file nằm ở ~/graduation-project-fpt/backend/dist/
+          # (strip 2 sẽ đổ thẳng file build vào backend/ khiến PM2 vẫn chạy dist cũ)
+          strip_components: 1
 
       - name: Restart Backend on VPS via SSH
         uses: appleboy/ssh-action@v1
@@ -56,10 +58,13 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd ~/graduation-project-fpt/backend
 
-            # Pull latest source (for package.json, prisma schema, .env)
-            git pull origin main
+            # Luôn đưa source trên VPS về đúng main. `git pull` bị chặn khi VPS có thay đổi
+            # cục bộ (vd. backend/package.json) làm các bước sau không chạy. .env không bị ảnh hưởng.
+            git fetch origin main
+            git reset --hard origin/main
 
             # Install production dependencies only
             pnpm install --prod --frozen-lockfile
