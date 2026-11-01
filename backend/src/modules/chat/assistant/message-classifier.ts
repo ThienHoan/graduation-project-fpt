@@ -1254,18 +1254,18 @@ const CATALOG_SEARCH_PHRASES = phrases(
  * nghĩa phân loại dịp; nhánh lọc dịp dùng `STYLING_QUESTION_PHRASES` để quyết
  * định nhường nhánh AI.
  */
-const OUTFIT_CUE_WORDS = new Set([
-  "mau",
-  "bo",
-  "do",
-  "ao",
-  "vay",
-  "dam",
-  "quan",
-  "vest",
-  "suit",
-  "jupe",
-]);
+// const OUTFIT_CUE_WORDS = new Set([
+//   "mau",
+//   "bo",
+//   "do",
+//   "ao",
+//   "vay",
+//   "dam",
+//   "quan",
+//   "vest",
+//   "suit",
+//   "jupe",
+// ]);
 
 /**
  * Tín hiệu câu hỏi tư vấn phong cách/chọn đồ — không được cướp thành lọc DB.

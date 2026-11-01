@@ -545,7 +545,6 @@ export class AssistantRouterService {
     conversationId: string,
     startedAt: number,
   ): Promise<void> {
-    const durationMs = Date.now() - startedAt;
 
     if (output.reason === "faq_config_missing") {
       const faqKey = output.missingFaqKey
