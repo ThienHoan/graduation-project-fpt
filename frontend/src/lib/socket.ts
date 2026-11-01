@@ -55,6 +55,10 @@ export function createChatSocket(accessToken: string) {
 
   socket = io(chatSocketUrl, {
     auth: { token },
+    // Đi qua rewrite của Vercel: chỉ HTTP polling được proxy, còn WebSocket
+    // Upgrade bị trả 400. Thử `polling` trước để kết nối thành công rồi để
+    // engine.io tự nâng cấp lên `websocket` khi hạ tầng hỗ trợ.
+    transports: ["polling", "websocket"],
     // Next.js/Vercel redirect mọi URL có dấu "/" thừa ở cuối (vd `/socket.io/?EIO=...`)
     // bằng 308; trình duyệt KHÔNG mang header `Upgrade: websocket` theo redirect nên
     // kết nối WebSocket qua proxy rewrite luôn thất bại. engine.io-client mặc định

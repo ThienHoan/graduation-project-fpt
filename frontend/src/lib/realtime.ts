@@ -11,7 +11,10 @@ let subscriberCount = 0;
 function buildSocket(accessToken: string) {
   return io(realtimeSocketUrl, {
     auth: { token: `Bearer ${accessToken}` },
-    transports: ["websocket", "polling"],
+    // Đi qua rewrite của Vercel chỉ có HTTP polling được proxy; yêu cầu
+    // WebSocket Upgrade bị trả 400. Vì vậy thử `polling` trước để kết nối
+    // thành công, sau đó client tự nâng cấp lên `websocket` khi hạ tầng cho phép.
+    transports: ["polling", "websocket"],
     // Xem `socket.ts`: tắt "/" cuối path để không bị Next.js 308 làm mất header
     // Upgrade khi đi qua proxy rewrite của Vercel.
     addTrailingSlash: false,
