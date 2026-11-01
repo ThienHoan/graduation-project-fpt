@@ -126,4 +126,14 @@ jobs:
               exit 1
             fi
 
+            # Fail sớm nếu bundle mới không thực sự được nạp: route mới phải
+            # trả 401 do guard auth; 404 nghĩa là vẫn chạy code cũ.
+            sleep 3
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4000/api/chat/faq || true)
+            echo "GET /api/chat/faq -> $code"
+            if [ "$code" = "404" ] || [ -z "$code" ]; then
+              echo "❌ Bundle mới chưa được nạp (route /api/chat/faq = $code)."
+              exit 1
+            fi
+
             echo "✅ Deploy complete"
