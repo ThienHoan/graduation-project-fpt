@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
-import { getBooking } from "@/lib/api";
+import { getBooking, getGarmentById, getGarmentsGrouped } from "@/lib/api";
 import type { BookingResponse } from "@/lib/api";
 import { statusBadgeClass, statusOf } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
@@ -69,14 +69,70 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 
 function GarmentThumbnail({
   imageUrl,
+  garmentId,
+  garmentName,
   alt,
 }: {
   imageUrl?: string | null;
+  garmentId?: string | null;
+  garmentName?: string | null;
   alt: string;
 }) {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(imageUrl ?? null);
   const [hasError, setHasError] = useState(false);
 
-  if (!imageUrl || hasError) {
+  useEffect(() => {
+    if (imageUrl) {
+      setResolvedUrl(imageUrl);
+      return;
+    }
+    let isMounted = true;
+
+    async function resolve() {
+      // Fallback 1: lấy qua garmentId
+      if (garmentId) {
+        try {
+          const res = await getGarmentById(garmentId);
+          if (isMounted && res.success && res.data?.images?.length) {
+            const first = res.data.images[0]?.imageUrl;
+            if (first) {
+              setResolvedUrl(first);
+              return;
+            }
+          }
+        } catch {
+          // tiếp tục fallback 2
+        }
+      }
+
+      // Fallback 2: tìm theo tên sản phẩm trong danh mục nếu garmentId cũ bị thiếu ảnh
+      if (garmentName) {
+        try {
+          const searchRes = await getGarmentsGrouped(garmentName.trim());
+          if (isMounted && searchRes.success && searchRes.data && searchRes.data.length > 0) {
+            const match =
+              searchRes.data.find(
+                (g) => g.name.toLowerCase().trim() === garmentName.toLowerCase().trim(),
+              ) ?? searchRes.data[0];
+            const foundImg = match?.imageUrl || match?.images?.[0]?.imageUrl;
+            if (foundImg) {
+              setResolvedUrl(foundImg);
+              return;
+            }
+          }
+        } catch {
+          // graceful fallback
+        }
+      }
+    }
+
+    void resolve();
+    return () => {
+      isMounted = false;
+    };
+  }, [imageUrl, garmentId, garmentName]);
+
+  if (!resolvedUrl || hasError) {
     return (
       <div className="relative h-20 w-20 sm:h-24 sm:w-24 shrink-0 overflow-hidden rounded-2xl border border-sand/80 bg-stone-100 shadow-2xs flex flex-col items-center justify-center text-stone-400 print:h-16 print:w-16 print:rounded-lg print:border-stone-400">
         <Shirt className="h-8 w-8 text-amber-700/50 print:h-6 print:w-6" />
@@ -88,13 +144,13 @@ function GarmentThumbnail({
   return (
     <div className="relative h-20 w-20 sm:h-24 sm:w-24 shrink-0 overflow-hidden rounded-2xl border border-sand/80 bg-stone-100 shadow-2xs group print:h-16 print:w-16 print:rounded-lg print:border-stone-400">
       <img
-        src={imageUrl}
+        src={resolvedUrl}
         alt={alt}
         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
         referrerPolicy="no-referrer"
         loading="eager"
         onError={(e) => {
-          console.warn("[GarmentThumbnail] Failed to load image:", imageUrl, e);
+          console.warn("[GarmentThumbnail] Failed to load image:", resolvedUrl, e);
           setHasError(true);
         }}
       />
@@ -342,6 +398,8 @@ function BookingSuccessInner() {
                             {/* Garment thumbnail (Hiển thị ảnh rõ nét, chống chặn hotlink, fallback chuẩn) */}
                             <GarmentThumbnail
                               imageUrl={item.imageUrl}
+                              garmentId={item.garmentId}
+                              garmentName={item.garmentName}
                               alt={item.garmentName ?? "Cổ phục"}
                             />
 
