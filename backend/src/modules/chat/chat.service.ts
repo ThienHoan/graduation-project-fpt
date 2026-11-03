@@ -16,6 +16,7 @@ import type { AssistantRouteOutput } from "./assistant/assistant.types";
 import { handoffAckForReason } from "./assistant/handoff-messages";
 import { handoffBadgeForReason, type HandoffGroup } from "./assistant/handoff-labels";
 import { isHandoffExpired } from "./assistant/assistant-config";
+import { buildProductCardPayload } from "./product-card-payload";
 
 const AI_USER_ID = "00000000-0000-0000-0000-000000000000";
 // Gộp các tin nhắn liên tiếp của khách thành 1 lượt trả lời duy nhất.
@@ -345,24 +346,27 @@ export class ChatService {
       }
     }
 
-    // Query garment from DB with images and sizes
+    // Query garment from DB with images, sizes and available assets so the
+    // card can show every size, the price range and stock state.
     const garment = await this.prisma.garment.findUnique({
       where: { id: garmentId },
       include: {
         images: { orderBy: { sortOrder: "asc" as const }, take: 1 },
-        garment_sizes: { take: 1 },
+        garment_sizes: {
+          where: { is_active: true },
+          orderBy: { daily_price: "asc" as const },
+        },
+        assets: {
+          where: { status: "available" },
+          select: { id: true, garment_size_id: true },
+        },
+        category: { select: { name: true } },
       },
     });
 
     if (!garment) {
       throw new NotFoundException("Garment not found.");
     }
-
-    const DEFAULT_IMAGE = "https://dep.com.vn/wp-content/uploads/2020/11/ao-dai-9.jpg";
-    const imageUrl = garment.images[0]?.imageUrl || DEFAULT_IMAGE;
-    const sizeLabel = garment.garment_sizes[0]?.size_label ?? null;
-    const dailyPrice = garment.garment_sizes[0]?.daily_price ?? 0;
-    const detailUrl = `/catalog/${garment.garment_sizes[0]?.id ?? garment.id}`;
 
     const now = new Date();
     const message = await this.prisma.messages.create({
@@ -372,14 +376,7 @@ export class ChatService {
         content: "",
         message_type: "product_card",
         metadata: {
-          product: {
-            id: garment.id,
-            name: garment.name,
-            image: imageUrl,
-            size: sizeLabel,
-            price: Number(dailyPrice),
-            detailUrl,
-          },
+          product: buildProductCardPayload(garment),
         },
       },
     });
@@ -1048,7 +1045,12 @@ export class ChatService {
     try {
       result = await this.withAiDeadline(
         this.aiService.productAdvisor(
-          { message: output.llmRequest ?? trigger.content, history },
+          {
+            message: output.llmRequest ?? trigger.content,
+            history,
+            intent: output.llmIntent,
+            customerId,
+          },
           true,
         ),
       );
@@ -1226,7 +1228,12 @@ export class ChatService {
       try {
         const result = await this.withAiDeadline(
           this.aiService.productAdvisor(
-            { message: output.llmRequest ?? content, history },
+            {
+              message: output.llmRequest ?? content,
+              history,
+              intent: output.llmIntent,
+              customerId: conversation.customer_id,
+            },
             true,
           ),
         );
@@ -1491,17 +1498,19 @@ export class ChatService {
         where: { id: { in: cardIds } },
         include: {
           images: { orderBy: { sortOrder: "asc" }, take: 1 },
-          garment_sizes: { where: { is_active: true }, take: 1 },
+          garment_sizes: {
+            where: { is_active: true },
+            orderBy: { daily_price: "asc" },
+          },
+          assets: {
+            where: { status: "available" },
+            select: { id: true, garment_size_id: true },
+          },
+          category: { select: { name: true } },
         },
       });
 
       for (const g of garments) {
-        const DEFAULT_IMAGE = "https://dep.com.vn/wp-content/uploads/2020/11/ao-dai-9.jpg";
-        const imageUrl = g.images[0]?.imageUrl || DEFAULT_IMAGE;
-        const sizeLabel = g.garment_sizes[0]?.size_label ?? null;
-        const dailyPrice = g.garment_sizes[0]?.daily_price ?? 0;
-        const detailUrl = `/catalog/${g.garment_sizes[0]?.id ?? g.id}`;
-
         const card = await this.prisma.messages.create({
           data: {
             conversation_id: conversationId,
@@ -1510,14 +1519,7 @@ export class ChatService {
             message_type: "product_card",
             sender_type: "ai",
             metadata: {
-              product: {
-                id: g.id,
-                name: g.name,
-                image: imageUrl,
-                size: sizeLabel,
-                price: Number(dailyPrice),
-                detailUrl,
-              },
+              product: buildProductCardPayload(g),
             },
           },
         });

@@ -77,6 +77,32 @@ const MOCK_BROWSE_CATALOG = [
   makeGarment("g-6", "Áo dài A", "c-2", "Áo dài cách tân", "hồng"),
 ];
 
+/**
+ * Mẫu có số đo từng size + tài sản gán theo size, dùng cho câu hỏi chọn size.
+ * Size L cố tình hết hàng để kiểm tra câu "hết size này".
+ */
+const MEASURED_GARMENT = {
+  ...makeGarment("g-7", "Áo dài đỏ thêu sen", "c-1", "Áo dài", "đỏ"),
+  garment_sizes: [
+    {
+      id: "s-7-m", garment_id: "g-7", size_label: "M", daily_price: 350000,
+      deposit_amount: 500000, is_active: true, created_at: new Date(),
+      shoulder_cm: 38, bust_cm: 88, waist_cm: 70, hip_cm: 92,
+      length_cm: 140, sleeve_length_cm: 55,
+    },
+    {
+      id: "s-7-l", garment_id: "g-7", size_label: "L", daily_price: 380000,
+      deposit_amount: 550000, is_active: true, created_at: new Date(),
+      shoulder_cm: 40, bust_cm: 92, waist_cm: 74, hip_cm: 96,
+      length_cm: 142, sleeve_length_cm: 56,
+    },
+  ],
+  assets: [
+    { id: "a-7-1", garment_size_id: "s-7-m" },
+    { id: "a-7-2", garment_size_id: "s-7-m" },
+  ],
+};
+
 const DEFAULT_AI_RESPONSE = {
   topics: [
     {
@@ -111,6 +137,9 @@ function createMockPrisma() {
     },
     $queryRaw: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
+    customerMeasurement: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   } as any;
   return prisma;
 }
@@ -462,6 +491,283 @@ describe("AiService", () => {
       expect(result.data?.topics[0].title).toBe("Chưa có mẫu khác");
       expect(result.data?.topics[0].assistantReply).toContain("ngoài");
       expect(result.data?.topics[0].products).toEqual([]);
+    });
+
+    it("does not filter by the garbage keyword of a comparison question", async () => {
+      // "so sánh …" từng sinh keyword "sánh" → query 0 kết quả → AI trả
+      // "chưa có sản phẩm phù hợp". Router đã phân loại ai.comparison nên
+      // phải bỏ keyword và giữ đủ các mẫu khách nhắc tới.
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor(
+        {
+          message: "so sánh mẫu áo dài đỏ thêu sen và áo dài xanh ngọc",
+          intent: "ai.comparison",
+        },
+        true,
+      );
+
+      const where = prisma.garment.findMany.mock.calls[0][0].where as any;
+      expect(JSON.stringify(where)).not.toContain("sánh");
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("LOẠI CÂU HỎI: SO SÁNH MẪU");
+      expect(prompt).toContain("ID: g-1");
+      expect(prompt).toContain("ID: g-2");
+      // So sánh cũng dùng dạng chi tiết theo size.
+      expect(prompt).toContain("chưa nhập số đo");
+      expect(prompt).not.toContain("KHÔNG TÌM THẤY KEYWORD");
+    });
+
+    it("keeps the last product card in the prompt for a sizing question", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor(
+        {
+          message: "mẫu này size nào vừa em",
+          intent: "ai.sizing",
+          history: [
+            {
+              role: "ai",
+              content: "[Thẻ sản phẩm] Cổ phục hoàng yến | Size: M",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("LOẠI CÂU HỎI: CHỌN SIZE");
+      expect(prompt).toContain("ID: g-3");
+      expect(prompt).not.toContain("KHÔNG TÌM THẤY KEYWORD");
+    });
+
+    it("ignores the routed intent on the public advisor endpoint", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_CATALOG as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor({
+        message: "Em muốn tìm áo dài đỏ",
+        intent: "ai.sizing",
+        customerId: "11111111-1111-1111-1111-111111111111",
+      });
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("LOẠI CÂU HỎI: CHỌN SIZE");
+      expect(prompt).not.toContain("SỐ ĐO CỦA KHÁCH");
+      expect(prisma.customerMeasurement.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("sends per-size measurements, price and stock for a sizing question", async () => {
+      prisma.garment.findMany.mockResolvedValue([MEASURED_GARMENT] as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor(
+        {
+          message: "mẫu này size nào vừa em",
+          intent: "ai.sizing",
+          history: [
+            {
+              role: "ai",
+              content: "[Thẻ sản phẩm] Áo dài đỏ thêu sen | Size: M",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("số đo vai 38, ngực 88, eo 70, hông 92, dài 140, tay 55 (cm)");
+      // toLocaleString phụ thuộc locale máy chạy test → so khớp cả "350.000" và "350,000".
+      expect(prompt).toMatch(/350[.,]000đ\/ngày/);
+      expect(prompt).toMatch(/cọc 500[.,]000đ/);
+      expect(prompt).toContain("còn 2");
+      expect(prompt).toContain("hết size này");
+    });
+
+    it("includes stored customer measurements in a sizing prompt", async () => {
+      prisma.garment.findMany.mockResolvedValue([MEASURED_GARMENT] as any);
+      prisma.customerMeasurement.findFirst.mockResolvedValue({
+        heightCm: 160,
+        weightKg: 50,
+        bustCm: 84,
+        waistCm: 66,
+        hipCm: 90,
+        usualSize: "M",
+      });
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor(
+        {
+          message: "mẫu này size nào vừa em",
+          intent: "ai.sizing",
+          customerId: "11111111-1111-1111-1111-111111111111",
+          history: [
+            {
+              role: "ai",
+              content: "[Thẻ sản phẩm] Áo dài đỏ thêu sen | Size: M",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("SỐ ĐO CỦA KHÁCH");
+      expect(prompt).toContain(
+        "cao 160cm, nặng 50kg, ngực 84cm, eo 66cm, hông 90cm, size thường mặc M",
+      );
+      expect(prisma.customerMeasurement.findFirst).toHaveBeenCalledOnce();
+    });
+
+    it("does not force 3-4 products for a sizing question", async () => {
+      prisma.garment.findMany.mockResolvedValue([MEASURED_GARMENT] as any);
+      const fetchMock = mockOpenRouter();
+
+      await service.productAdvisor(
+        {
+          message: "mẫu này size nào vừa em",
+          intent: "ai.sizing",
+          history: [
+            {
+              role: "ai",
+              content: "[Thẻ sản phẩm] Áo dài đỏ thêu sen | Size: M",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("LUÔN đề xuất 3-4 sản phẩm");
+      expect(prompt).not.toContain("phải chứa 3-4 ID sản phẩm");
+      expect(prompt).toContain("KHÔNG thêm mẫu khác chỉ để đủ số lượng");
+      // Được phép hỏi lại đúng một câu khi thiếu số đo của khách.
+      expect(prompt).toContain("hỏi lại đúng MỘT câu");
+      expect(prompt).toContain("1. Nếu ĐÃ CÓ số đo của khách");
+      expect(prompt).toContain("3. Nếu size phù hợp đã hết");
+    });
+
+    it("does not force 3-4 ids for a comparison question", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter({
+        topics: [
+          {
+            title: "So sánh",
+            assistantReply: "Hai mẫu khác nhau ở màu và giá.",
+            recommendedProductIds: ["g-1", "g-2"],
+            reasons: {},
+          },
+        ],
+      });
+
+      const result = await service.productAdvisor(
+        {
+          message: "so sánh áo dài đỏ thêu sen và áo dài xanh ngọc",
+          intent: "ai.comparison",
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).not.toContain("phải chứa 3-4 ID sản phẩm");
+      expect(prompt).toContain("recommendedProductIds chỉ chứa đúng các mẫu đã so sánh");
+      expect(prompt).toContain("1. ID: g-1");
+      expect(prompt).toContain("2. ID: g-2");
+      // Response trả 2 ID thì giữ đúng 2, không bị điền thêm.
+      expect(result.data?.topics[0].recommendedProductIds).toEqual(["g-1", "g-2"]);
+    });
+
+    it("does not invent a second product when only one comparison target exists", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter({
+        topics: [
+          {
+            title: "So sánh",
+            assistantReply: "Shop chưa có mẫu tím nên chưa thể so sánh.",
+            // Model cố trả thêm mẫu thứ hai không được so sánh.
+            recommendedProductIds: ["g-1", "g-2"],
+            reasons: {},
+          },
+        ],
+      });
+
+      const result = await service.productAdvisor(
+        {
+          message: "so sánh áo dài đỏ thêu sen với áo dài tím",
+          intent: "ai.comparison",
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("KHÔNG TÌM THẤY MẪU ĐỂ SO SÁNH");
+      expect(prompt).toContain("áo dài tím");
+      expect(prompt).toContain("TUYỆT ĐỐI không tự thêm một sản phẩm khác");
+      // Chỉ đúng 1 mẫu được đưa vào prompt, không bù mẫu thứ hai.
+      expect(prompt.match(/ID: g-/g)).toHaveLength(1);
+      expect(prompt).not.toContain("ID: g-2");
+      // Card/ID trả về cũng bị giới hạn trong catalog đã chọn.
+      expect(result.data?.topics[0].recommendedProductIds).toEqual(["g-1"]);
+    });
+
+    it("keeps a single history product for a comparison without topping up", async () => {
+      prisma.garment.findMany.mockResolvedValue(MOCK_BROWSE_CATALOG as any);
+      const fetchMock = mockOpenRouter({
+        topics: [
+          {
+            title: "So sánh",
+            assistantReply: "Shop mới xác định được một mẫu.",
+            recommendedProductIds: ["g-3"],
+            reasons: {},
+          },
+        ],
+      });
+
+      const result = await service.productAdvisor(
+        {
+          message: "so sánh mẫu này với mẫu kia",
+          intent: "ai.comparison",
+          history: [
+            {
+              role: "ai",
+              content: "[Thẻ sản phẩm] Cổ phục hoàng yến | Size: M",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        true,
+      );
+
+      const prompt = getSystemPrompt(fetchMock);
+      expect(prompt).toContain("ID: g-3");
+      expect(prompt.match(/ID: g-/g)).toHaveLength(1);
+      expect(prompt).toContain("Nếu chỉ có 1 mẫu để so sánh");
+      expect(result.data?.topics[0].recommendedProductIds).toEqual(["g-3"]);
+    });
+
+    it("replies deterministically when the shop has no product to compare", async () => {
+      prisma.garment.findMany.mockResolvedValue([] as any);
+      const fetchMock = mockOpenRouter();
+
+      const result = await service.productAdvisor(
+        {
+          message: "so sánh áo dài đỏ với áo dài tím",
+          intent: "ai.comparison",
+        },
+        true,
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result.data?.topics[0].title).toBe("Chưa có mẫu để so sánh");
+      expect(result.data?.topics[0].assistantReply).toContain("áo dài tím");
+      expect(result.data?.topics[0].recommendedProductIds).toEqual([]);
     });
   });
 

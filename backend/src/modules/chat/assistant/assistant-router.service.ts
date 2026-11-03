@@ -196,6 +196,7 @@ export class AssistantRouterService {
             reason: classification.reason,
             usedLlm: true,
             llmRequest: classification.aiRequest,
+            llmIntent: classification.intent,
             classification,
           };
           await this.logOutput(output, input.conversationId, startedAt);

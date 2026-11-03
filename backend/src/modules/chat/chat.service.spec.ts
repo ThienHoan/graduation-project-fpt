@@ -98,7 +98,15 @@ describe("ChatService", () => {
         where: { id: "garment-1" },
         include: {
           images: { orderBy: { sortOrder: "asc" as const }, take: 1 },
-          garment_sizes: { take: 1 },
+          garment_sizes: {
+            where: { is_active: true },
+            orderBy: { daily_price: "asc" as const },
+          },
+          assets: {
+            where: { status: "available" },
+            select: { id: true, garment_size_id: true },
+          },
+          category: { select: { name: true } },
         },
       });
       // Verify conversation update includes topic context

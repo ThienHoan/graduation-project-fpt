@@ -292,6 +292,7 @@ describe("ChatService auto-reply (assistant router)", () => {
     expect(aiService.productAdvisor.mock.calls[0][0].message).toBe(
       "tư vấn giúp mình đồ đi tiệc",
     );
+    expect(aiService.productAdvisor.mock.calls[0][0].intent).toBe("ai.styling");
     expect(result).toHaveLength(1);
     expect(prisma.messages.create.mock.calls[0][0].data.metadata).toMatchObject({
       assistant_route: "AI",
@@ -403,13 +404,19 @@ describe("ChatService auto-reply (assistant router)", () => {
     });
   });
 
-  it("creates product cards for products returned by a DB reply", async () => {
+  it("creates rich product cards for products returned by a DB reply", async () => {
     prisma.garment.findMany.mockResolvedValue([
       {
         id: "g-1",
         name: "Áo dài đỏ thêu sen",
+        color: "đỏ",
+        category: { name: "Áo dài" },
         images: [{ imageUrl: "https://example.com/a.jpg" }],
-        garment_sizes: [{ size_label: "M", daily_price: 350000 }],
+        garment_sizes: [
+          { id: "s-m", size_label: "M", daily_price: 350000, deposit_amount: 500000 },
+          { id: "s-l", size_label: "L", daily_price: 400000, deposit_amount: 550000 },
+        ],
+        assets: [{ id: "a-1", garment_size_id: "s-m" }],
       },
     ]);
 
@@ -422,8 +429,16 @@ describe("ChatService auto-reply (assistant router)", () => {
     expect(cardCall?.[0].data.metadata.product).toMatchObject({
       id: "g-1",
       name: "Áo dài đỏ thêu sen",
-      size: "M",
+      size: "M, L",
+      sizes: ["M", "L"],
       price: 350000,
+      priceFrom: 350000,
+      priceTo: 400000,
+      depositFrom: 500000,
+      detailUrl: "/catalog/s-m",
+      inStock: true,
+      category: "Áo dài",
+      color: "đỏ",
     });
   });
 
