@@ -1909,16 +1909,23 @@ export async function updateAdminUser(userId: string, payload: { fullName?: stri
   });
 }
 
-export async function getAdminAuditLogs(query?: { search?: string; action?: string; entityType?: string; page?: number; limit?: number }) {
+export type AdminAuditLogGroup = "all" | "admin" | "notification" | "other";
+
+export async function getAdminAuditLogs(query?: { search?: string; action?: string; group?: AdminAuditLogGroup; entityType?: string; page?: number; limit?: number }) {
   const params = new URLSearchParams();
   if (query?.search) params.append("search", query.search);
   if (query?.action) params.append("action", query.action);
+  if (query?.group && query.group !== "all") params.append("group", query.group);
   if (query?.entityType) params.append("entityType", query.entityType);
   if (query?.page) params.append("page", String(query.page));
   if (query?.limit) params.append("limit", String(query.limit));
   
   const queryStr = params.toString() ? `?${params.toString()}` : "";
   return apiRequest<{ items: AdminAuditLogEntry[]; total: number; page: number; limit: number }>(`/admin/audit-logs${queryStr}`);
+}
+
+export async function getAdminAuditLogActions() {
+  return apiRequest<{ action: string; count: number }[]>("/admin/audit-logs/actions");
 }
 
 export async function getAdminSettings() {
@@ -1930,6 +1937,106 @@ export async function updateAdminSetting(key: string, value: any) {
     method: "PATCH",
     body: JSON.stringify({ value }),
   });
+}
+
+export type AdminRoleAreaAccess = { area: string; label: string; read: number; write: number };
+
+export type AdminRoleEntry = {
+  role: string;
+  label: string;
+  userCount: number;
+  activeCount: number;
+  areas: AdminRoleAreaAccess[];
+};
+
+export type AdminIntegrationEntry = {
+  key: string;
+  label: string;
+  description: string;
+  configured: boolean;
+  details: { label: string; value: string }[];
+};
+
+export async function getAdminRoles() {
+  return apiRequest<{ roles: AdminRoleEntry[] }>("/admin/roles");
+}
+
+export async function getAdminIntegrations() {
+  return apiRequest<AdminIntegrationEntry[]>("/admin/integrations");
+}
+
+export type AdminSecurityAccountType = "inactive" | "unverified" | "privileged";
+
+export type AdminSecurityOverview = {
+  stats: {
+    total: number;
+    inactive: number;
+    unverified: number;
+    staleUnverified: number;
+    privilegedActive: number;
+    activeAdmins: number;
+  };
+  staleUnverifiedHours: number;
+  recentEvents: {
+    id: string;
+    action: string;
+    label: string;
+    actorName: string | null;
+    targetEmail: string | null;
+    createdAt: string;
+  }[];
+};
+
+export type AdminSecurityAccount = {
+  id: string;
+  email: string;
+  role: string;
+  isActive: boolean;
+  isEmailVerified: boolean;
+  fullName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getAdminSecurityOverview() {
+  return apiRequest<AdminSecurityOverview>("/admin/security/overview");
+}
+
+export async function getAdminSecurityAccounts(query: { type: AdminSecurityAccountType; search?: string; page?: number; limit?: number }) {
+  const params = new URLSearchParams({ type: query.type });
+  if (query.search) params.append("search", query.search);
+  if (query.page) params.append("page", String(query.page));
+  if (query.limit) params.append("limit", String(query.limit));
+  return apiRequest<{ items: AdminSecurityAccount[]; total: number; page: number; limit: number }>(
+    `/admin/security/accounts?${params.toString()}`,
+  );
+}
+
+export async function revokeAdminUserSessions(userId: string) {
+  return apiRequest<{ id: string; revokedAt: string }>(`/admin/users/${userId}/revoke-sessions`, { method: "POST" });
+}
+
+export async function verifyAdminUserEmail(userId: string) {
+  return apiRequest<{ id: string; isEmailVerified: boolean }>(`/admin/users/${userId}/verify-email`, { method: "POST" });
+}
+
+export type AdminExportDataset = "users" | "bookings" | "audit-logs";
+
+export type AdminExportResult = {
+  dataset: AdminExportDataset;
+  filename: string;
+  csv: string;
+  rows: number;
+  truncated: boolean;
+  maxRows: number;
+};
+
+export async function exportAdminData(dataset: AdminExportDataset, range: { from?: string; to?: string }) {
+  const params = new URLSearchParams();
+  if (range.from) params.append("from", range.from);
+  if (range.to) params.append("to", range.to);
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<AdminExportResult>(`/admin/exports/${dataset}${queryStr}`);
 }
 
 // ---------- Pricing (điều chỉnh giá AI) ----------
