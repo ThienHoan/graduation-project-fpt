@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { resolveSocketUrl, shouldAddTrailingSlash } from "./socket-config";
+import { resolveSocketTransports, resolveSocketUrl, shouldAddTrailingSlash } from "./socket-config";
 
 // Namespace `/realtime`. URL được suy ra giống `/chat` để localhost trỏ đúng
 // backend (trước đây hardcode "/realtime" nên ở dev lại đi qua rewrite của
@@ -14,9 +14,9 @@ function buildSocket(accessToken: string) {
   return io(realtimeSocketUrl, {
     auth: { token: `Bearer ${accessToken}` },
     // Đi qua rewrite của Vercel chỉ HTTP polling được proxy; yêu cầu WebSocket
-    // Upgrade bị trả 400. Vì vậy thử `polling` trước để kết nối thành công, sau
-    // đó client tự nâng cấp lên `websocket` khi hạ tầng cho phép.
-    transports: ["polling", "websocket"],
+    // Upgrade bị chặn. `resolveSocketTransports` chọn `["polling"]` khi cùng
+    // origin (qua rewrite) và `["polling","websocket"]` khi nối thẳng backend.
+    transports: resolveSocketTransports(realtimeSocketUrl),
     // Xem `socket-config.ts`: true khi nối trực tiếp backend, false khi qua
     // rewrite cùng origin (Vercel 308 làm mất header Upgrade).
     addTrailingSlash: shouldAddTrailingSlash(realtimeSocketUrl),

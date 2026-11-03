@@ -101,8 +101,30 @@ jobs:
             fi
             node_modules/.bin/prisma generate
 
-            # Restart PM2
-            pm2 restart be-api || pm2 start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"
+            # Tìm pm2. `appleboy/ssh-action` chạy shell non-login nên KHÔNG nạp
+            # ~/.bashrc/.profile → nvm và thư mục npm-global thường không có
+            # trong PATH, dù pm2 đã được cài. Dò lần lượt các vị trí phổ biến.
+            if [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+              . "${NVM_DIR:-$HOME/.nvm}/nvm.sh" >/dev/null 2>&1 || true
+            fi
+            PM2_BIN="$(command -v pm2 2>/dev/null || true)"
+            if [ -z "$PM2_BIN" ]; then
+              npm_global_bin="$(npm prefix -g 2>/dev/null || true)/bin"
+              for candidate in \
+                "$npm_global_bin/pm2" \
+                "$HOME"/.nvm/versions/node/*/bin/pm2 \
+                "$HOME/.local/bin/pm2" \
+                "/usr/local/bin/pm2" \
+                "/usr/bin/pm2"; do
+                if [ -x "$candidate" ]; then PM2_BIN="$candidate"; break; fi
+              done
+            fi
+            if [ -z "$PM2_BIN" ]; then
+              echo "❌ Không tìm thấy pm2 trên VPS. Cài bằng: npm i -g pm2 (rồi chạy lại job)."
+              exit 1
+            fi
+            echo "Dùng pm2: $PM2_BIN"
+            "$PM2_BIN" restart be-api || "$PM2_BIN" start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"
 
             # Fail sớm nếu bundle mới không thực sự được nạp: route mới phải
             # trả 401 do guard auth; 404 nghĩa là vẫn chạy code cũ.

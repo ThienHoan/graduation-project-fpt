@@ -6,6 +6,31 @@
 
 export type SocketNamespace = "/chat" | "/realtime";
 
+export type SocketTransport = "polling" | "websocket";
+
+/**
+ * Transport Engine.IO phù hợp với URL đích.
+ *
+ * - **Cùng origin** (đi qua rewrite `/socket.io/*` của Vercel/Next.js): rewrite
+ *   chỉ proxy được HTTP polling, KHÔNG forward được WebSocket Upgrade → chỉ
+ *   dùng `["polling"]`, tránh log lỗi
+ *   `wss://<origin>/socket.io?... failed` và vòng probe vô ích mỗi lần reconnect.
+ * - **Khác origin** (nối thẳng backend, vd dev `localhost:3000` → `:4000`): dùng
+ *   `["polling", "websocket"]` để tận dụng WebSocket.
+ *
+ * `pageOrigin` chỉ dùng cho test; mặc định `window.location.origin`.
+ */
+export function resolveSocketTransports(url: string, pageOrigin?: string): SocketTransport[] {
+  const origin =
+    pageOrigin ?? (typeof window !== "undefined" ? window.location.origin : undefined);
+  if (!origin) return ["polling", "websocket"];
+  try {
+    return new URL(url, origin).origin === origin ? ["polling"] : ["polling", "websocket"];
+  } catch {
+    return ["polling", "websocket"];
+  }
+}
+
 /**
  * URL đầy đủ cho một namespace Socket.IO.
  *
