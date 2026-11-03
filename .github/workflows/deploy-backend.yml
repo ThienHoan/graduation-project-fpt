@@ -45,11 +45,15 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          # Tar chứa đường dẫn "backend/dist/...". strip_components: 2 bỏ đi
+          # "backend/dist" nên đích phải trỏ thẳng vào thư mục `dist` của app.
+          # Trước đây target là thư mục gốc backend ⇒ file bị đổ ra
+          # `backend/main.js`, còn `backend/dist/main.js` vẫn là bản build cũ,
+          # nên PM2 restart xong vẫn chạy code cũ (thiếu route /chat/faq).
           source: "backend/dist"
-          target: "~/graduation-project-fpt/backend"
-          # backend/dist -> bỏ 1 cấp "backend" để file nằm ở ~/graduation-project-fpt/backend/dist/
-          # (strip 2 sẽ đổ thẳng file build vào backend/ khiến PM2 vẫn chạy dist cũ)
-          strip_components: 1
+          target: "~/graduation-project-fpt/backend/dist"
+          strip_components: 2
+          rm: true
 
       - name: Restart Backend on VPS via SSH
         uses: appleboy/ssh-action@v1
@@ -66,13 +70,26 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            # Install production dependencies only
-            pnpm install --prod --frozen-lockfile
+            # Install production dependencies only.
+            # CI=true để pnpm không hỏi tương tác khi cần purge node_modules
+            # (không có TTY qua SSH → mặc định pnpm abort với
+            # ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+            CI=true pnpm install --prod --frozen-lockfile --config.confirmModulesPurge=false
 
             # Generate Prisma client on VPS
             npx prisma generate
 
             # Restart PM2
             pm2 restart be-api || pm2 start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"
+
+            # Fail sớm nếu bundle mới không thực sự được nạp: route mới phải
+            # trả 401 do guard auth; 404 nghĩa là vẫn chạy code cũ.
+            sleep 3
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:4000/api/chat/faq || true)
+            echo "GET /api/chat/faq -> $code"
+            if [ "$code" = "404" ] || [ -z "$code" ]; then
+              echo "❌ Bundle mới chưa được nạp (route /api/chat/faq = $code)."
+              exit 1
+            fi
 
             echo "✅ Deploy complete"

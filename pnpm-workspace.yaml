@@ -2,6 +2,18 @@ packages:
   - frontend
   - backend
 
+# Mặc định pnpm hỏi tương tác trước khi xoá `node_modules` khi thư mục này được
+# tạo bởi pnpm version/registry khác. Trên runner deploy không có TTY (Drone SSH,
+# Docker, Dokploy…) nên pnpm abort và build chết:
+#
+#   [ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules
+#   directory due to no TTY
+#
+# Đặt false để pnpm tự xoá và cài lại. `node_modules` là thư mục sinh ra được,
+# không chứa dữ liệu cần giữ, nên đây là hành vi đúng cho CI/deploy.
+# (Từ pnpm v10.6 cấu hình không-auth phải đặt ở đây, KHÔNG phải .npmrc.)
+confirmModulesPurge: false
+
 allowBuilds:
   '@nestjs/core': true
   '@prisma/client': true
