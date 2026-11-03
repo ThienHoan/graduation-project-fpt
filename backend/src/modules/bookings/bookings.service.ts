@@ -394,6 +394,20 @@ export class BookingsService {
       });
     }
 
+    // Tiền thuê gốc của trang phục (không bao gồm phụ kiện thuê thêm)
+    const garmentRentalSubtotal = subtotal;
+
+    // Ưu đãi thành viên: Giảm trực tiếp trên TIỀN THUÊ trang phục (Basic: 0%, Plus: 5%, Premium: 10%)
+    // Tiền cọc (depositTotal) GIỮ NGUYÊN 100% để bảo đảm an toàn tài sản cho cổ phục.
+    const customerAccount = await this.prisma.userAccount.findUnique({
+      where: { id: customerId },
+    });
+    const loyaltyTier = (customerAccount as { loyaltyTier?: string } | null)?.loyaltyTier;
+    const memberDiscountRate =
+      loyaltyTier === "premium" ? 0.10 :
+      loyaltyTier === "plus" ? 0.05 : 0;
+    const memberDiscountAmount = Math.round(garmentRentalSubtotal * memberDiscountRate);
+
     const voucherCode = dto.voucherCode?.trim();
     if (voucherCode && !this.vouchers) {
       throw new BadRequestException("Hệ thống voucher chưa sẵn sàng.");
@@ -519,8 +533,26 @@ export class BookingsService {
         const voucherEval = voucherCode
           ? await this.vouchers!.evaluate(tx, voucherCode, customerId, voucherLines)
           : null;
-        const discountTotal = voucherEval?.discountAmount ?? 0;
-        const rentalTotal = subtotal - discountTotal;
+        const voucherDiscount = voucherEval?.discountAmount ?? 0;
+
+        // So sánh ưu đãi: Chọn mức giảm tối ưu nhất cho khách hàng, không cộng dồn chồng chéo
+        let discountTotal = 0;
+        let appliedVoucher = null;
+        let discountReasonNote: string | null = null;
+
+        if (voucherEval && voucherDiscount >= memberDiscountAmount) {
+          // Voucher giảm nhiều hơn hoặc bằng ưu đãi thành viên -> Dùng voucher
+          discountTotal = voucherDiscount;
+          appliedVoucher = voucherEval;
+        } else if (memberDiscountAmount > 0) {
+          // Ưu đãi thành viên tốt hơn -> Dùng ưu đãi hạng, bảo lưu voucher cho khách
+          discountTotal = memberDiscountAmount;
+          appliedVoucher = null;
+          const tierLabel = loyaltyTier === "premium" ? "Premium (giảm 10%)" : "Plus (giảm 5%)";
+          discountReasonNote = `Ưu đãi thành viên ${tierLabel}: -${memberDiscountAmount.toLocaleString("vi-VN")}đ`;
+        }
+
+        const rentalTotal = Math.max(0, subtotal - discountTotal);
 
         const created = await tx.booking.create({
           data: {
@@ -528,8 +560,8 @@ export class BookingsService {
             status: BookingStatus.pending_confirmation,
             subtotal,
             discountTotal,
-            voucherId: voucherEval?.voucher.id ?? null,
-            voucherCode: voucherEval?.voucher.code ?? null,
+            voucherId: appliedVoucher?.voucher.id ?? null,
+            voucherCode: appliedVoucher?.voucher.code ?? null,
             rentalStartDate: startDay,
             rentalEndDate: endDay,
             pickupMethod: dto.pickupMethod ?? "store_pickup",
@@ -539,6 +571,7 @@ export class BookingsService {
             shippingFee,
             note: [
               dto.note,
+              discountReasonNote,
               shippingFee ? `Phí giao hàng: ${shippingFee.toLocaleString("vi-VN")} VND` : null,
             ]
               .filter(Boolean)
@@ -600,8 +633,8 @@ export class BookingsService {
             });
           }
         }
-        if (voucherEval) {
-          await this.vouchers!.consume(tx, voucherEval, customerId, created.id);
+        if (appliedVoucher) {
+          await this.vouchers!.consume(tx, appliedVoucher, customerId, created.id);
         }
         return created;
       });

@@ -15,12 +15,14 @@ import {
   getRentalQuote,
   normalizePickupMethod,
   validateVoucher,
+  getMyLoyalty,
   type CustomerAddress,
   type GarmentAccessoryLink,
   type PickupMethod,
   type RentalQuote,
   type VoucherPublic,
   type VoucherValidation,
+  type LoyaltyInfo,
 } from "@/lib/api";
 import { getCart, clearCart, type CartItem } from "@/lib/cart";
 import {
@@ -43,6 +45,9 @@ import {
   ArrowRight,
   Clock,
   ShieldAlert,
+  Award,
+  Crown,
+  Percent,
 } from "lucide-react";
 
 function formatVND(amount: number) {
@@ -205,10 +210,39 @@ function BookingReviewInner() {
     }
   }
 
-  const rentalTotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0) + accessoryTotal;
-  const discountTotal = voucherResult?.discountAmount ?? 0;
+  // Hạng thành viên Loyalty — tự động lấy quyền lợi giảm giá tiền thuê
+  const [loyalty, setLoyalty] = useState<LoyaltyInfo | null>(null);
+  useEffect(() => {
+    getMyLoyalty()
+      .then((res) => {
+        if (res.success && res.data) setLoyalty(res.data);
+      })
+      .catch(() => {});
+  }, []);
+
+  const garmentRentalSubtotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0);
+  const rentalTotal = garmentRentalSubtotal + accessoryTotal;
+
+  // Ưu đãi thành viên: Plus 5%, Premium 10% trên tiền thuê trang phục
+  const memberDiscountRate =
+    loyalty?.tier === "premium" ? 0.10 :
+    loyalty?.tier === "plus" ? 0.05 : 0;
+  const memberDiscountAmount = Math.round(garmentRentalSubtotal * memberDiscountRate);
+
+  // So sánh ưu đãi: Chọn mức giảm tối ưu nhất (Voucher vs Hạng thành viên)
+  const voucherDiscount = voucherResult?.discountAmount ?? 0;
+  const isUsingVoucher = Boolean(voucherResult && voucherDiscount >= memberDiscountAmount);
+  const isUsingMemberDiscount = Boolean(
+    memberDiscountAmount > 0 && (!voucherResult || memberDiscountAmount > voucherDiscount),
+  );
+  const effectiveDiscount = isUsingVoucher
+    ? voucherDiscount
+    : isUsingMemberDiscount
+    ? memberDiscountAmount
+    : 0;
+
   const depositTotal = cartItems.reduce((sum, item) => sum + item.depositAmount, 0);
-  const grandTotal = rentalTotal - discountTotal + depositTotal + shippingFee;
+  const grandTotal = Math.max(0, rentalTotal - effectiveDiscount) + depositTotal + shippingFee;
 
   useEffect(() => {
     if (pickupMethod !== "delivery" || !deliveryAddressId) {
@@ -247,7 +281,7 @@ function BookingReviewInner() {
       deliveryAddressId: pickupMethod === "delivery" ? deliveryAddressId : undefined,
       shippingFee: pickupMethod === "delivery" && shippingFee > 0 ? shippingFee : undefined,
       paymentMethod,
-      voucherCode: voucherResult?.voucher.code,
+      voucherCode: isUsingVoucher ? voucherResult?.voucher.code : undefined,
       accessories: flattenAccessorySelection(accessorySelection),
     });
     if (!res.success || !res.data) {
@@ -468,47 +502,142 @@ function BookingReviewInner() {
         </div>
 
         <aside className="xl:col-span-5 xl:sticky xl:top-28">
-          <section className="rounded-xl border border-sand bg-white p-8 shadow-md">
-            <h2 className="border-b border-sand pb-4 font-display text-3xl text-ink">Tóm tắt thanh toán</h2>
-            <div className="mt-6 space-y-3 text-sm">
+          <section className="rounded-2xl border border-sand bg-white p-6 sm:p-8 shadow-md">
+            <h2 className="border-b border-sand pb-4 font-serif text-2xl font-bold text-ink">
+              Tóm tắt thanh toán
+            </h2>
+
+            {/* Banner Hạng Thành Viên */}
+            {loyalty && loyalty.tier !== "basic" && (
+              <div
+                className={`mt-4 rounded-xl border p-3.5 text-xs ${
+                  loyalty.tier === "premium"
+                    ? "border-amber-300 bg-amber-50/90 text-amber-950"
+                    : "border-emerald-300 bg-emerald-50/90 text-emerald-950"
+                }`}
+              >
+                <div className="flex items-center justify-between font-bold">
+                  <div className="flex items-center gap-1.5">
+                    {loyalty.tier === "premium" ? (
+                      <Crown className="h-4 w-4 text-amber-600 shrink-0" />
+                    ) : (
+                      <Award className="h-4 w-4 text-emerald-600 shrink-0" />
+                    )}
+                    <span>
+                      Hạng {loyalty.tier === "premium" ? "Premium" : "Plus"} (Giảm {Math.round(memberDiscountRate * 100)}% tiền thuê)
+                    </span>
+                  </div>
+                  <span className="rounded-md bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 shadow-2xs">
+                    Tiết kiệm {formatVND(memberDiscountAmount)}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-stone-600">
+                  {isUsingMemberDiscount
+                    ? `Đã tự động áp dụng giảm ${Math.round(memberDiscountRate * 100)}% trực tiếp vào tiền thuê trang phục bên dưới.`
+                    : "Đang ưu tiên áp dụng voucher có mức giảm cao hơn cho đơn này."}
+                </p>
+              </div>
+            )}
+
+            {/* ── Khối 1: Chi tiết tiền thuê trang phục & phụ kiện ── */}
+            <div className="mt-6 rounded-xl border border-sand/70 bg-stone-50/50 p-4 space-y-3 text-xs sm:text-sm">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400 block mb-1">
+                Chi tiết tiền thuê ({days} ngày)
+              </span>
+
               {cartItems.map((item) => (
-                <div key={item.garmentSizeId} className="flex items-center justify-between text-stone-500">
-                  <span className="truncate max-w-[180px]">{item.name}</span>
-                  <span>{formatVND(lineTotal(item))}</span>
+                <div key={item.garmentSizeId} className="flex items-center justify-between text-stone-600">
+                  <span className="truncate max-w-[200px] font-medium">
+                    {item.name} {item.sizeLabel ? `(${item.sizeLabel})` : ""}
+                  </span>
+                  <span className="tabular-nums font-medium text-stone-700">{formatVND(lineTotal(item))}</span>
                 </div>
               ))}
-              <div className="flex items-center justify-between border-t border-sand pt-3">
-                <span className="text-stone-500">Tiền thuê ({days} ngày)</span>
-                <span className="text-ink">{formatVND(rentalTotal)}</span>
-              </div>
+
               {selectedAccessoryCount > 0 && (
-                <div className="flex items-center justify-between">
-                  <span className="text-stone-500">Phụ kiện thuê kèm ({selectedAccessoryCount})</span>
-                  <span className={accessoryTotal === 0 ? "font-medium text-jade" : "text-ink"}>
+                <div className="flex items-center justify-between text-stone-600 pt-1">
+                  <span>Phụ kiện thuê kèm ({selectedAccessoryCount} món)</span>
+                  <span className={`tabular-nums font-medium ${accessoryTotal === 0 ? "text-jade" : "text-stone-700"}`}>
                     {accessoryTotal === 0 ? "Miễn phí" : `+${formatVND(accessoryTotal)}`}
                   </span>
                 </div>
               )}
-              {discountTotal > 0 && (
-                <div className="flex items-center justify-between">
-                  <span className="text-stone-500">Voucher {voucherResult?.voucher.code}</span>
-                  <span className="font-medium text-jade">-{formatVND(discountTotal)}</span>
+
+              <div className="flex items-center justify-between border-t border-dashed border-sand pt-2 text-stone-500">
+                <span>Tạm tính tiền thuê gốc</span>
+                <span className="tabular-nums font-medium">{formatVND(rentalTotal)}</span>
+              </div>
+
+              {/* Dòng giảm giá thành viên */}
+              {isUsingMemberDiscount && (
+                <div className="flex items-center justify-between rounded-lg bg-emerald-100/70 px-2.5 py-1.5 text-xs text-emerald-900">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
+                    <span>Ưu đãi thành viên {loyalty?.tier === "premium" ? "Premium (-10%)" : "Plus (-5%)"}</span>
+                  </span>
+                  <span className="tabular-nums font-bold text-emerald-700">-{formatVND(memberDiscountAmount)}</span>
                 </div>
               )}
+
+              {/* Dòng giảm giá Voucher */}
+              {isUsingVoucher && (
+                <div className="flex items-center justify-between rounded-lg bg-emerald-100/70 px-2.5 py-1.5 text-xs text-emerald-900">
+                  <span className="font-medium">Mã giảm giá ({voucherResult?.voucher.code})</span>
+                  <span className="tabular-nums font-bold text-emerald-700">-{formatVND(voucherDiscount)}</span>
+                </div>
+              )}
+
+              {/* Tiền thuê thực trả */}
+              <div className="flex items-center justify-between border-t border-sand pt-2 text-sm">
+                <span className="font-semibold text-ink">Tiền thuê thực trả</span>
+                <div className="text-right">
+                  {effectiveDiscount > 0 && (
+                    <span className="text-[11px] text-stone-400 line-through mr-1.5 tabular-nums">
+                      {formatVND(rentalTotal)}
+                    </span>
+                  )}
+                  <span className="tabular-nums font-bold text-lotus text-base">
+                    {formatVND(Math.max(0, rentalTotal - effectiveDiscount))}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Dịch vụ làm sạch & Giao hàng */}
+            <div className="mt-3 space-y-2 px-1 text-xs text-stone-500">
               <div className="flex items-center justify-between">
-                <span className="text-stone-500">Làm sạch chuyên biệt</span>
+                <span>Dịch vụ giặt ủi & làm sạch chuyên sâu</span>
                 <span className="font-medium text-jade">Đã bao gồm</span>
               </div>
               {shippingFee > 0 && (
                 <div className="flex items-center justify-between">
-                  <span className="text-stone-500">Phí giao hàng</span>
-                  <span className="text-ink">{formatVND(shippingFee)}</span>
+                  <span>Phí giao nhận tận nơi</span>
+                  <span className="tabular-nums font-medium text-ink">{formatVND(shippingFee)}</span>
                 </div>
               )}
             </div>
 
-            <div className="mt-6 border-t border-sand pt-6">
-              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">Mã giảm giá</h3>
+            {/* ── Khối 2: Tiền cọc bảo đảm tài sản ── */}
+            <div className="mt-5 rounded-xl border border-amber-300/60 bg-amber-50/40 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-amber-950">
+                  <ShieldCheck className="h-4 w-4 text-amber-700 shrink-0" />
+                  <span>Tiền cọc bảo đảm trang phục</span>
+                </span>
+                <span className="tabular-nums font-bold text-amber-900 text-sm sm:text-base">
+                  {formatVND(depositTotal)}
+                </span>
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-amber-800/80">
+                Khoản cọc bảo đảm theo giá trị niêm yết — <strong>được hoàn lại 100%</strong> sau khi quý khách trả đồ nguyên vẹn.
+              </p>
+            </div>
+
+            {/* ── Khối 3: Mã giảm giá / Voucher ── */}
+            <div className="mt-6 border-t border-sand pt-5">
+              <h3 className="mb-2.5 text-xs font-bold uppercase tracking-[0.16em] text-stone-500">
+                Mã giảm giá & Voucher
+              </h3>
               <div className="flex gap-2">
                 <input
                   value={voucherInput}
@@ -518,13 +647,13 @@ function BookingReviewInner() {
                   }}
                   onKeyDown={(e) => { if (e.key === "Enter") applyVoucher(); }}
                   placeholder="Nhập mã voucher"
-                  className="min-w-0 flex-1 rounded-lg border border-sand px-3 py-2 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-lotus/30"
+                  className="min-w-0 flex-1 rounded-xl border border-sand px-3 py-2 text-xs sm:text-sm uppercase focus:outline-none focus:ring-2 focus:ring-lotus/30"
                 />
                 {voucherResult ? (
                   <button
                     type="button"
                     onClick={() => { setVoucherResult(null); setVoucherInput(""); }}
-                    className="rounded-lg border border-sand px-4 py-2 text-sm font-semibold text-stone-600 hover:border-lotus hover:text-lotus"
+                    className="rounded-xl border border-sand px-3.5 py-2 text-xs font-semibold text-stone-600 hover:border-lotus hover:text-lotus transition"
                   >
                     Bỏ
                   </button>
@@ -533,7 +662,7 @@ function BookingReviewInner() {
                     type="button"
                     disabled={!voucherInput.trim() || voucherLoading}
                     onClick={() => applyVoucher()}
-                    className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                    className="rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-white disabled:opacity-40 hover:bg-stone-800 transition"
                   >
                     {voucherLoading ? "..." : "Áp dụng"}
                   </button>
@@ -541,40 +670,71 @@ function BookingReviewInner() {
               </div>
               {voucherError && <p className="mt-2 text-xs text-red-500">{voucherError}</p>}
               {voucherResult && (
-                <p className="mt-2 text-xs text-jade">
-                  Đã áp dụng “{voucherResult.voucher.name}” — giảm {formatVND(voucherResult.discountAmount)}
-                </p>
+                <div
+                  className={`mt-2.5 rounded-xl border p-2.5 text-xs ${
+                    isUsingVoucher
+                      ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
+                      : "border-amber-200 bg-amber-50/80 text-amber-900"
+                  }`}
+                >
+                  {isUsingVoucher ? (
+                    <p className="font-medium text-emerald-800">
+                      ✓ Đã áp dụng mã “{voucherResult.voucher.name}” — giảm {formatVND(voucherDiscount)}
+                      {memberDiscountAmount > 0 && " (mức ưu đãi cao hơn hạng thành viên)"}
+                    </p>
+                  ) : (
+                    <p className="leading-relaxed">
+                      ℹ Mã “{voucherResult.voucher.code}” giảm {formatVND(voucherDiscount)}, thấp hơn mức ưu đãi hạng {loyalty?.tier?.toUpperCase()} ({formatVND(memberDiscountAmount)}). Hệ thống tự động áp dụng mức ưu đãi tốt nhất cho bạn và bảo lưu mã voucher này.
+                    </p>
+                  )}
+                </div>
               )}
               {!voucherResult && availableVouchers.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {availableVouchers.slice(0, 4).map((v) => (
-                    <button
-                      key={v.code}
-                      type="button"
-                      onClick={() => applyVoucher(v.code)}
-                      title={v.description ?? v.name}
-                      className="rounded-full border border-dashed border-lotus/50 px-3 py-1 text-xs font-semibold text-lotus hover:bg-lotus/5"
-                    >
-                      {v.code} ·{" "}
-                      {v.discountType === "percentage" ? `-${v.discountValue}%` : `-${formatVND(v.discountValue)}`}
-                      {v.minOrderValue > 0 ? ` (đơn từ ${formatVND(v.minOrderValue)})` : ""}
-                    </button>
-                  ))}
+                <div className="mt-3">
+                  <span className="text-[11px] text-stone-400 block mb-1.5 font-medium">Voucher khả dụng:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {availableVouchers.slice(0, 4).map((v) => (
+                      <button
+                        key={v.code}
+                        type="button"
+                        onClick={() => applyVoucher(v.code)}
+                        title={v.description ?? v.name}
+                        className="rounded-lg border border-dashed border-lotus/40 bg-lotus/5 px-2.5 py-1 text-[11px] font-semibold text-lotus hover:bg-lotus/10 transition"
+                      >
+                        {v.code} ·{" "}
+                        {v.discountType === "percentage" ? `-${v.discountValue}%` : `-${formatVND(v.discountValue)}`}
+                        {v.minOrderValue > 0 ? ` (đơn từ ${formatVND(v.minOrderValue)})` : ""}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="mt-8 rounded-xl border border-antique/40 bg-antique/10 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <span className="flex items-center gap-1.5 text-sm font-semibold text-bronze"><ShieldCheck className="h-4 w-4" />Tiền cọc bảo đảm</span>
-                <span className="font-medium text-bronze">{formatVND(depositTotal)}</span>
+            {/* ── Khối 4: Tổng thanh toán cuối cùng ── */}
+            <div className="mt-6 border-t-2 border-ink/10 pt-5">
+              <div className="flex items-baseline justify-between gap-4">
+                <div>
+                  <span className="font-bold text-ink text-base">Tổng thanh toán</span>
+                  <span className="block text-[11px] text-stone-400 mt-0.5">
+                    (Tiền thuê thực trả + Tiền cọc hoàn lại)
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="font-sans font-extrabold text-3xl sm:text-4xl text-lotus tracking-tight tabular-nums">
+                    {formatVND(grandTotal)}
+                  </span>
+                </div>
               </div>
-              <p className="mt-2 text-xs leading-6 text-bronze">Hoàn lại sau khi nhân viên kiểm tra đạt yêu cầu.</p>
-            </div>
 
-            <div className="mt-8 border-t border-sand pt-6">
-              <div className="mb-2 flex items-end justify-between gap-4"><span className="text-lg text-ink">Tổng thanh toán</span><span className="font-display text-4xl text-lotus">{formatVND(grandTotal)}</span></div>
-              <p className="text-right text-xs text-stone-500">Gồm tiền thuê{shippingFee > 0 ? ", phí giao hàng" : ""} và tiền cọc hoàn lại</p>
+              {/* Tóm tắt phép tính công khai */}
+              <div className="mt-3 rounded-lg bg-sand/20 px-3 py-2 text-[11px] text-stone-500 flex flex-wrap items-center justify-between gap-1">
+                <span>Phân rã thanh toán:</span>
+                <span className="tabular-nums font-medium text-stone-700">
+                  Thuê {formatVND(Math.max(0, rentalTotal - effectiveDiscount))} + Cọc {formatVND(depositTotal)}
+                  {shippingFee > 0 ? ` + Ship ${formatVND(shippingFee)}` : ""}
+                </span>
+              </div>
             </div>
 
             <div className="mt-8 border-t border-sand pt-6">

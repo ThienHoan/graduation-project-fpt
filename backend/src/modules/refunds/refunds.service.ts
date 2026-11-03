@@ -4,6 +4,7 @@ import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { LoyaltyService } from "../loyalty/loyalty.service";
 import type { CreateRefundDto } from "./dto/create-refund.dto";
 import type { UpdateRefundDetailsDto } from "./dto/update-refund-details.dto";
 import type { UpdateRefundStatusDto } from "./dto/update-refund.dto";
@@ -24,6 +25,7 @@ export class RefundsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly realtime: RealtimeService,
+    private readonly loyaltyService: LoyaltyService,
   ) {}
 
   async calculate(bookingId: string) {
@@ -171,6 +173,9 @@ export class RefundsService {
         data: { status: BookingStatus.completed },
       });
       if (claimed.count !== 1) throw new ConflictException("Booking was already processed.");
+
+      const earnableTotal = Math.max(0, Number(booking.rentalTotal) - Number(booking.discountTotal ?? 0));
+      await this.loyaltyService.awardPointsForBooking(tx, bookingId, booking.customerId, earnableTotal);
 
       await tx.bookingStatusHistory.create({
         data: {
@@ -338,6 +343,9 @@ export class RefundsService {
           data: { status: BookingStatus.completed },
         });
         if (claimedBooking.count === 1) {
+          const earnableTotal = Math.max(0, Number(refund.booking.rentalTotal) - Number(refund.booking.discountTotal ?? 0));
+          await this.loyaltyService.awardPointsForBooking(tx, refund.bookingId, refund.booking.customerId, earnableTotal);
+
           await tx.bookingStatusHistory.create({
             data: {
               bookingId: refund.bookingId,

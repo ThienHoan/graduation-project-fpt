@@ -16,10 +16,12 @@ import {
   MapPin,
   Plus,
   LogOut,
+  Award,
 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard/customer", label: "Đơn thuê", icon: Calendar },
+  { href: "/dashboard/customer/loyalty", label: "Điểm thưởng", icon: Award },
   { href: "/dashboard/customer/notifications", label: "Thông báo", icon: Bell },
   { href: "/try-on", label: "Thử đồ AI", icon: Sparkles },
   { href: "/dashboard/customer/measurements", label: "Số đo", icon: Ruler },

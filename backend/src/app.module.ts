@@ -27,6 +27,7 @@ import { ReviewsModule } from "./modules/reviews/reviews.module";
 import { VouchersModule } from "./modules/vouchers/vouchers.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { RedisModule } from "./modules/redis/redis.module";
+import { LoyaltyModule } from "./modules/loyalty/loyalty.module";
 import { RedisService } from "./modules/redis/redis.service";
 
 import { WishlistModule } from "./modules/wishlist/wishlist.module";
@@ -77,6 +78,7 @@ import { WishlistModule } from "./modules/wishlist/wishlist.module";
     ReviewsModule,
     VouchersModule,
     AnalyticsModule,
+    LoyaltyModule,
     WishlistModule,
   ],
   providers: [

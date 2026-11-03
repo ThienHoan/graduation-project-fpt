@@ -65,8 +65,12 @@ describe("RefundsService", () => {
       refundChanged: vi.fn(),
     };
 
-    const service = new RefundsService(prisma as any, notifications as any, realtime as any);
-    return { service, tx, defaultBooking, realtime };
+    const loyalty = {
+      awardPointsForBooking: vi.fn().mockResolvedValue({ pointsEarned: 100 }),
+    };
+
+    const service = new RefundsService(prisma as any, notifications as any, realtime as any, loyalty as any);
+    return { service, tx, defaultBooking, realtime, loyalty };
   }
 
   describe("calculate", () => {
