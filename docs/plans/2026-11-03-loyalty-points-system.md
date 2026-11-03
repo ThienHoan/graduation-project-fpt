@@ -28,12 +28,12 @@
 
 -- Enum hạng thành viên
 DO $$ BEGIN
-  CREATE TYPE "loyalty_tier" AS ENUM ('bronze', 'silver', 'gold');
+  CREATE TYPE "loyalty_tier" AS ENUM ('Basic', 'silver', 'gold');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Thêm cột tier + tổng điểm vào user_accounts
 ALTER TABLE "user_accounts"
-  ADD COLUMN IF NOT EXISTS "loyalty_tier"      "loyalty_tier" NOT NULL DEFAULT 'bronze',
+  ADD COLUMN IF NOT EXISTS "loyalty_tier"      "loyalty_tier" NOT NULL DEFAULT 'Basic',
   ADD COLUMN IF NOT EXISTS "loyalty_points"    INTEGER NOT NULL DEFAULT 0 CHECK ("loyalty_points" >= 0),
   ADD COLUMN IF NOT EXISTS "loyalty_points_lifetime" INTEGER NOT NULL DEFAULT 0 CHECK ("loyalty_points_lifetime" >= 0);
 
