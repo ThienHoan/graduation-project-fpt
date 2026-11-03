@@ -8,7 +8,7 @@ import { AppRole, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth-user";
-import { ADMIN_SETTING_DEFINITIONS, type AdminSettingDefinition } from "./admin.constants";
+import { ADMIN_SETTING_DEFINITIONS, ADMIN_SETTING_KEYS, type AdminSettingDefinition } from "./admin.constants";
 import { AdminAuditLogQueryDto } from "./dto/admin-audit-log-query.dto";
 import { AdminUserQueryDto } from "./dto/admin-user-query.dto";
 import { UpdateAdminUserDto } from "./dto/update-admin-user.dto";
@@ -363,8 +363,22 @@ export class AdminService {
     const limit = query.limit ?? 20;
     const where: Prisma.AuditLogWhereInput = {};
 
+    const and: Prisma.AuditLogWhereInput[] = [];
+
     if (query.action && query.action !== "all") {
-      where.action = query.action;
+      and.push({ action: query.action });
+    }
+
+    if (query.group === "admin") {
+      and.push({ action: { startsWith: "ADMIN_" } });
+    } else if (query.group === "notification") {
+      and.push({ action: { startsWith: "notification." } });
+    } else if (query.group === "other") {
+      and.push({ NOT: [{ action: { startsWith: "ADMIN_" } }, { action: { startsWith: "notification." } }] });
+    }
+
+    if (and.length > 0) {
+      where.AND = and;
     }
 
     if (query.entityType) {
@@ -406,12 +420,24 @@ export class AdminService {
     });
   }
 
+  async listAuditLogActions() {
+    const rows = await this.prisma.auditLog.groupBy({
+      by: ["action"],
+      _count: { _all: true },
+      orderBy: { _count: { action: "desc" } },
+    });
+    return ok(rows.map((row) => ({ action: row.action, count: row._count._all })));
+  }
+
   async listSettings() {
     const stored = await this.prisma.systemSetting.findMany();
     return ok(this.serializeSettings(stored));
   }
 
   async updateSetting(key: string, actor: AuthenticatedUser, dto: UpdateSystemSettingDto) {
+    if (!ADMIN_SETTING_KEYS.has(key)) {
+      throw new BadRequestException(`Thiết lập '${key}' không được hỗ trợ.`);
+    }
     const definition = this.getSettingDefinition(key);
     this.validateSettingValue(definition, dto.value);
 
@@ -478,7 +504,7 @@ export class AdminService {
       action: log.action,
       entityType: log.entityType,
       entityId: log.entityId,
-      metadata: log.metadata,
+      metadata: this.redactAuditMetadata(log.action, log.metadata),
       actorId: log.actorId,
       actorName,
       actorEmail: log.actor?.email ?? null,
@@ -490,22 +516,9 @@ export class AdminService {
 
   private serializeSettings(settings: { key: string; value: Prisma.JsonValue; updatedAt: Date }[]): AdminSettingEntry[] {
     const storedMap = new Map(settings.map((setting) => [setting.key, setting] as const));
-    const knownKeys = new Set(ADMIN_SETTING_DEFINITIONS.map((item) => item.key));
 
     const fromDefinitions = ADMIN_SETTING_DEFINITIONS.map((definition) => this.serializeSettingFromDefinition(definition, storedMap.get(definition.key) ?? null));
-    const extras = settings
-      .filter((setting) => !knownKeys.has(setting.key))
-      .map((setting) => ({
-        key: setting.key,
-        label: this.humanizeSettingKey(setting.key),
-        description: "Thiết lập tuỳ chỉnh đã được lưu trong hệ thống.",
-        kind: "json" as const,
-        value: setting.value,
-        updatedAt: setting.updatedAt.toISOString(),
-        isDefault: false,
-      }));
-
-    return [...fromDefinitions, ...extras].sort((a, b) => a.label.localeCompare(b.label, "vi"));
+    return fromDefinitions.sort((a, b) => a.label.localeCompare(b.label, "vi"));
   }
 
   private serializeSetting(setting: { key: string; value: Prisma.JsonValue; updatedAt: Date }): AdminSettingEntry {
@@ -574,6 +587,12 @@ export class AdminService {
       }
       return;
     }
+
+    if (definition.key === "pricing_fail_fast_per_round") {
+      if (typeof this.extractValueField(value) !== "boolean") {
+        throw new BadRequestException("Thiết lập 'pricing_fail_fast_per_round' cần giá trị bật/tắt.");
+      }
+    }
   }
 
   private extractValueField(value: unknown) {
@@ -581,6 +600,18 @@ export class AdminService {
       return (value as { value: unknown }).value;
     }
     return value;
+  }
+
+  /**
+   * Older builds let the portal save arbitrary keys (API keys, gateway secrets) into system settings.
+   * Never echo the stored value of an undefined setting back to the browser.
+   */
+  private redactAuditMetadata(action: string, metadata: Prisma.JsonValue | null): Prisma.JsonValue | null {
+    if (action !== "ADMIN_UPDATE_SETTING") return metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+    const meta = metadata as Record<string, Prisma.JsonValue>;
+    if (typeof meta.key === "string" && ADMIN_SETTING_KEYS.has(meta.key)) return metadata;
+    return { key: typeof meta.key === "string" ? meta.key : null, value: "[đã ẩn]" };
   }
 
   private buildAuditSummary(action: string, entityType: string, metadata: Prisma.JsonValue | null) {
