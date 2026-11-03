@@ -17,7 +17,23 @@ export type SocketNamespace = "/chat" | "/realtime";
  *
  * Phần `/chat` / `/realtime` chỉ là namespace; Engine.IO luôn mở ở `/socket.io`.
  */
-export function resolveSocketUrl(namespace: SocketNamespace): string {
+export function resolveSocketUrl(namespace: SocketNamespace, pageOrigin?: string): string {
+  const resolved = resolveSocketUrlFromEnv(namespace);
+
+  // Trang chạy HTTPS mà URL resolve ra `http://host` → trình duyệt chặn Mixed
+  // Content. Thay vì tin tưởng env (dễ trỏ nhầm IP http://...:4000 trên Vercel),
+  // lùi về URL tương đối cùng origin để đi qua rewrite `/socket.io/*` của
+  // Next.js/Vercel. Localhost/`127.0.0.1` được miễn vì trình duyệt coi là
+  // "potentially trustworthy", không bị Mixed Content.
+  if (isInsecureMixedContent(resolved, pageOrigin)) {
+    return namespace;
+  }
+
+  return resolved;
+}
+
+/** Từ một biến môi trường (không guard Mixed Content). */
+function resolveSocketUrlFromEnv(namespace: SocketNamespace): string {
   const explicit = process.env.NEXT_PUBLIC_SOCKET_URL?.trim();
   if (explicit) {
     const clean = explicit.replace(/\/$/, "");
@@ -31,6 +47,35 @@ export function resolveSocketUrl(namespace: SocketNamespace): string {
   }
 
   return namespace;
+}
+
+/** Loopback được phép là `http://` kể cả khi trang đang HTTPS. */
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+/**
+ * URL có phải Mixed Content không: trang HTTPS nhưng đích là `http://` khác
+ * loopback. `pageOrigin` chỉ dùng cho test; mặc định `window.location.origin`.
+ */
+function isInsecureMixedContent(url: string, pageOrigin?: string): boolean {
+  const origin =
+    pageOrigin ?? (typeof window !== "undefined" ? window.location.origin : undefined);
+  if (!origin || !origin.startsWith("https:")) return false;
+
+  try {
+    const target = new URL(url, origin);
+    if (target.protocol !== "http:") return false;
+    return !isLoopbackHostname(target.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /**

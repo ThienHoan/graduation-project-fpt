@@ -148,7 +148,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https://*.supabase.co https://res.cloudinary.com https://dep.com.vn https://images.unsplash.com https://*.replicate.delivery https://pbxt.replicate.delivery https://lh3.googleusercontent.com",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co http://localhost:* https://localhost:* wss://localhost:* https://api.gogoduk.com https://rsapi.goong.io https://maps.goong.io https://openrouter.ai https://*.replicate.com https://*.replicate.delivery https://decart.ai wss://*.decart.ai",
+              "connect-src 'self' https://www.cophuctruyenthong.tech wss://www.cophuctruyenthong.tech https://cophuctruyenthong.tech wss://cophuctruyenthong.tech https://*.supabase.co wss://*.supabase.co http://localhost:* https://localhost:* wss://localhost:* https://api.gogoduk.com https://rsapi.goong.io https://maps.goong.io https://openrouter.ai https://*.replicate.com https://*.replicate.delivery https://decart.ai wss://*.decart.ai",
               "frame-src 'self' https://accounts.google.com",
               "object-src 'none'",
               "base-uri 'self'",

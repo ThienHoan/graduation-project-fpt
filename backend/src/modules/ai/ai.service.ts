@@ -12,22 +12,47 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { PricingService } from "../pricing/pricing.service";
 import type { CreateTryonDto, TryonMode } from "./dto/create-tryon.dto";
 import type { ProductAdvisorDto } from "./dto/product-advisor.dto";
-import type { AdvisorProduct, ExclusionTarget, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
+import type { AdvisorProduct, AdvisorProductSize, ExclusionTarget, ProductAdvisorResponse, ProductFilters } from "./interfaces/ai-response.interface";
 import { detectIntent } from "./utils/intent-detector";
-import { getCanonicalOccasions } from "./utils/filter-extractor";
+import { extractFilters, getCanonicalOccasions } from "./utils/filter-extractor";
 import { buildQueryScope, normalizeForMatch, tokenizeForMatch } from "./utils/query-scope";
 import { TryonQueueService } from "./tryon-queue.service";
 
 type AdvisorPromptOptions = {
   isAutoReply?: boolean;
+  aiIntent?: string;
   droppedOccasion?: string[];
   droppedKeyword?: string;
   droppedColor?: string[];
   droppedSize?: string[];
   droppedCategory?: string[];
+  /** Số đo khách đã lưu (chỉ dùng nội bộ), đưa vào prompt câu hỏi chọn size. */
+  customerMeasurements?: string | null;
+  /** Mẫu khách muốn so sánh nhưng shop không có. */
+  missingComparisonTargets?: string[];
+  /** Tên các mẫu shop đang có, để mời khách chọn khi thiếu mẫu so sánh. */
+  availableShopNames?: string[];
   exclusions?: ExclusionTarget[];
   browse?: boolean;
 };
+
+/**
+ * Intent AI do router chat phân loại. Với các câu này, "keyword" trích từ câu
+ * khách (vd "sánh" trong "so sánh", "tư vấn" trong "tư vấn giúp") không phải
+ * tên sản phẩm nên không được dùng để lọc catalog.
+ */
+const AI_ADVISOR_INTENTS = new Set([
+  "ai.sizing",
+  "ai.comparison",
+  "ai.styling",
+  "ai.heritage",
+]);
+
+/**
+ * Intent phải tự chọn đúng mẫu liên quan (mẫu trong thẻ sản phẩm gần nhất +
+ * mẫu cùng loại/màu khách nhắc) thay vì lọc theo từ khoá của cả câu.
+ */
+const AI_PRODUCT_CONTEXT_INTENTS = new Set(["ai.sizing", "ai.comparison"]);
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 const DEFAULT_FACE_SWAP_MODEL = "cdingram/face-swap";
@@ -873,6 +898,14 @@ export class AiService implements OnModuleInit {
     // detectIntent + hardcoded ở đây để không phân loại hai lần; chỉ route AI
     // mới tới được hàm này. `/ai/product-advisor` (isAutoReply=false) giữ
     // nguyên hành vi cũ.
+    //
+    // `aiIntent` chỉ dùng cho auto-reply/gợi ý nội bộ (router đã phân loại):
+    // chọn size / so sánh mẫu cần tra catalog khác với "tìm sản phẩm".
+    const aiIntent =
+      isAutoReply && dto.intent && AI_ADVISOR_INTENTS.has(dto.intent)
+        ? dto.intent
+        : undefined;
+
     let intent: string;
     if (isAutoReply) {
       intent = "search";
@@ -891,7 +924,10 @@ export class AiService implements OnModuleInit {
     }
 
     const scope = intent === "search" ? buildQueryScope(dto.message) : undefined;
-    const filters = scope?.filters;
+    // Câu tư vấn ("so sánh", "chọn size", "tư vấn giúp") sinh keyword không
+    // phải tên sản phẩm → bỏ trước khi query để không lọc mất cả catalog.
+    const filters: ProductFilters = { ...(scope?.filters ?? {}) };
+    if (aiIntent) delete filters.keyword;
     const exclusions = scope?.exclusions ?? [];
     let resolvedExclusions = exclusions;
     this.logger.debug(`Filters: ${JSON.stringify(filters)}`);
@@ -903,53 +939,73 @@ export class AiService implements OnModuleInit {
     let droppedColor: string[] | undefined;
     let droppedSize: string[] | undefined;
     let droppedCategory: string[] | undefined;
+    /** Mẫu khách muốn so sánh nhưng shop không có (rỗng với các intent khác). */
+    let missingComparisonTargets: string[] = [];
+    /** Tên các mẫu shop đang có, dùng để mời khách chọn khi thiếu mẫu so sánh. */
+    let availableShopNames: string[] = [];
 
     if (intent === "search" && scope) {
       // Khách cung cấp ngày thuê → giá hiệu lực tính theo ngày TẠO booking hôm nay.
       const onDate = dto.rentalStartDate && dto.rentalEndDate ? new Date() : undefined;
-      const baseFilters: ProductFilters = {
-        ...filters,
-        ...this.buildExclusionFilters(exclusions),
-      };
 
-      catalog = await this.queryCatalog(baseFilters, onDate, scope.browse);
-      this.logger.debug(`Catalog count: ${catalog.length}`);
+      if (aiIntent && AI_PRODUCT_CONTEXT_INTENTS.has(aiIntent)) {
+        // Chọn size / so sánh mẫu: lấy đúng mẫu khách đang nói tới thay vì
+        // lọc theo keyword của cả câu (dễ ra 0 kết quả rồi trả "không có").
+        const selection = await this.selectAiIntentCatalog(aiIntent, dto.message, dto.history);
+        catalog = selection.products;
+        missingComparisonTargets = selection.missingTargets;
+        availableShopNames = selection.availableNames;
+        this.logger.debug(`AI intent catalog (${aiIntent}) count: ${catalog.length}`);
+        if (missingComparisonTargets.length > 0) {
+          this.logger.debug(
+            `Comparison targets not in catalog: ${missingComparisonTargets.join(", ")}`,
+          );
+        }
+      } else {
+        const baseFilters: ProductFilters = {
+          ...filters,
+          ...this.buildExclusionFilters(exclusions),
+        };
 
-      if (catalog.length === 0 && baseFilters.occasion) {
-        this.logger.debug("0 results with occasion, retrying without occasion");
-        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined }, onDate, scope.browse);
-        if (catalog.length > 0) droppedOccasion = baseFilters.occasion;
-      }
+        catalog = await this.queryCatalog(baseFilters, onDate, scope.browse);
+        this.logger.debug(`Catalog count: ${catalog.length}`);
 
-      if (catalog.length === 0 && baseFilters.keyword) {
-        this.logger.debug("0 results with keyword, retrying without keyword");
-        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined }, onDate, scope.browse);
-        if (catalog.length > 0) droppedKeyword = baseFilters.keyword;
-      }
+        if (catalog.length === 0 && baseFilters.occasion) {
+          this.logger.debug("0 results with occasion, retrying without occasion");
+          catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined }, onDate, scope.browse);
+          if (catalog.length > 0) droppedOccasion = baseFilters.occasion;
+        }
 
-      if (catalog.length === 0 && baseFilters.color) {
-        this.logger.debug("0 results with color, retrying without color");
-        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined }, onDate, scope.browse);
-        if (catalog.length > 0) droppedColor = baseFilters.color;
-      }
+        if (catalog.length === 0 && baseFilters.keyword) {
+          this.logger.debug("0 results with keyword, retrying without keyword");
+          catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined }, onDate, scope.browse);
+          if (catalog.length > 0) droppedKeyword = baseFilters.keyword;
+        }
 
-      if (catalog.length === 0 && baseFilters.size) {
-        this.logger.debug("0 results with size, retrying without size");
-        catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined, size: undefined }, onDate, scope.browse);
-        if (catalog.length > 0) droppedSize = baseFilters.size;
-      }
+        if (catalog.length === 0 && baseFilters.color) {
+          this.logger.debug("0 results with color, retrying without color");
+          catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined }, onDate, scope.browse);
+          if (catalog.length > 0) droppedColor = baseFilters.color;
+        }
 
-      if (catalog.length === 0 && baseFilters.category) {
-        this.logger.debug("0 results with category, retrying without category");
-        catalog = await this.queryCatalog({
-          ...baseFilters,
-          occasion: undefined,
-          keyword: undefined,
-          color: undefined,
-          size: undefined,
-          category: undefined,
-        }, onDate, scope.browse);
-        if (catalog.length > 0) droppedCategory = baseFilters.category;
+        if (catalog.length === 0 && baseFilters.size) {
+          this.logger.debug("0 results without size, retrying");
+          catalog = await this.queryCatalog({ ...baseFilters, occasion: undefined, keyword: undefined, color: undefined, size: undefined }, onDate, scope.browse);
+          if (catalog.length > 0) droppedSize = baseFilters.size;
+        }
+
+        if (catalog.length === 0 && baseFilters.category) {
+          this.logger.debug("0 results with category, retrying without category");
+          catalog = await this.queryCatalog({
+            ...baseFilters,
+            occasion: undefined,
+            keyword: undefined,
+            color: undefined,
+            size: undefined,
+            category: undefined,
+          }, onDate, scope.browse);
+          if (catalog.length > 0) droppedCategory = baseFilters.category;
+        }
       }
 
       const productResolution = this.resolveProductExclusions(exclusions, catalog, dto.history);
@@ -960,6 +1016,17 @@ export class AiService implements OnModuleInit {
       }
 
       if (catalog.length === 0) {
+        if (missingComparisonTargets.length > 0) {
+          const missing = missingComparisonTargets.join(", ");
+          const available = availableShopNames.slice(0, 3).join(", ");
+          const reply =
+            `Shop hiện chưa có ${missing} nên chưa thể so sánh hai mẫu này. ` +
+            (available
+              ? `Bạn muốn chọn một trang phục đang có ở shop không? Shop đang có: ${available}.`
+              : "Bạn tham khảo các mẫu đang có ở shop hoặc để lại lời nhắn cho staff nhé.");
+          return ok({ topics: [{ title: "Chưa có mẫu để so sánh", assistantReply: reply, recommendedProductIds: [], reasons: {}, products: [] }] });
+        }
+
         if (scope.isExclusionQuestion) {
           const reply = this.buildExclusionEmptyReply(resolvedExclusions);
           return ok({ topics: [{ title: "Chưa có mẫu khác", assistantReply: reply, recommendedProductIds: [], reasons: {}, products: [] }] });
@@ -978,8 +1045,18 @@ export class AiService implements OnModuleInit {
 
     const inStockCatalog = catalog.filter((p) => p.inStock);
     const promptCatalog = inStockCatalog.length > 0 ? inStockCatalog : catalog;
+    // Số đo hồ sơ khách chỉ lấy khi câu hỏi là chọn size/so sánh và đây là
+    // luồng nội bộ (aiIntent đã gated theo isAutoReply).
+    const customerMeasurements =
+      aiIntent && AI_PRODUCT_CONTEXT_INTENTS.has(aiIntent)
+        ? await this.loadCustomerMeasurements(dto.customerId)
+        : null;
     const systemPrompt = this.buildAdvisorPrompt(promptCatalog, {
       isAutoReply,
+      aiIntent,
+      customerMeasurements,
+      missingComparisonTargets,
+      availableShopNames,
       droppedOccasion,
       droppedKeyword,
       droppedColor,
@@ -1022,6 +1099,206 @@ export class AiService implements OnModuleInit {
       ...(sizes.length > 0 ? { excludeSizes: sizes } : {}),
       ...(occasions.length > 0 ? { excludeOccasions: occasions } : {}),
     };
+  }
+
+  /**
+   * Chọn tập sản phẩm cho câu hỏi "chọn size" / "so sánh mẫu".
+   *
+   * Thứ tự ưu tiên:
+   *   1. Mẫu khách nêu đích danh để so sánh (tên đầy đủ / màu / loại trong câu).
+   *   2. Mẫu trong thẻ sản phẩm gần nhất (khách hay hỏi "mẫu này", "cái đó").
+   *   3. Mẫu cùng loại/màu/dịp khách nhắc — chỉ bù khi chưa xác định được mẫu nào.
+   *
+   * Không lọc theo `keyword`: câu "so sánh…" sinh keyword rác và từng làm
+   * catalog rỗng, khiến AI trả "không có sản phẩm phù hợp".
+   *
+   * `missingTargets` = các mẫu khách muốn so sánh nhưng shop không có. Khi có
+   * giá trị này, caller phải báo khách là shop không có mẫu đó và TUYỆT ĐỐI
+   * không tự thêm mẫu khác để đóng vai mẫu thứ hai.
+   */
+  private async selectAiIntentCatalog(
+    aiIntent: string,
+    message: string,
+    history?: Array<{ role: string; content: string; createdAt: string }>,
+  ): Promise<{ products: AdvisorProduct[]; missingTargets: string[]; availableNames: string[] }> {
+    const full = await this.queryCatalog({}, undefined, true);
+
+    const limit = aiIntent === "ai.sizing" ? 5 : 4;
+    const picked: AdvisorProduct[] = [];
+    const seen = new Set<string>();
+    const add = (product: AdvisorProduct | null | undefined) => {
+      if (!product || seen.has(product.garmentId) || picked.length >= limit) return;
+      seen.add(product.garmentId);
+      picked.push(product);
+    };
+
+    // Danh sách mẫu shop đang có, chỉ dùng để mời khách chọn khi thiếu mẫu.
+    const availableNames = [...new Set(full.map((product) => product.name))].slice(0, 6);
+
+    const historyProducts: AdvisorProduct[] = [];
+    for (const name of this.findHistoryProductNames(history)) {
+      const product = this.findProductByName(full, name);
+      if (product) historyProducts.push(product);
+    }
+
+    if (aiIntent === "ai.comparison") {
+      const compared = this.resolveComparisonTargets(message, full);
+
+      if (compared.products.length > 0 || compared.missingTargets.length > 0) {
+        // Khách đã nêu rõ các mẫu cần so sánh → chỉ dùng đúng các mẫu đó.
+        // Không bù thêm mẫu ngoài: thêm vào sẽ thành "mẫu thứ hai" khách
+        // không hề yêu cầu.
+        if (compared.products.length > 0) {
+          for (const product of compared.products) add(product);
+        } else {
+          // Chỉ xác định được mẫu phía bên kia qua thẻ sản phẩm gần nhất.
+          for (const product of historyProducts) add(product);
+        }
+
+        return {
+          products: picked,
+          missingTargets: compared.missingTargets,
+          availableNames,
+        };
+      }
+    }
+
+    for (const product of historyProducts) add(product);
+    for (const product of this.findReferencedProducts(message, full)) add(product);
+
+    // Chỉ bù từ catalog khi chưa xác định được mẫu nào — không thêm mẫu
+    // không liên quan chỉ để đủ số lượng.
+    if (picked.length === 0) {
+      for (const product of this.rankByFilters(full, extractFilters(message))) add(product);
+      for (const product of full) add(product);
+    }
+
+    return { products: picked, missingTargets: [], availableNames };
+  }
+
+  /**
+   * Tách câu so sánh thành từng đối tượng ("áo dài đỏ" với "áo dài xanh") và
+   * đối chiếu catalog. Trả về mẫu tìm được + mẫu khách nhắc nhưng shop không có.
+   *
+   * Chỉ coi là so sánh nhiều mẫu khi tách được từ 2 đối tượng trở lên; câu
+   * "so sánh 2 mẫu này" (đại từ) sẽ rơi về ngữ cảnh thẻ sản phẩm.
+   */
+  private resolveComparisonTargets(
+    message: string,
+    catalog: AdvisorProduct[],
+  ): { products: AdvisorProduct[]; missingTargets: string[] } {
+    const segments = message
+      .split(/\s+(?:và|với|hay|hoặc|vs\.?|so\s+với)\s+/iu)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    if (segments.length < 2) return { products: [], missingTargets: [] };
+
+    const products: AdvisorProduct[] = [];
+    const missingTargets: string[] = [];
+    const seen = new Set<string>();
+
+    for (const segment of segments) {
+      const normalized = normalizeForMatch(segment);
+      const exact = catalog.filter((product) => {
+        const name = normalizeForMatch(product.name);
+        return name.length > 0 && normalized.includes(name);
+      });
+
+      const filters = extractFilters(segment);
+      const hasDescriptor =
+        exact.length > 0 || (filters.color?.length ?? 0) > 0 || (filters.category?.length ?? 0) > 0;
+
+      // "mẫu này", "mẫu kia" không phải đối tượng cụ thể.
+      if (!hasDescriptor) continue;
+
+      const candidates = exact.length > 0 ? exact : this.rankByFilters(catalog, filters);
+      if (candidates.length === 0) {
+        const label = segment
+          .replace(/^(?:so\s+sánh|bạn\s+thấy|shop\s+thấy|mẫu)\s+/iu, "")
+          .trim();
+        missingTargets.push(label || segment);
+        continue;
+      }
+
+      const product = candidates[0];
+      if (seen.has(product.garmentId)) continue;
+      seen.add(product.garmentId);
+      products.push(product);
+    }
+
+    // Chưa đủ 2 đối tượng → không kết luận khách so sánh nhiều mẫu.
+    if (products.length + missingTargets.length < 2) {
+      return { products: [], missingTargets: [] };
+    }
+
+    return { products, missingTargets };
+  }
+
+  /**
+   * Tên các mẫu đã gửi cho khách, mới nhất trước. Đọc từ mô tả thẻ sản phẩm
+   * trong lịch sử chat (`[Thẻ sản phẩm] <tên> | ...`).
+   */
+  private findHistoryProductNames(
+    history?: Array<{ content: string; createdAt: string }>,
+  ): string[] {
+    const sorted = [...(history ?? [])].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const names: string[] = [];
+    for (const item of sorted) {
+      const match = item.content.match(/\[Thẻ sản phẩm\]\s*([^|\n]+)/iu);
+      const name = match?.[1]?.trim();
+      if (name) names.push(name);
+      if (names.length >= 3) break;
+    }
+
+    return names;
+  }
+
+  private findProductByName(catalog: AdvisorProduct[], name: string): AdvisorProduct | null {
+    const target = normalizeForMatch(name);
+    if (!target) return null;
+    return catalog.find((product) => normalizeForMatch(product.name) === target) ?? null;
+  }
+
+  /** Mẫu có tên đầy đủ nằm trong câu khách (không đoán theo từng từ rời). */
+  private findReferencedProducts(message: string, catalog: AdvisorProduct[]): AdvisorProduct[] {
+    const normalized = normalizeForMatch(message);
+    return catalog.filter((product) => {
+      const name = normalizeForMatch(product.name);
+      return name.length > 0 && normalized.includes(name);
+    });
+  }
+
+  /** Mẫu cùng loại / màu / dịp khách nhắc, dùng để bổ sung phương án. */
+  private rankByFilters(catalog: AdvisorProduct[], filters: ProductFilters): AdvisorProduct[] {
+    const categories = (filters.category ?? []).map((value) => normalizeForMatch(value));
+    const colors = (filters.color ?? []).map((value) => normalizeForMatch(value));
+    const occasions = (filters.occasion ?? []).map((value) => normalizeForMatch(value));
+
+    return catalog.filter((product) => {
+      const category = normalizeForMatch(product.category);
+      const color = normalizeForMatch(product.color);
+      const occasion = normalizeForMatch(product.occasion);
+
+      const categoryOk =
+        categories.length === 0 ||
+        (category.length > 0 &&
+          categories.some((value) => value.length > 0 && (category.includes(value) || value.includes(category))));
+
+      const colorOk =
+        colors.length === 0 ||
+        (color.length > 0 && colors.some((value) => value.length > 0 && color.includes(value)));
+
+      const occasionOk =
+        occasions.length === 0 ||
+        (occasion.length > 0 &&
+          occasions.some((value) => value.length > 0 && occasion.includes(value)));
+
+      return categoryOk && colorOk && occasionOk;
+    });
   }
 
   private findLastProductName(history?: Array<{ content: string; createdAt: string }>): string | undefined {
@@ -1244,7 +1521,7 @@ export class AiService implements OnModuleInit {
         garment_sizes: { where: { is_active: true } },
         assets: {
           where: { status: "available" },
-          select: { id: true },
+          select: { id: true, garment_size_id: true },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -1278,6 +1555,21 @@ export class AiService implements OnModuleInit {
       const deposits = activeSizes.map((s) => Number(s.deposit_amount)).filter((d) => d > 0);
       const minDeposit = deposits.length > 0 ? Math.min(...deposits) : 0;
 
+      // Tồn kho theo size chỉ có ý nghĩa khi tài sản được gán size; nếu shop
+      // chưa gán thì để `null` và dựa vào trạng thái còn hàng của cả mẫu.
+      const hasSizeAssets = g.assets.some((asset) => asset.garment_size_id);
+      const sizeDetails: AdvisorProductSize[] = activeSizes
+        .filter((s) => Boolean(s.size_label))
+        .map((s) => ({
+          label: s.size_label ?? "",
+          dailyPrice: priceOf(s),
+          depositAmount: Number(s.deposit_amount ?? 0),
+          stock: hasSizeAssets
+            ? g.assets.filter((asset) => asset.garment_size_id === s.id).length
+            : null,
+          measurements: this.formatSizeMeasurements(s),
+        }));
+
       return {
         garmentId: g.id,
         name: g.name,
@@ -1290,13 +1582,113 @@ export class AiService implements OnModuleInit {
         size: activeSizes.map((s) => s.size_label).filter(Boolean).join(", "),
         reason: "",
         inStock: g.assets.length > 0,
+        sizeDetails,
       };
     });
+  }
+
+  /** "ngực 88, eo 70, hông 92, dài 140, tay 55, vai 38" (cm), bỏ số đo chưa nhập. */
+  private formatSizeMeasurements(size: {
+    shoulder_cm?: unknown;
+    bust_cm?: unknown;
+    waist_cm?: unknown;
+    hip_cm?: unknown;
+    length_cm?: unknown;
+    sleeve_length_cm?: unknown;
+  }): string {
+    const round = (value: unknown): number | null => {
+      const number = Number(value);
+      return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+    };
+
+    const parts: string[] = [];
+    const push = (label: string, value: unknown) => {
+      const rounded = round(value);
+      if (rounded !== null) parts.push(`${label} ${rounded}`);
+    };
+
+    push("vai", size.shoulder_cm);
+    push("ngực", size.bust_cm);
+    push("eo", size.waist_cm);
+    push("hông", size.hip_cm);
+    push("dài", size.length_cm);
+    push("tay", size.sleeve_length_cm);
+
+    return parts.join(", ");
+  }
+
+  /**
+   * Số đo khách đã lưu (hồ sơ), chỉ dùng cho câu hỏi chọn size. Không đưa ra
+   * ngoài prompt và bỏ qua im lặng nếu bảng chưa có/lỗi.
+   */
+  private async loadCustomerMeasurements(customerId?: string): Promise<string | null> {
+    if (!customerId) return null;
+
+    try {
+      const measurement = await (this.prisma as any).customerMeasurement?.findFirst({
+        where: { customerId },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!measurement) return null;
+
+      const round = (value: unknown): number | null => {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+      };
+
+      const parts: string[] = [];
+      const push = (label: string, value: unknown, unit: string) => {
+        const rounded = round(value);
+        if (rounded !== null) parts.push(`${label} ${rounded}${unit}`);
+      };
+
+      push("cao", measurement.heightCm, "cm");
+      push("nặng", measurement.weightKg, "kg");
+      push("ngực", measurement.bustCm, "cm");
+      push("eo", measurement.waistCm, "cm");
+      push("hông", measurement.hipCm, "cm");
+
+      if (typeof measurement.usualSize === "string" && measurement.usualSize.trim()) {
+        parts.push(`size thường mặc ${measurement.usualSize.trim()}`);
+      }
+
+      return parts.length > 0 ? parts.join(", ") : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Mỗi mẫu 1 dòng tiêu đề + 1 dòng/size (số đo, giá, cọc, tồn). */
+  private buildDetailedProductLines(products: AdvisorProduct[]): string {
+    return products
+      .map((product, index) => {
+        const header =
+          `${index + 1}. ID: ${product.garmentId} | Tên: ${product.name} | Loại: ${product.category}` +
+          ` | Màu: ${product.color} | Dịp: ${product.occasion || "—"}` +
+          ` | Giá từ: ${product.dailyPrice.toLocaleString()}đ/ngày` +
+          ` | Cọc từ: ${product.depositAmount.toLocaleString()}đ` +
+          ` | Còn hàng: ${product.inStock ? "Có" : "Không"}`;
+
+        const sizeLines = (product.sizeDetails ?? []).map((size) => {
+          const parts = [size.measurements ? `số đo ${size.measurements} (cm)` : "chưa nhập số đo"];
+          parts.push(`${size.dailyPrice.toLocaleString()}đ/ngày`);
+          if (size.depositAmount > 0) parts.push(`cọc ${size.depositAmount.toLocaleString()}đ`);
+          if (size.stock !== null) parts.push(size.stock > 0 ? `còn ${size.stock}` : "hết size này");
+          return `   - Size ${size.label}: ${parts.join(" | ")}`;
+        });
+
+        return [header, ...sizeLines].join("\n");
+      })
+      .join("\n");
   }
 
   private buildAdvisorPrompt(catalog: AdvisorProduct[], options: AdvisorPromptOptions = {}): string {
     const {
       isAutoReply = false,
+      aiIntent,
+      customerMeasurements,
+      missingComparisonTargets = [],
+      availableShopNames = [],
       droppedOccasion,
       droppedKeyword,
       droppedColor,
@@ -1307,9 +1699,17 @@ export class AiService implements OnModuleInit {
     } = options;
 
     const limited = this.selectPromptProducts(catalog, browse);
-    const productLines = limited.map((p, i) =>
-      `${i + 1}. ID: ${p.garmentId} | Tên: ${p.name} | Loại: ${p.category} | Màu: ${p.color} | Dịp: ${p.occasion || "—"} | Size: ${p.size} | Giá: ${p.dailyPrice.toLocaleString()}đ/ngày | Cọc: ${p.depositAmount.toLocaleString()}đ | Còn hàng: ${p.inStock ? "Có" : "Không"}`,
-    ).join("\n");
+    // Câu chọn size/so sánh cần số đo + giá/tồn từng size; câu tìm sản phẩm
+    // giữ dạng gọn để tiết kiệm token.
+    const productLines =
+      aiIntent && AI_PRODUCT_CONTEXT_INTENTS.has(aiIntent)
+        ? this.buildDetailedProductLines(limited)
+        : limited
+            .map(
+              (p, i) =>
+                `${i + 1}. ID: ${p.garmentId} | Tên: ${p.name} | Loại: ${p.category} | Màu: ${p.color} | Dịp: ${p.occasion || "—"} | Size: ${p.size} | Giá: ${p.dailyPrice.toLocaleString()}đ/ngày | Cọc: ${p.depositAmount.toLocaleString()}đ | Còn hàng: ${p.inStock ? "Có" : "Không"}`,
+            )
+            .join("\n");
 
     const categorySummary = [...new Set(catalog.map((product) => product.category).filter(Boolean))].join(", ") || "—";
     const exclusionDetails = this.describeExclusions(exclusions);
@@ -1318,10 +1718,48 @@ export class AiService implements OnModuleInit {
       ? `\n### CHẾ ĐỘ TỰ ĐỘNG TRẢ LỜI
 Bạn đang tự động trả lời khách hàng khi staff offline.
 - Trả lời NGẮN GỌN, chỉ tập trung vào câu hỏi sản phẩm.
-- Không hỏi lại khách, không đề xuất thêm nếu khách không yêu cầu.
+- Không hỏi lại khách, không đề xuất thêm nếu khách không yêu cầu. TRỪ câu hỏi chọn size: nếu thiếu số đo của khách, được hỏi lại đúng MỘT câu ngắn (chiều cao, cân nặng, vòng ngực/eo).
 - Không hứa giảm giá, không tạo booking, không xử lý hoàn tiền.
 - Nếu khách hỏi về đơn hàng/giao dịch/cuộc hẹn → bảo họ đợi staff trả lời.
 - Không thêm thông tin ngoài danh sách sản phẩm.`
+      : "";
+
+    // Câu hỏi chọn size / so sánh mẫu phải trả lời đúng câu hỏi, không được
+    // biến thành "gợi ý 3-4 mẫu" như câu tìm sản phẩm.
+    const aiIntentSection =
+      aiIntent === "ai.sizing"
+        ? `\n\n### LOẠI CÂU HỎI: CHỌN SIZE / VỪA VẶN
+Khách đang hỏi về size hoặc độ vừa vặn của mẫu. Trả lời trực tiếp dựa trên dữ liệu của các mẫu ở trên (số đo từng size, giá, cọc, còn hàng).
+- Thứ tự trả lời:
+  1. Nếu ĐÃ CÓ số đo của khách: kết luận ngay size vừa nhất + lý do (so số đo khách với số đo từng size).
+  2. Nếu CHƯA CÓ số đo của khách: nêu size phù hợp theo số đo của mẫu, rồi hỏi lại đúng MỘT câu ngắn xin chiều cao, cân nặng, vòng ngực/eo.
+  3. Nếu size phù hợp đã hết: nói rõ hết size đó và gợi ý size còn lại gần nhất.
+- CHỈ dùng số liệu có trong danh sách. TUYỆT ĐỐI không bịa số đo; số đo của mẫu chưa nhập thì nói rõ là shop chưa có và đề nghị staff kiểm tra.
+- Không cần đề xuất đủ 3-4 mẫu nếu câu hỏi chỉ về một mẫu.`
+        : aiIntent === "ai.comparison"
+          ? `\n\n### LOẠI CÂU HỎI: SO SÁNH MẪU
+Khách muốn so sánh các mẫu với nhau. Chỉ so sánh các mẫu có trong danh sách ở trên.
+- Với MỖI mẫu, nêu: giá thuê/ngày, tiền cọc, các size còn hàng (và size đã hết), chênh lệch số đo giữa các size.
+- Nêu rõ nên chọn mẫu nào cho trường hợp nào (dịp, dáng người, ngân sách).
+- Không nhắc tới mẫu ngoài danh sách; không bịa thông tin ngoài danh sách.`
+          : "";
+
+    // Khách nêu 2 mẫu để so sánh nhưng catalog chỉ có 1 → phải nói thật, không
+    // tự thêm mẫu thứ hai để so sánh.
+    const comparisonGapSection =
+      missingComparisonTargets.length > 0
+        ? `\n\n### KHÔNG TÌM THẤY MẪU ĐỂ SO SÁNH
+Khách muốn so sánh với: ${missingComparisonTargets.join(", ")} — nhưng SHOP KHÔNG CÓ (các) mẫu này.
+Khi trả lời:
+- Nói rõ shop hiện chưa có ${missingComparisonTargets.join(", ")} nên chưa thể so sánh.
+- TUYỆT ĐỐI không tự thêm một sản phẩm khác để đóng vai mẫu thứ hai; không so sánh mẫu khách hỏi với mẫu khác trong danh sách.
+- recommendedProductIds chỉ chứa tối đa mẫu đã xác định được (nếu phù hợp); KHÔNG thêm mẫu khác.
+- Mời khách chọn một trang phục đang có trong shop${availableShopNames.length > 0 ? ` (ví dụ: ${availableShopNames.join(", ")})` : ""}.`
+        : "";
+
+    // Chỉ có khi câu hỏi là chọn size và hồ sơ khách có số đo.
+    const customerMeasurementSection = customerMeasurements
+      ? `\n\n### SỐ ĐO CỦA KHÁCH (hồ sơ đã lưu)\n${customerMeasurements}\n- Dùng số đo này để so với số đo từng size ở trên; KHÔNG bịa thêm số đo khác.`
       : "";
 
     const exclusionSection = exclusions.length > 0
@@ -1358,7 +1796,19 @@ Khi trả lời:
       ? `\n\n### LƯU Ý: KHÔNG CÓ SẢN PHẨM THUỘC LOẠI NÀY\nShop chưa có sản phẩm thuộc loại "${droppedCategory.join(", ")}" phù hợp. Các sản phẩm bên dưới thuộc loại khác.\nKhi trả lời:\n- Nói rõ shop chưa có mẫu thuộc loại "${droppedCategory.join(", ")}".\n- Gợi ý 3-4 sản phẩm thuộc loại khác, giải thích ngắn gọn.\n- Không được nói là có sản phẩm thuộc loại khách yêu cầu nếu danh sách không có.`
       : "";
 
-    return `Bạn là trợ lý AI tư vấn sản phẩm cho cửa hàng cho thuê áo dài và trang phục truyền thống Việt Nam. Bạn phân tích lịch sử chat và catalogue để tư vấn.${autoReplySection}${droppedNote}${droppedOccNote}${droppedColorNote}${droppedSizeNote}${droppedCategoryNote}${exclusionSection}${browseSection}
+    // Số lượng sản phẩm phải theo loại câu hỏi: câu tìm sản phẩm mới cần 3-4
+    // mẫu; câu chọn size/so sánh chỉ được trả đúng các mẫu liên quan.
+    const quantityRules =
+      aiIntent === "ai.sizing"
+        ? `- **Chỉ đề xuất đúng (các) mẫu khách đang hỏi.** Khách hỏi 1 mẫu → recommendedProductIds chỉ chứa đúng mẫu đó; KHÔNG thêm mẫu khác chỉ để đủ số lượng.
+- Không tự mở rộng sang mẫu khác nếu khách không yêu cầu.`
+        : aiIntent === "ai.comparison"
+          ? `- **recommendedProductIds chỉ chứa đúng các mẫu đã so sánh** (2-4 mẫu), không chèn mẫu ngoài danh sách so sánh.
+- Nếu chỉ có 1 mẫu để so sánh, trả lời đúng 1 mẫu và nói rõ shop chưa có mẫu còn lại; KHÔNG tự thêm mẫu thứ hai.`
+          : `- **LUÔN đề xuất 3-4 sản phẩm** trong mỗi topic, trừ khi tổng sản phẩm trong danh sách ít hơn.
+- **recommendedProductIds** phải chứa 3-4 ID sản phẩm. KHÔNG chỉ chọn 1 sản phẩm duy nhất.`;
+
+    return `Bạn là trợ lý AI tư vấn sản phẩm cho cửa hàng cho thuê áo dài và trang phục truyền thống Việt Nam. Bạn phân tích lịch sử chat và catalogue để tư vấn.${autoReplySection}${aiIntentSection}${comparisonGapSection}${customerMeasurementSection}${droppedNote}${droppedOccNote}${droppedColorNote}${droppedSizeNote}${droppedCategoryNote}${exclusionSection}${browseSection}
 
 Dưới đây là danh sách sản phẩm hiện có trong cửa hàng:
 
@@ -1368,8 +1818,7 @@ Các danh mục hiện có trong danh sách: ${categorySummary}.
 
 ### QUY TẮC LỌC SẢN PHẨM THEO YÊU CẦU
 Khi khách yêu cầu sản phẩm theo các tiêu chí, bạn PHẢI lọc từ danh sách trên:
-- **LUÔN đề xuất 3-4 sản phẩm** trong mỗi topic, trừ khi tổng sản phẩm trong danh sách ít hơn.
-- **recommendedProductIds** phải chứa 3-4 ID sản phẩm. KHÔNG chỉ chọn 1 sản phẩm duy nhất.
+${quantityRules}
 - **Budget (giá)**: So sánh trực tiếp budget với cột "Giá" (VNĐ/ngày). "Dưới X" → dailyPrice <= X. "Trên X" → dailyPrice >= X. "Khoảng X" → dailyPrice gần X nhất.
 - **Màu sắc**: So sánh với cột "Màu". "Áo dài tím" → màu "tím". "Màu đỏ" → màu "đỏ".
 - **Dịp sử dụng**: So sánh với cột "Dịp". "Đi đám cưới" → Dịp chứa "Đám cưới". "Chụp kỷ yếu" → Dịp chứa "Kỷ yếu".

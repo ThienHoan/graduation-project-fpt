@@ -32,12 +32,12 @@ Migration: `backend/prisma/migrations/20261028_chat_assistant_router/migration.s
 
    ```bash
    cd backend
-   npx prisma db execute --file prisma/migrations/20261028_chat_assistant_router/migration.sql
+   pnpm exec prisma db execute --file prisma/migrations/20261028_chat_assistant_router/migration.sql
    ```
 
    File dùng `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` nên có
    thể chạy lại an toàn nếu lần trước lỗi giữa chừng.
-3. `npx prisma generate` để client có model mới.
+3. `pnpm exec prisma generate` để client có model mới.
 4. Deploy backend với `BANK_ACCOUNT_AUTO_REPLY=false` (mặc định). Router luôn
    bật nên auto-reply sẽ trả template/FAQ/DB ngay; mọi câu chưa cấu hình FAQ sẽ
    chuyển STAFF thay vì bịa thông tin.
@@ -159,7 +159,11 @@ và không trả FAQ chung:
 | Khách trả lời "có" sau câu mời của shop | `db.product_categories` / `db.product_alternatives` | Đọc câu mời ngay trước: mời xem danh mục → liệt kê danh mục; chỉ mời mẫu khác → gợi ý mẫu khác. Không rõ ý → hỏi lại ngắn, không chuyển STAFF. |
 
 - Product card được tạo từ `productIds` của handler (tối đa 3), gồm tên, ảnh,
-  size và giá ngày; nội dung text liệt kê thông tin từng mẫu.
+  size và giá ngày; nội dung text liệt kê thông tin từng mẫu. Card mới gửi thêm
+  `sizes` (mọi size đang mở thuê), `priceFrom`/`priceTo`, `depositFrom`,
+  `inStock`, `category`, `color`; `price` là giá thấp nhất và `size` vẫn là
+  chuỗi nhãn (`"M, L"`) để classifier/lịch sử chat đọc như cũ. Field mới đều
+  optional nên card cũ trong DB vẫn hiển thị bình thường.
 - Nhận diện khách chọn danh mục dựa trên tin nhắn trước của shop có chứa
   "danh mục" và "muốn xem loại nào".
 - Câu trả lời ngắn "có"/"đúng rồi"/"phải rồi" chỉ được hiểu là đồng ý khi tin
@@ -263,6 +267,25 @@ Router luôn chạy `STAFF > FAQ > DB > AI`; **chỉ nhánh AI mới gọi model
   Trước đây chặn cả TTL 24 giờ khiến khách hỏi "mặc gì đi tiệc" không nhận được
   gợi ý nào.
 
+### 9b. Câu chọn size / so sánh mẫu
+
+- Router trả kèm `llmIntent` (`ai.sizing`, `ai.comparison`, ...). Chat truyền
+  `intent` + `customerId` xuống `productAdvisor`; endpoint công khai
+  `/ai/product-advisor` **bỏ qua** hai field này.
+- Với `ai.sizing` / `ai.comparison`, catalog được chọn theo thứ tự: mẫu khách
+  nêu đích danh trong câu (tên đầy đủ / màu / loại) → mẫu trong thẻ sản phẩm gần
+  nhất → chỉ bù từ catalog khi chưa xác định được mẫu nào. Giới hạn 5 mẫu
+  sizing, 4 mẫu comparison; **không** lọc theo keyword của cả câu.
+- Prompt gửi kèm số đo từng size (`shoulder/bust/waist/hip/length/sleeve`), giá,
+  cọc, tồn theo size; nếu hồ sơ khách có `customer_measurements` thì gửi thêm.
+  Thiếu số đo của khách → được hỏi lại đúng **một** câu ngắn.
+- So sánh: chỉ so sánh các mẫu tìm được, bắt buộc nêu giá thuê, cọc, size còn
+  hàng và chênh lệch số đo. Nếu khách nêu 2 mẫu mà shop chỉ có 1 → báo rõ shop
+  chưa có mẫu kia, mời khách chọn mẫu đang có; **không tự thêm mẫu thứ hai**.
+  Catalog rỗng → trả lời tất định "Chưa có mẫu để so sánh" (không gọi model).
+- Không còn luật cứng "luôn 3-4 sản phẩm" cho hai intent này; response cũng bị
+  lọc theo đúng catalog đã chọn nên không thể chèn ID ngoài.
+
 - Auto-reply: tin khách đến → router phân loại → nhánh AI thì gọi
   `aiService.productAdvisor(...)` với tối đa 15 tin gần nhất, rồi lưu câu trả
   lời. Lỗi model/timeout/429/rỗng → lưu câu dự phòng
@@ -274,4 +297,28 @@ Router luôn chạy `STAFF > FAQ > DB > AI`; **chỉ nhánh AI mới gọi model
 - Hạn mức: Gemini free tier ~20 request/ngày/model. Hết hạn mức thì nhánh AI
   dùng câu dự phòng ở trên; các nhánh FAQ/DB/TEMPLATE vẫn chạy bình thường vì
   không gọi model.
+
+## 10. Integration test với DB (opt-in)
+
+Các test cần DB thật nằm ở
+`backend/src/modules/chat/product-card-payload.integration.spec.ts` và **mặc
+định bị skip**. Chỉ chạy khi có DB test tách biệt:
+
+```bash
+RUN_DB_INTEGRATION_TESTS=1 \
+TEST_DATABASE_URL="postgresql://user:pass@host:5432/shop_test" \
+npx vitest run src/modules/chat/product-card-payload.integration.spec.ts
+```
+
+- Suite từ chối chạy nếu `TEST_DATABASE_URL` trùng `DATABASE_URL` hoặc chứa
+  `prod`/`production`.
+- Toàn bộ test **chỉ đọc** (`findFirst`/`findMany`): không migrate, không seed,
+  không sửa/xoá dữ liệu.
+- Nội dung kiểm tra: payload card dựng từ garment thật (size/giá/cọc/tồn),
+  `queryCatalog` trả `sizeDetails` đúng kiểu, `selectAiIntentCatalog` chọn đúng
+  2 mẫu khi so sánh và báo `missingTargets` khi shop không có mẫu kia, và
+  `loadCustomerMeasurements` format số đo hồ sơ.
+- Không có DB test an toàn → bỏ qua suite; không tuyên bố đã kiểm chứng dữ liệu
+  thật chỉ dựa trên mock.
+
 

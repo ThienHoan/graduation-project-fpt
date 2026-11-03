@@ -107,6 +107,17 @@ export type ProductCardMessage = {
     size: string | null;
     price: number;
     detailUrl: string;
+    /** Giá thấp nhất / cao nhất trong các size đang mở thuê (tuỳ chọn). */
+    priceFrom?: number;
+    priceTo?: number;
+    /** Cọc thấp nhất; 0/không có = chưa nhập. */
+    depositFrom?: number;
+    /** Danh sách size đang mở thuê. */
+    sizes?: string[];
+    /** Chỉ có khi backend biết dữ liệu tài sản. */
+    inStock?: boolean;
+    category?: string;
+    color?: string;
   };
 };
 

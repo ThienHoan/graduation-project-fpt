@@ -1,3 +1,16 @@
+export interface AdvisorProductSize {
+  label: string;
+  dailyPrice: number;
+  depositAmount: number;
+  /**
+   * Số tài sản `available` gán đúng size này.
+   * `null` = chưa gán tài sản theo size → dựa vào `inStock` của cả mẫu.
+   */
+  stock: number | null;
+  /** "ngực 88, eo 70, dài 140" (cm) hoặc "" nếu chưa nhập. */
+  measurements: string;
+}
+
 export interface AdvisorProduct {
   garmentId: string;
   name: string;
@@ -10,6 +23,8 @@ export interface AdvisorProduct {
   size: string;
   reason: string;
   inStock: boolean;
+  /** Chi tiết từng size (số đo, giá, tồn) — dùng cho câu hỏi chọn size/so sánh. */
+  sizeDetails?: AdvisorProductSize[];
 }
 
 export interface AdvisorTopic {

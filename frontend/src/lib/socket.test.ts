@@ -122,6 +122,57 @@ describe("resolveSocketUrl", () => {
 
     expect(resolveSocketUrl("/chat")).toBe("https://socket.example.com/chat");
   });
+
+  describe("chống Mixed Content khi trang chạy HTTPS", () => {
+    const httpsPage = "https://www.cophuctruyenthong.tech";
+
+    it("lùi về URL tương đối khi NEXT_PUBLIC_API_URL trỏ IP http", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_API_URL", "http://104.248.147.219:4000/api");
+
+      const { resolveSocketUrl } = await loadSocketConfig();
+
+      expect(resolveSocketUrl("/chat", httpsPage)).toBe("/chat");
+      expect(resolveSocketUrl("/realtime", httpsPage)).toBe("/realtime");
+    });
+
+    it("lùi về URL tương đối khi NEXT_PUBLIC_SOCKET_URL trỏ IP http", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "http://104.248.147.219:4000/chat");
+
+      const { resolveSocketUrl } = await loadSocketConfig();
+
+      expect(resolveSocketUrl("/chat", httpsPage)).toBe("/chat");
+    });
+
+    it("giữ nguyên http loopback (không bị Mixed Content)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_API_URL", "http://localhost:4000/api");
+
+      const { resolveSocketUrl } = await loadSocketConfig();
+
+      expect(resolveSocketUrl("/chat", httpsPage)).toBe("http://localhost:4000/chat");
+    });
+
+    it("giữ nguyên https tuyệt đối", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_API_URL", "https://cophuctruyenthong.tech/backend-api");
+
+      const { resolveSocketUrl } = await loadSocketConfig();
+
+      expect(resolveSocketUrl("/chat", httpsPage)).toBe("https://cophuctruyenthong.tech/chat");
+    });
+
+    it("không can thiệp khi trang chạy HTTP (dev)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_SOCKET_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_API_URL", "http://104.248.147.219:4000/api");
+
+      const { resolveSocketUrl } = await loadSocketConfig();
+
+      expect(resolveSocketUrl("/chat", "http://localhost:3000")).toBe(
+        "http://104.248.147.219:4000/chat",
+      );
+    });
+  });
 });
 
 describe("shouldAddTrailingSlash", () => {
