@@ -289,6 +289,7 @@ describe("ChatService staff suggestion", () => {
     expect(aiService.productAdvisor.mock.calls[0][0].message).toContain(
       "tu van giup minh do di tiec",
     );
+    expect(aiService.productAdvisor.mock.calls[0][0].intent).toBe("ai.styling");
 
     // Lịch sử gửi model: tối đa 6 tin TRƯỚC tin được chọn.
     const historyCall = prisma.messages.findMany.mock.calls.find(

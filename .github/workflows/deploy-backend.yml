@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-backend.yml"
 
 jobs:
@@ -31,7 +33,10 @@ jobs:
 
       - name: Generate Prisma Client
         working-directory: backend
-        run: pnpm prisma generate
+        # Dùng binary prisma 6.19.3 đã pin trong dependencies thay vì `npx
+        # prisma`: khi thiếu node_modules, `npx` tải prisma@7 mới nhất → schema
+        # 6.x báo P1012 (datasource `url`/`directUrl` không còn hợp lệ).
+        run: pnpm exec prisma generate
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
@@ -74,10 +79,27 @@ jobs:
             # CI=true để pnpm không hỏi tương tác khi cần purge node_modules
             # (không có TTY qua SSH → mặc định pnpm abort với
             # ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+            #
+            # `prisma` đã được chuyển sang dependencies (pin đúng 6.19.3) nên
+            # vẫn có binary sau khi cài `--prod`; nhờ vậy generate không rơi về
+            # `npx prisma` → tải prisma 7 → schema 6.x báo P1012
+            # (datasource `url`/`directUrl` không còn hợp lệ).
             CI=true pnpm install --prod --frozen-lockfile --config.confirmModulesPurge=false
 
-            # Generate Prisma client on VPS
-            npx prisma generate
+            # Generate Prisma client bằng binary cục bộ (không qua npx).
+            # `.env` chứa DATABASE_URL cần cho bước đọc schema.
+            if [ -f .env ]; then set -a; . ./.env; set +a; fi
+            if [ ! -x node_modules/.bin/prisma ]; then
+              echo "❌ Thiếu node_modules/.bin/prisma (prisma CLI chưa được cài)."
+              exit 1
+            fi
+            prisma_major=$(node -p "require('./node_modules/prisma/package.json').version.split('.')[0]" || echo "?")
+            echo "Prisma CLI major: $prisma_major"
+            if [ "$prisma_major" != "6" ]; then
+              echo "❌ Prisma CLI phải là 6.x (schema dùng datasource url/directUrl); đang là $prisma_major."
+              exit 1
+            fi
+            node_modules/.bin/prisma generate
 
             # Restart PM2
             pm2 restart be-api || pm2 start dist/main.js --name "be-api" --node-args="--max-old-space-size=384"

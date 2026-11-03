@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { ArrayMaxSize, IsArray, IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength, ValidateNested } from "class-validator";
+import { ArrayMaxSize, IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from "class-validator";
 
 export class ChatHistoryItemDto {
   @IsIn(["customer", "staff", "ai"])
@@ -25,6 +25,24 @@ export class ProductAdvisorDto {
   @ValidateNested({ each: true })
   @Type(() => ChatHistoryItemDto)
   history?: ChatHistoryItemDto[];
+
+  /**
+   * Intent do router chat phân loại (`ai.sizing`, `ai.comparison`, ...).
+   * Chỉ có tác dụng với auto-reply/gợi ý nội bộ; endpoint công khai vẫn tự
+   * `detectIntent` như trước.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  intent?: string;
+
+  /**
+   * Khách đang chat (chỉ dùng nội bộ) để lấy số đo đã lưu cho câu hỏi chọn size.
+   * Endpoint công khai bỏ qua trường này.
+   */
+  @IsUUID()
+  @IsOptional()
+  customerId?: string;
 
   @IsDateString()
   @IsOptional()
