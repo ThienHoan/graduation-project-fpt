@@ -169,8 +169,8 @@ export function CustomerNavbar({
     <>
       <header
         className={`sticky top-0 z-40 transition-all duration-300 ${isDark
-            ? "border-b border-white/10 bg-[#09090c]/90 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
-            : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
+          ? "border-b border-white/10 bg-[#09090c]/90 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+          : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
           }`}
       >
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
@@ -193,8 +193,8 @@ export function CustomerNavbar({
               <div className="flex flex-col shrink-0 whitespace-nowrap">
                 <span
                   className={`font-display text-xl sm:text-2xl font-bold tracking-wide leading-none whitespace-nowrap ${isDark
-                      ? "text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-300 bg-clip-text drop-shadow-[0_2px_10px_rgba(251,191,36,0.3)]"
-                      : "text-lotus"
+                    ? "text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-300 bg-clip-text drop-shadow-[0_2px_10px_rgba(251,191,36,0.3)]"
+                    : "text-lotus"
                     }`}
                 >
                   Cổ Phục
@@ -221,12 +221,12 @@ export function CustomerNavbar({
                     onClick={(e) => playWoodTap({ event: e })}
                     onMouseEnter={(e) => playHoverTick({ event: e })}
                     className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${isHighlighted
-                        ? isDark
-                          ? "border-b-2 border-amber-400 font-bold text-amber-300"
-                          : "border-b-2 border-lotus font-bold text-lotus"
-                        : isDark
-                          ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
-                          : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
+                      ? isDark
+                        ? "border-b-2 border-amber-400 font-bold text-amber-300"
+                        : "border-b-2 border-lotus font-bold text-lotus"
+                      : isDark
+                        ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
+                        : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
                       }`}
                   >
                     {item.label}
@@ -244,8 +244,8 @@ export function CustomerNavbar({
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
               className={`hidden xl:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition active:scale-[0.98] ${isDark
-                  ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 shadow-md hover:opacity-90"
-                  : "bg-lotus text-white hover:bg-oxblood shadow-xs"
+                ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 shadow-md hover:opacity-90"
+                : "bg-lotus text-white hover:bg-oxblood shadow-xs"
                 }`}
             >
               <AnimatedSparkles size={15} />
@@ -264,8 +264,8 @@ export function CustomerNavbar({
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
               className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-lotus hover:text-lotus"
-                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-lotus hover:text-lotus"
+                : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
                 }`}
               aria-label="Danh sách cổ phục yêu thích"
               title="Danh sách yêu thích"
@@ -285,8 +285,8 @@ export function CustomerNavbar({
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
               className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
-                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
+                : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
                 }`}
               aria-label="Giỏ thuê đồ"
             >
@@ -307,8 +307,8 @@ export function CustomerNavbar({
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
                       className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
-                          ? "bg-[#180a0a] text-amber-100 hover:bg-[#240e0e]"
-                          : "bg-white text-ink hover:bg-stone-50"
+                        ? "bg-[#180a0a] text-amber-100 hover:bg-[#240e0e]"
+                        : "bg-white text-ink hover:bg-stone-50"
                         }`}
                       aria-label="Tài khoản VIP"
                     >
@@ -340,8 +340,8 @@ export function CustomerNavbar({
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
                       className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
-                          ? "bg-[#081a17] text-emerald-100 hover:bg-[#0c2622]"
-                          : "bg-white text-ink hover:bg-stone-50"
+                        ? "bg-[#081a17] text-emerald-100 hover:bg-[#0c2622]"
+                        : "bg-white text-ink hover:bg-stone-50"
                         }`}
                       aria-label="Tài khoản Plus"
                     >
@@ -373,8 +373,8 @@ export function CustomerNavbar({
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
                       className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
-                          ? "bg-[#1a1510] text-amber-100 hover:bg-[#221c12]"
-                          : "bg-white text-ink hover:bg-stone-50"
+                        ? "bg-[#1a1510] text-amber-100 hover:bg-[#221c12]"
+                        : "bg-white text-ink hover:bg-stone-50"
                         }`}
                       aria-label="Tài khoản"
                     >
@@ -397,8 +397,8 @@ export function CustomerNavbar({
                 {accountOpen && (
                   <div
                     className={`absolute right-0 top-12 z-50 w-60 rounded-xl p-2 shadow-2xl ${isDark
-                        ? "border border-white/15 bg-[#141419] text-stone-200"
-                        : "border border-sand bg-white text-ink shadow-xl"
+                      ? "border border-white/15 bg-[#141419] text-stone-200"
+                      : "border border-sand bg-white text-ink shadow-xl"
                       }`}
                   >
                     <div
@@ -413,8 +413,8 @@ export function CustomerNavbar({
                         href="/dashboard/customer"
                         onClick={() => setAccountOpen(false)}
                         className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
                           }`}
                       >
                         <LayoutDashboard className="h-4 w-4 opacity-70" />
@@ -424,8 +424,8 @@ export function CustomerNavbar({
                         href="/dashboard/customer/profile"
                         onClick={() => setAccountOpen(false)}
                         className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
                           }`}
                       >
                         <User className="h-4 w-4 opacity-70" />
@@ -435,12 +435,12 @@ export function CustomerNavbar({
                         href="/dashboard/customer/loyalty"
                         onClick={() => setAccountOpen(false)}
                         className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${loyaltyTier === "premium"
-                            ? "text-amber-700 hover:bg-amber-50 hover:text-amber-800"
-                            : loyaltyTier === "plus"
-                              ? "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-                              : isDark
-                                ? "hover:bg-white/10 hover:text-amber-300"
-                                : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          ? "text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                          : loyaltyTier === "plus"
+                            ? "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                            : isDark
+                              ? "hover:bg-white/10 hover:text-amber-300"
+                              : "text-stone-700 hover:bg-parchment hover:text-lotus"
                           }`}
                       >
                         {loyaltyTier === "premium" ? (
@@ -466,8 +466,8 @@ export function CustomerNavbar({
                         href={cartHref}
                         onClick={() => setAccountOpen(false)}
                         className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
                           }`}
                       >
                         <ShoppingBag className="h-4 w-4 opacity-70" />
@@ -477,8 +477,8 @@ export function CustomerNavbar({
                         href="/wishlist"
                         onClick={() => setAccountOpen(false)}
                         className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
                           }`}
                       >
                         <Heart className="h-4 w-4 opacity-70" />
@@ -502,8 +502,8 @@ export function CustomerNavbar({
                 onClick={(e) => playWoodTap({ event: e })}
                 onMouseEnter={(e) => playHoverTick({ event: e })}
                 className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
-                    ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
-                    : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
+                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
                   }`}
                 aria-label="Đăng nhập"
               >
@@ -516,8 +516,8 @@ export function CustomerNavbar({
               type="button"
               onClick={() => setMobileOpen(true)}
               className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition lg:hidden ${isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400"
-                  : "border border-sand bg-white text-ink hover:border-lotus"
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400"
+                : "border border-sand bg-white text-ink hover:border-lotus"
                 }`}
               aria-label="Mở menu"
             >
@@ -546,8 +546,8 @@ export function CustomerNavbar({
                 <Image src="/brand/logo-mark.svg" alt="Logo" width={28} height={28} className="h-7 w-7 shrink-0" />
                 <span
                   className={`font-display text-xl font-bold ${isDark
-                      ? "text-transparent bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text"
-                      : "text-lotus"
+                    ? "text-transparent bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text"
+                    : "text-lotus"
                     }`}
                 >
                   Cổ Phục
@@ -574,12 +574,12 @@ export function CustomerNavbar({
                     href={item.href}
                     onClick={() => setMobileOpen(false)}
                     className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${isHighlighted
-                        ? isDark
-                          ? "bg-amber-500/20 text-amber-300 font-semibold border-l-4 border-amber-400"
-                          : "bg-lotus text-white font-semibold"
-                        : isDark
-                          ? "text-stone-300 hover:bg-white/5"
-                          : "text-stone-700 hover:bg-parchment"
+                      ? isDark
+                        ? "bg-amber-500/20 text-amber-300 font-semibold border-l-4 border-amber-400"
+                        : "bg-lotus text-white font-semibold"
+                      : isDark
+                        ? "text-stone-300 hover:bg-white/5"
+                        : "text-stone-700 hover:bg-parchment"
                       }`}
                   >
                     <span>{item.label}</span>
@@ -591,8 +591,8 @@ export function CustomerNavbar({
                 href="/wishlist"
                 onClick={() => setMobileOpen(false)}
                 className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${isDark
-                    ? "border-white/10 bg-white/5 text-stone-200 hover:border-lotus"
-                    : "border-sand bg-mist text-stone-800 hover:border-lotus"
+                  ? "border-white/10 bg-white/5 text-stone-200 hover:border-lotus"
+                  : "border-sand bg-mist text-stone-800 hover:border-lotus"
                   }`}
               >
                 <span className="flex items-center gap-3">
@@ -608,8 +608,8 @@ export function CustomerNavbar({
                 href={cartHref}
                 onClick={() => setMobileOpen(false)}
                 className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${isDark
-                    ? "border-white/10 bg-white/5 text-stone-200 hover:border-amber-400"
-                    : "border-sand bg-mist text-stone-800 hover:border-lotus"
+                  ? "border-white/10 bg-white/5 text-stone-200 hover:border-amber-400"
+                  : "border-sand bg-mist text-stone-800 hover:border-lotus"
                   }`}
               >
                 <span className="flex items-center gap-3">
@@ -657,8 +657,8 @@ export function CustomerNavbar({
                       {loyaltyTier && loyaltyTier !== "basic" && (
                         <span
                           className={`inline-block mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${loyaltyTier === "premium"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-emerald-100 text-emerald-700"
                             }`}
                         >
                           {loyaltyTier === "premium" ? "👑 Premium" : "✦ Plus"}
@@ -670,8 +670,8 @@ export function CustomerNavbar({
                     href="/dashboard/customer"
                     onClick={() => setMobileOpen(false)}
                     className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold uppercase tracking-wider ${isDark
-                        ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950"
-                        : "bg-lotus text-white"
+                      ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950"
+                      : "bg-lotus text-white"
                       }`}
                   >
                     <LayoutDashboard className="h-4 w-4" />
@@ -691,8 +691,8 @@ export function CustomerNavbar({
                   href="/login"
                   onClick={() => setMobileOpen(false)}
                   className={`flex w-full items-center justify-center gap-2 rounded-lg py-3 text-xs font-semibold uppercase tracking-wider transition ${isDark
-                      ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 font-bold"
-                      : "bg-lotus text-white hover:bg-oxblood"
+                    ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 font-bold"
+                    : "bg-lotus text-white hover:bg-oxblood"
                     }`}
                 >
                   <User className="h-4 w-4" />

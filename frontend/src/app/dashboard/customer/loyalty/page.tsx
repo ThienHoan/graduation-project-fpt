@@ -483,10 +483,10 @@ export default function CustomerLoyaltyPage() {
                     </Link>
                     <span
                       className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${["renting", "overdue"].includes(b.status)
-                          ? "bg-amber-50 border-amber-300/80 text-amber-800"
-                          : ["returned", "inspection_pending", "refund_pending"].includes(b.status)
-                            ? "bg-blue-50 border-blue-300/80 text-blue-800"
-                            : "bg-stone-100 border-stone-300/60 text-stone-700"
+                        ? "bg-amber-50 border-amber-300/80 text-amber-800"
+                        : ["returned", "inspection_pending", "refund_pending"].includes(b.status)
+                          ? "bg-blue-50 border-blue-300/80 text-blue-800"
+                          : "bg-stone-100 border-stone-300/60 text-stone-700"
                         }`}
                     >
                       {STATUS_LABELS[b.status] ?? b.status}
@@ -547,8 +547,8 @@ export default function CustomerLoyaltyPage() {
                 <div
                   key={rule.id}
                   className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border transition-all duration-300 ${canRedeem
-                      ? "border-sand bg-white shadow-xs hover:shadow-md hover:border-lotus/40 hover:-translate-y-0.5"
-                      : "border-stone-200/80 bg-stone-50/60 opacity-80"
+                    ? "border-sand bg-white shadow-xs hover:shadow-md hover:border-lotus/40 hover:-translate-y-0.5"
+                    : "border-stone-200/80 bg-stone-50/60 opacity-80"
                     }`}
                 >
                   {/* Decorative Ticket Side Notches */}
@@ -637,8 +637,8 @@ export default function CustomerLoyaltyPage() {
                       disabled={!canRedeem || isRedeeming}
                       onClick={() => handleRedeem(rule.id)}
                       className={`w-full group/btn relative flex items-center justify-between rounded-full p-1.5 pr-4 text-xs font-bold uppercase tracking-wider transition-all duration-300 ${canRedeem
-                          ? "bg-lotus text-white hover:bg-oxblood shadow-xs active:scale-[0.98] cursor-pointer"
-                          : "bg-stone-200/80 text-stone-400 cursor-not-allowed"
+                        ? "bg-lotus text-white hover:bg-oxblood shadow-xs active:scale-[0.98] cursor-pointer"
+                        : "bg-stone-200/80 text-stone-400 cursor-not-allowed"
                         }`}
                     >
                       <div className={`flex h-7 w-7 items-center justify-center rounded-full transition-transform ${canRedeem ? "bg-white/20 text-white group-hover/btn:scale-105" : "bg-stone-300 text-stone-400"
@@ -709,8 +709,8 @@ export default function CustomerLoyaltyPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
                           className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${isEarn
-                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                              : "bg-amber-100 text-amber-900 border border-amber-200"
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                            : "bg-amber-100 text-amber-900 border border-amber-200"
                             }`}
                         >
                           {isEarn ? "Tích lũy" : "Quy đổi"}
@@ -762,8 +762,8 @@ export default function CustomerLoyaltyPage() {
         <div className="grid gap-4 sm:grid-cols-3 text-xs">
           {/* Basic */}
           <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${currentTier === "basic"
-              ? "border-lotus/40 bg-white shadow-md ring-1 ring-lotus/20"
-              : "border-sand bg-white/80"
+            ? "border-lotus/40 bg-white shadow-md ring-1 ring-lotus/20"
+            : "border-sand bg-white/80"
             }`}>
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
@@ -790,8 +790,8 @@ export default function CustomerLoyaltyPage() {
 
           {/* Plus */}
           <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${currentTier === "plus"
-              ? "border-emerald-500 bg-white shadow-md ring-1 ring-emerald-500/20"
-              : "border-emerald-200/80 bg-white/80"
+            ? "border-emerald-500 bg-white shadow-md ring-1 ring-emerald-500/20"
+            : "border-emerald-200/80 bg-white/80"
             }`}>
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
@@ -818,8 +818,8 @@ export default function CustomerLoyaltyPage() {
 
           {/* Premium */}
           <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${currentTier === "premium"
-              ? "border-amber-400 bg-white shadow-md ring-1 ring-amber-400/30"
-              : "border-amber-300/80 bg-white/80"
+            ? "border-amber-400 bg-white shadow-md ring-1 ring-amber-400/30"
+            : "border-amber-300/80 bg-white/80"
             }`}>
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">

@@ -287,11 +287,11 @@ export default function CustomerDashboardPage() {
     const deliveryBooking =
       (selectedBookingId
         ? bookings.find(
-            (b) =>
-              b.id === selectedBookingId &&
-              b.pickupMethod === "delivery" &&
-              ["delivering", "ready_for_pickup"].includes(b.status),
-          )
+          (b) =>
+            b.id === selectedBookingId &&
+            b.pickupMethod === "delivery" &&
+            ["delivering", "ready_for_pickup"].includes(b.status),
+        )
         : null) ||
       bookings
         .filter((b) => b.pickupMethod === "delivery" && ["delivering", "ready_for_pickup"].includes(b.status))
@@ -905,16 +905,14 @@ export default function CustomerDashboardPage() {
                         key={b.id}
                         type="button"
                         onClick={() => setSelectedBookingId(b.id)}
-                        className={`group inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs transition shrink-0 active:scale-[0.98] ${
-                          isSelected
+                        className={`group inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs transition shrink-0 active:scale-[0.98] ${isSelected
                             ? "bg-white border-2 border-lotus text-ink shadow-xs font-bold ring-2 ring-lotus/15"
                             : "bg-white/80 border border-sand text-stone-600 hover:border-lotus/40 hover:bg-white hover:text-ink shadow-2xs"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
-                            isSelected ? "bg-lotus text-white" : "bg-sand/60 text-stone-600"
-                          }`}
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${isSelected ? "bg-lotus text-white" : "bg-sand/60 text-stone-600"
+                            }`}
                         >
                           {idx + 1}
                         </span>
@@ -1278,17 +1276,15 @@ export default function CustomerDashboardPage() {
                       key={tab.key}
                       type="button"
                       onClick={() => setSelectedTab(tab.key as HistoryTab)}
-                      className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition active:scale-[0.98] ${
-                        isActive
+                      className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition active:scale-[0.98] ${isActive
                           ? "bg-lotus text-white shadow-2xs font-bold"
                           : "text-stone-600 hover:text-ink hover:bg-white/60"
-                      }`}
+                        }`}
                     >
                       <span>{tab.label}</span>
                       <span
-                        className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold font-mono ${
-                          isActive ? "bg-white/25 text-white" : "bg-sand/60 text-stone-600"
-                        }`}
+                        className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold font-mono ${isActive ? "bg-white/25 text-white" : "bg-sand/60 text-stone-600"
+                          }`}
                       >
                         {tab.count}
                       </span>
@@ -1962,10 +1958,10 @@ export default function CustomerDashboardPage() {
                                         </td>
                                         <td className="px-3 py-2">
                                           <span className={`inline-block rounded px-1.5 py-0.5 font-medium ${f.severity === "high" || f.severity === "severe" || f.severity === "nang"
-                                              ? "bg-red-100 text-red-700"
-                                              : f.severity === "medium" || f.severity === "vua"
-                                                ? "bg-amber-100 text-amber-700"
-                                                : "bg-blue-50 text-blue-700"
+                                            ? "bg-red-100 text-red-700"
+                                            : f.severity === "medium" || f.severity === "vua"
+                                              ? "bg-amber-100 text-amber-700"
+                                              : "bg-blue-50 text-blue-700"
                                             }`}>
                                             {f.severity || "Nhẹ"}
                                           </span>
@@ -1976,8 +1972,8 @@ export default function CustomerDashboardPage() {
                                         <td className="px-3 py-2 text-right">
                                           <div>
                                             <span className={`font-semibold tabular-nums ${isStaffProposal && hasManagerFinding
-                                                ? "line-through text-stone-400 text-xs"
-                                                : "text-amber-700"
+                                              ? "line-through text-stone-400 text-xs"
+                                              : "text-amber-700"
                                               }`}>
                                               {formatVND(f.penaltyAmount || 0)}
                                             </span>
