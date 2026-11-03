@@ -38,7 +38,7 @@ export const TIER_BENEFITS: Record<loyalty_tier, string[]> = {
 
 @Injectable()
 export class LoyaltyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Tích điểm khi đơn thuê hoàn tất (completed)

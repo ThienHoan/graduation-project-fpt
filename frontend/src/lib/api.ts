@@ -1981,7 +1981,7 @@ export async function getAdminUsers(query?: { search?: string; role?: string; st
   if (query?.status) params.append("status", query.status);
   if (query?.page) params.append("page", String(query.page));
   if (query?.limit) params.append("limit", String(query.limit));
-  
+
   const queryStr = params.toString() ? `?${params.toString()}` : "";
   return apiRequest<{ items: AdminUserEntry[]; total: number; page: number; limit: number }>(`/admin/users${queryStr}`);
 }
@@ -2003,7 +2003,7 @@ export async function getAdminAuditLogs(query?: { search?: string; action?: stri
   if (query?.entityType) params.append("entityType", query.entityType);
   if (query?.page) params.append("page", String(query.page));
   if (query?.limit) params.append("limit", String(query.limit));
-  
+
   const queryStr = params.toString() ? `?${params.toString()}` : "";
   return apiRequest<{ items: AdminAuditLogEntry[]; total: number; page: number; limit: number }>(`/admin/audit-logs${queryStr}`);
 }
@@ -2919,7 +2919,7 @@ export function trackGarmentView(garmentId: string) {
     method: "POST",
     body: JSON.stringify({ garmentId, visitorKey }),
     authToken: null,
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 // ---------- AI Virtual Try-On & Recommendations ----------
