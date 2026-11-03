@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/auth-provider";
 import { NotificationConfigPanel } from "@/components/admin/notification-config-panel";
 import { AdminPortalShell } from "@/components/heritage/ui";
-import { MapPreview } from "@/components/location/map-preview";
+import { RolePermissionPanel } from "@/components/admin/role-permission-panel";
+import { SystemConfigPanel } from "@/components/admin/system-config-panel";
+import { SecurityPanel } from "@/components/admin/security-panel";
+import { DataExportPanel } from "@/components/admin/data-export-panel";
+import { AuditActionFilter, auditActionGroup } from "@/components/admin/audit-action-filter";
 import {
   CheckCircle2,
   AlertCircle,
@@ -15,19 +19,10 @@ import {
   Pencil,
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Banknote,
   Settings,
-  Ban,
   X,
-  Cpu,
-  Wallet,
-  SlidersHorizontal,
-  Server,
-  Save,
   Search,
   UserCog,
-  type LucideIcon,
 } from "lucide-react";
 
 import {
@@ -35,23 +30,31 @@ import {
   getAdminUsers,
   updateAdminUser,
   getAdminAuditLogs,
-  getAdminSettings,
-  updateAdminSetting,
+  getAdminAuditLogActions,
+  type AdminAuditLogGroup,
+  getAdminRoles,
   type AdminSummaryCard,
   type AdminQueueCard,
   type AdminUserEntry,
   type AdminAuditLogEntry,
-  type AdminSettingEntry,
+  type AdminRoleEntry,
 } from "@/lib/api";
 
-type Tab = "overview" | "roles" | "config" | "notification-config" | "logs";
-const VALID_TABS: Tab[] = ["overview", "roles", "config", "notification-config", "logs"];
+type Tab = "overview" | "roles" | "security" | "config" | "notification-config" | "exports" | "logs";
+const VALID_TABS: Tab[] = ["overview", "roles", "security", "config", "notification-config", "exports", "logs"];
 
 function tabFromHash(): Tab {
   if (typeof window === "undefined") return "overview";
   const hash = window.location.hash.replace("#", "");
   return VALID_TABS.includes(hash as Tab) ? (hash as Tab) : "overview";
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: "Quản trị viên",
+  manager_owner: "Quản lý / Chủ cửa hàng",
+  staff: "Nhân viên",
+  customer: "Khách hàng",
+};
 
 const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
   overview: {
@@ -62,8 +65,16 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
     title: "Quản Lý Vai Trò & Người Dùng",
     subtitle: "Thiết lập phân quyền và thay đổi quyền hạn tài khoản trong hệ thống.",
   },
+  security: {
+    title: "Bảo Mật Tài Khoản",
+    subtitle: "Theo dõi tài khoản bị khóa, chưa xác minh email, buộc đăng xuất và xác minh thủ công.",
+  },
+  exports: {
+    title: "Xuất Dữ Liệu",
+    subtitle: "Tải dữ liệu tài khoản, đơn thuê và nhật ký kiểm toán dưới dạng CSV theo khoảng ngày.",
+  },
   config: {
-    title: "Cấu Hình Hệ Thống & AI",
+    title: "Cấu Hình Hệ Thống",
     subtitle: "Quản lý tham số AI Engine, phân bổ tính toán và tích hợp cổng thanh toán.",
   },
   "notification-config": {
@@ -74,28 +85,6 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
     title: "Nhật Ký Kiểm Toán",
     subtitle: "Ghi nhận toàn bộ thao tác quản trị, thay đổi cấu hình và sự kiện bảo mật hệ thống.",
   },
-};
-
-const DEFAULT_AI_SETTINGS = {
-  ai_model_version: "v3.2",
-  ai_base_url: "https://api.cophuc-ai.vn/v1/inference",
-  ai_primary_key: "sk-heritage-live-1a2b3c4d5e6f7g8h9i0j",
-  ai_failover_key: "sk-heritage-fail-0j9i8h7g6f5e4d3c2b1a",
-  ai_target_gpu: "asia-se1-a",
-  ai_max_sessions: 120,
-  ai_timeout: 8500,
-  ai_autoscaling: true,
-  payment_vnpay_tmncode: "ATELIER_TEST",
-  payment_vnpay_hashsecret: "secretkey1234567890",
-  payment_vnpay_returnurl: "https://erp.cophuc.vn/payments/callback",
-  max_rental_days: 30,
-  deposit_refund_window_h: 48,
-  late_penalty_per_day: 200000,
-  store_address: "Đại học FPT Đà Nẵng, Khu đô thị FPT City, Phường Hòa Hải, Quận Ngũ Hành Sơn, Thành phố Đà Nẵng",
-  store_phone: "0236 730 0999",
-  store_lat: "15.967945",
-  store_lng: "108.260727",
-  shipping_rate_per_km: 5000,
 };
 
 export default function AdminOverviewPage() {
@@ -134,20 +123,17 @@ export default function AdminOverviewPage() {
   const [logPage, setLogPage] = useState(1);
   const [logSearch, setLogSearch] = useState("");
   const [logActionFilter, setLogActionFilter] = useState("all");
+  const [logGroup, setLogGroup] = useState<AdminAuditLogGroup>("all");
+  const [logActions, setLogActions] = useState<{ action: string; count: number }[]>([]);
 
-  // State settings
-  const [settings, setSettings] = useState<AdminSettingEntry[]>([]);
-  const [aiSettings, setAiSettings] = useState(DEFAULT_AI_SETTINGS);
+  // State roles
+  const [roleMatrix, setRoleMatrix] = useState<AdminRoleEntry[]>([]);
 
   // Loading & Alerts
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [actioningUser, setActioningUser] = useState(false);
-  const [actioningConfig, setActioningConfig] = useState(false);
-
-  // Selected Role for Permission Preview
-  const [selectedPreviewRole, setSelectedPreviewRole] = useState<string>("manager_owner");
 
   // Sync date label on mount
   useEffect(() => {
@@ -229,29 +215,18 @@ export default function AdminOverviewPage() {
     }
   }, [tab, fetchUsers]);
 
-  // Load Config Settings
+  // Load real role/permission matrix
   useEffect(() => {
-    if (tab === "config") {
-      setLoading(true);
-      getAdminSettings()
+    if (tab === "roles") {
+      getAdminRoles()
         .then((res) => {
           if (res.success && res.data) {
-            setSettings(res.data);
-            // Map settings list to local form object values
-            const mapped = { ...DEFAULT_AI_SETTINGS };
-            res.data.forEach((s) => {
-              const val = s.value && typeof s.value === "object" && "value" in s.value ? (s.value as any).value : s.value;
-              if (s.key in mapped) {
-                (mapped as any)[s.key] = val;
-              }
-            });
-            setAiSettings(mapped);
+            setRoleMatrix(res.data.roles);
           } else {
-            setErrorMsg(res.error ?? "Không thể tải cấu hình hệ thống");
+            setErrorMsg(res.error ?? "Không thể tải bảng phân quyền");
           }
         })
-        .catch(() => setErrorMsg("Lỗi mạng khi tải cấu hình"))
-        .finally(() => setLoading(false));
+        .catch(() => setErrorMsg("Lỗi mạng khi tải bảng phân quyền"));
     }
   }, [tab]);
 
@@ -261,6 +236,7 @@ export default function AdminOverviewPage() {
     getAdminAuditLogs({
       search: logSearch || undefined,
       action: logActionFilter !== "all" ? logActionFilter : undefined,
+      group: logGroup,
       page: logPage,
       limit: 10,
     })
@@ -274,7 +250,7 @@ export default function AdminOverviewPage() {
       })
       .catch(() => setErrorMsg("Lỗi mạng khi tải nhật ký kiểm toán"))
       .finally(() => setLoading(false));
-  }, [logSearch, logActionFilter, logPage]);
+  }, [logSearch, logActionFilter, logGroup, logPage]);
 
   useEffect(() => {
     if (tab === "logs") {
@@ -282,17 +258,26 @@ export default function AdminOverviewPage() {
     }
   }, [tab, fetchAuditLogs]);
 
+  useEffect(() => {
+    if (tab !== "logs") return;
+    getAdminAuditLogActions()
+      .then((res) => {
+        if (res.success && res.data) setLogActions(res.data);
+      })
+      .catch(() => undefined);
+  }, [tab]);
+
 
   // Trigger Local Alerts helper
-  const triggerSuccess = (msg: string) => {
+  const triggerSuccess = useCallback((msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(null), 4000);
-  };
+  }, []);
 
-  const triggerError = (msg: string) => {
+  const triggerError = useCallback((msg: string) => {
     setErrorMsg(msg);
     setTimeout(() => setErrorMsg(null), 5000);
-  };
+  }, []);
 
   // Handle Edit User Submit with lockout guards
   const handleUserEditSubmit = (e: React.FormEvent) => {
@@ -326,79 +311,6 @@ export default function AdminOverviewPage() {
       })
       .catch(() => triggerError("Lỗi hệ thống khi cập nhật người dùng"))
       .finally(() => setActioningUser(false));
-  };
-
-  // Handle Save Config Settings
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setActioningConfig(true);
-    setErrorMsg(null);
-
-    try {
-      // Collect parameters to update
-      const keysToUpdate = Object.keys(aiSettings) as Array<keyof typeof aiSettings>;
-      
-      for (const key of keysToUpdate) {
-        const val = aiSettings[key];
-        // Only trigger update if setting has changed
-        const dbSetting = settings.find((s) => s.key === key);
-        const originalVal = dbSetting
-          ? dbSetting.value && typeof dbSetting.value === "object" && "value" in dbSetting.value
-            ? (dbSetting.value as any).value
-            : dbSetting.value
-          : null;
-
-        if (originalVal !== val) {
-          // Send update call — always wrap in { value } for consistency with backend
-          await updateAdminSetting(
-            key,
-            typeof val === "number" || typeof val === "boolean" ? { value: val } : { value: val },
-          );
-        }
-      }
-      
-      triggerSuccess("Cấu hình hệ thống và tham số AI đã được lưu thành công.");
-    } catch (err: any) {
-      triggerError(err.message ?? "Lỗi xảy ra khi lưu cấu hình.");
-    } finally {
-      setActioningConfig(false);
-    }
-  };
-
-  // Role labels
-  const roleLabelMap: Record<string, string> = {
-    admin: "Super Admin",
-    manager_owner: "Manager / Owner",
-    staff: "Staff / Consultant",
-    customer: "Customer Portal",
-  };
-
-  // Permissions Preset for Role Grid Mockup preview
-  const rolePermissionsPreset: Record<string, Record<string, string[]>> = {
-    admin: {
-      inventory: ["Xem", "Thêm", "Sửa", "Xóa"],
-      bookings: ["Xem", "Thêm", "Sửa", "Xóa"],
-      finance: ["Xem", "Thêm", "Sửa", "Xóa"],
-      config: ["Xem", "Thêm", "Sửa", "Xóa"],
-    },
-    manager_owner: {
-      inventory: ["Xem", "Thêm", "Sửa"],
-      bookings: ["Xem", "Thêm", "Sửa"],
-      finance: ["Xem"],
-      config: ["Xem"],
-    },
-    staff: {
-      inventory: ["Xem"],
-      bookings: ["Xem", "Thêm", "Sửa"],
-      finance: [],
-      config: [],
-    },
-    customer: {
-      inventory: ["Xem"],
-      bookings: ["Xem", "Thêm"],
-      finance: [],
-      config: [],
-    },
   };
 
   if (!hasMounted) return null;
@@ -450,7 +362,7 @@ export default function AdminOverviewPage() {
                   className={`rounded-xl border p-6 shadow-sm bg-white hover:shadow-md transition-shadow`}
                 >
                   <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">{card.label}</p>
-                  <p className="mt-2 font-display text-4xl font-bold text-ink">
+                  <p className="mt-2 text-4xl font-bold text-ink">
                     {card.key === "finance"
                       ? new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(card.value)
                       : card.value.toLocaleString("vi-VN")}
@@ -465,7 +377,7 @@ export default function AdminOverviewPage() {
           <div className="grid gap-8 lg:grid-cols-3">
             {/* Queues list */}
             <div className="lg:col-span-1 space-y-6">
-              <h3 className="font-display text-2xl font-bold text-ink flex items-center gap-2">
+              <h3 className="text-2xl font-bold text-ink flex items-center gap-2">
                 <CheckSquare className="h-6 w-6 text-lotus" />
                 Hàng Chờ Đang Xử Lý
               </h3>
@@ -479,7 +391,7 @@ export default function AdminOverviewPage() {
                       <p className="text-sm font-semibold text-ink">{q.label}</p>
                       <p className="text-xs text-stone-500 mt-0.5">{q.hint}</p>
                     </div>
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-lotus/10 font-display text-sm font-bold text-lotus">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-lotus/10 text-sm font-bold text-lotus">
                       {q.value}
                     </span>
                   </div>
@@ -489,7 +401,7 @@ export default function AdminOverviewPage() {
 
             {/* System Breakdown Charts / Tables */}
             <div className="lg:col-span-2 space-y-6">
-              <h3 className="font-display text-2xl font-bold text-ink flex items-center gap-2">
+              <h3 className="text-2xl font-bold text-ink flex items-center gap-2">
                 <Activity className="h-6 w-6 text-antique" />
                 Trạng Thái Tài Sản & Đơn Hàng
               </h3>
@@ -533,7 +445,7 @@ export default function AdminOverviewPage() {
           {/* Left panel: User Accounts list */}
           <div className="lg:col-span-7 bg-white rounded-xl border border-sand shadow-sm overflow-hidden flex flex-col">
             <div className="p-5 border-b border-sand/60 bg-warm-ivory flex flex-wrap gap-4 items-center justify-between">
-              <h3 className="font-display text-2xl font-bold text-ink">Danh Sách Tài Khoản</h3>
+              <h3 className="text-2xl font-bold text-ink">Danh Sách Tài Khoản</h3>
               <div className="flex flex-wrap gap-2">
                 <input
                   type="text"
@@ -617,11 +529,11 @@ export default function AdminOverviewPage() {
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-stone-500 font-mono mt-0.5">{u.email}</div>
+                          <div className="text-xs text-stone-500 mt-0.5">{u.email}</div>
                         </td>
                         <td className="py-3.5 px-4">
                           <span className="text-xs font-semibold px-2.5 py-1 rounded bg-lotus/10 text-lotus">
-                            {roleLabelMap[u.role] || u.role}
+                            {ROLE_LABELS[u.role] || u.role}
                           </span>
                         </td>
                         <td className="py-3.5 px-4">
@@ -699,86 +611,15 @@ export default function AdminOverviewPage() {
             )}
           </div>
 
-          {/* Right panel: User Roles & preset permissions grid layout */}
-          <div className="lg:col-span-5 bg-white rounded-xl border border-sand shadow-sm overflow-hidden flex flex-col">
-            <div className="p-5 border-b border-sand/60 bg-warm-ivory">
-              <h3 className="font-display text-2xl font-bold text-ink">Bảng Phân Quyền Vai Trò</h3>
-            </div>
-            
-            {/* Roles list */}
-            <div className="p-4 border-b border-sand/30 bg-stone-50/50 flex gap-2 overflow-x-auto">
-              {Object.keys(roleLabelMap).map((roleKey) => (
-                <button
-                  key={roleKey}
-                  onClick={() => setSelectedPreviewRole(roleKey)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                    selectedPreviewRole === roleKey
-                      ? "bg-lotus text-white"
-                      : "bg-white text-stone-600 border border-sand hover:bg-warm-ivory/50"
-                  }`}
-                >
-                  {roleLabelMap[roleKey]}
-                </button>
-              ))}
-            </div>
-
-            {/* Permission detailed grid */}
-            <div className="p-6 space-y-6">
-              <div className="border-b border-sand pb-2 flex justify-between items-end">
-                <div>
-                  <h4 className="font-display text-lg font-bold text-lotus">
-                    Quyền hạn: {roleLabelMap[selectedPreviewRole]}
-                  </h4>
-                  <p className="text-xs text-stone-500 mt-0.5">Quyền hạn hệ thống được định nghĩa cứng trong kiến trúc ứng dụng.</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {[
-                  { key: "inventory", label: "Kho Hàng (Inventory)", icon: "inventory_2" },
-                  { key: "bookings", label: "Đơn Thuê & Hợp Đồng (Bookings)", icon: FileText },
-                  { key: "finance", label: "Đối Soát Tài Chính (Finance)", icon: Banknote },
-                  { key: "config", label: "Cấu Hình Hệ Thống (Settings)", icon: Settings },
-                ].map((res) => {
-                  const allowed = rolePermissionsPreset[selectedPreviewRole]?.[res.key] || [];
-                  return (
-                    <div key={res.key} className="p-4 rounded-xl border border-sand bg-warm-ivory/20">
-                      <div className="flex items-center gap-2 mb-3">
-                        {(() => { const ResIcon = res.icon; return <ResIcon className="h-5 w-5 text-antique" />; })()}
-                        <span className="text-sm font-semibold text-ink">{res.label}</span>
-                      </div>
-                      
-                      <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                        {["Xem", "Thêm", "Sửa", "Xóa"].map((perm) => {
-                          const hasPerm = allowed.includes(perm);
-                          return (
-                            <div
-                              key={perm}
-                              className={`py-1 rounded border flex items-center justify-center gap-1 ${
-                                hasPerm
-                                  ? "bg-jade/5 border-jade/30 text-jade font-semibold"
-                                  : "bg-stone-50 border-stone-200 text-stone-400 opacity-60"
-                              }`}
-                            >
-                              {hasPerm ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
-                              {perm}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          {/* Right panel: real permission matrix from the API */}
+          <RolePermissionPanel roles={roleMatrix} loading={loading} />
 
           {/* Edit User Account Modal Dialog */}
           {editingUser && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4">
               <div className="w-full max-w-md bg-white rounded-xl border border-sand shadow-2xl overflow-hidden animate-zoom-in">
                 <header className="p-5 border-b border-sand bg-warm-ivory flex justify-between items-center">
-                  <h3 className="font-display text-xl font-bold text-ink">Chỉnh Sửa Tài Khoản</h3>
+                  <h3 className="text-xl font-bold text-ink">Chỉnh Sửa Tài Khoản</h3>
                   <button
                     onClick={() => setEditingUser(null)}
                     className="text-stone-400 hover:text-stone-600 rounded-full p-1"
@@ -874,319 +715,11 @@ export default function AdminOverviewPage() {
       {/* ────────────────────────────────────────────────────────
           TAB: SYSTEM CONFIG & AI
       ──────────────────────────────────────────────────────── */}
-      {tab === "config" && (
-        <>
-        <form onSubmit={handleSaveConfig} className="grid gap-8 lg:grid-cols-12 items-start">
-          {/* AI Settings Form */}
-          <div className="lg:col-span-8 space-y-6">
-            {/* AI Engine parameters */}
-            <div className="bg-white rounded-xl border border-sand p-6 shadow-sm">
-              <header className="flex justify-between items-start mb-6 border-b border-sand pb-4">
-                <div>
-                  <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                    <Cpu className="h-6 w-6 text-antique" />
-                    AI Engine Parameters
-                  </h3>
-                  <p className="text-xs text-stone-500 mt-1">
-                    Cấu hình đường truyền mạng và khoá API cho mạng nơ-ron Heritage-V3.2.
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-jade/30 bg-jade/5 text-jade text-xs font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-jade/50"></span>
-                  Đang hoạt động
-                </span>
-              </header>
+      {tab === "security" && <SecurityPanel currentUserId={user?.id ?? null} onSuccess={triggerSuccess} onError={triggerError} />}
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Phiên bản mô hình AI</label>
-                  <select
-                    value={aiSettings.ai_model_version}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_model_version: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  >
-                    <option value="v3.2">Heritage-V3.2 (Ổn định hiện tại)</option>
-                    <option value="v4.0-beta">Heritage-V4.0 (Thử nghiệm Beta)</option>
-                    <option value="v3.1">Heritage-V3.1 (Di sản cũ)</option>
-                  </select>
-                </div>
+      {tab === "exports" && <DataExportPanel onSuccess={triggerSuccess} onError={triggerError} />}
 
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">AI Base Endpoint URL</label>
-                  <input
-                    type="text"
-                    value={aiSettings.ai_base_url}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_base_url: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div>
-                    <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Primary API Key</label>
-                    <input
-                      type="password"
-                      value={aiSettings.ai_primary_key}
-                      onChange={(e) => setAiSettings({ ...aiSettings, ai_primary_key: e.target.value })}
-                      className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Secondary API Key</label>
-                    <input
-                      type="password"
-                      value={aiSettings.ai_failover_key}
-                      onChange={(e) => setAiSettings({ ...aiSettings, ai_failover_key: e.target.value })}
-                      className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Payment Integration */}
-            <div className="bg-white rounded-xl border border-sand p-6 shadow-sm">
-              <header className="mb-6 border-b border-sand pb-4">
-                <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <Wallet className="h-6 w-6 text-antique" />
-                  Payment Gateway Integration
-                </h3>
-                <p className="text-xs text-stone-500 mt-1">Cấu hình kết nối cổng VNPAY để xử lý giao dịch đặt cọc tự động.</p>
-              </header>
-
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">vnp_TmnCode</label>
-                  <input
-                    type="text"
-                    value={aiSettings.payment_vnpay_tmncode}
-                    onChange={(e) => setAiSettings({ ...aiSettings, payment_vnpay_tmncode: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none font-mono text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">vnp_HashSecret</label>
-                  <input
-                    type="password"
-                    value={aiSettings.payment_vnpay_hashsecret}
-                    onChange={(e) => setAiSettings({ ...aiSettings, payment_vnpay_hashsecret: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none font-mono text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">vnp_ReturnUrl</label>
-                  <input
-                    type="text"
-                    value={aiSettings.payment_vnpay_returnurl}
-                    onChange={(e) => setAiSettings({ ...aiSettings, payment_vnpay_returnurl: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none text-sm"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* General Database Settings */}
-            <div className="bg-white rounded-xl border border-sand p-6 shadow-sm">
-              <header className="mb-6 border-b border-sand pb-4">
-                <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <SlidersHorizontal className="h-6 w-6 text-antique" />
-                  General Business Settings
-                </h3>
-                <p className="text-xs text-stone-500 mt-1">Thiết lập chính sách đơn thuê, địa chỉ cửa hàng và tiền phạt quá hạn.</p>
-              </header>
-
-              <div className="grid gap-6 md:grid-cols-3">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Số ngày thuê tối đa</label>
-                  <input
-                    type="number"
-                    value={aiSettings.max_rental_days}
-                    onChange={(e) => setAiSettings({ ...aiSettings, max_rental_days: parseInt(e.target.value) || 0 })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Cửa sổ hoàn cọc (Giờ)</label>
-                  <input
-                    type="number"
-                    value={aiSettings.deposit_refund_window_h}
-                    onChange={(e) => setAiSettings({ ...aiSettings, deposit_refund_window_h: parseInt(e.target.value) || 0 })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Phí trễ hạn / Ngày (đ)</label>
-                  <input
-                    type="number"
-                    value={aiSettings.late_penalty_per_day}
-                    onChange={(e) => setAiSettings({ ...aiSettings, late_penalty_per_day: parseInt(e.target.value) || 0 })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-6 md:grid-cols-2 mt-4">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Địa chỉ cửa hàng</label>
-                  <input
-                    type="text"
-                    value={aiSettings.store_address}
-                    onChange={(e) => setAiSettings({ ...aiSettings, store_address: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Hotline cửa hàng</label>
-                  <input
-                    type="text"
-                    value={aiSettings.store_phone}
-                    onChange={(e) => setAiSettings({ ...aiSettings, store_phone: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-6 md:grid-cols-3 mt-4">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Vĩ độ Atelier</label>
-                  <input
-                    type="text"
-                    value={aiSettings.store_lat}
-                    onChange={(e) => setAiSettings({ ...aiSettings, store_lat: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                    placeholder="10.7769"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Kinh độ Atelier</label>
-                  <input
-                    type="text"
-                    value={aiSettings.store_lng}
-                    onChange={(e) => setAiSettings({ ...aiSettings, store_lng: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                    placeholder="106.7009"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Phí giao hàng/km (VND)</label>
-                  <input
-                    type="number"
-                    value={aiSettings.shipping_rate_per_km}
-                    onChange={(e) => setAiSettings({ ...aiSettings, shipping_rate_per_km: parseInt(e.target.value) || 0 })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-              </div>
-
-              {(() => {
-                const sl = parseFloat(aiSettings.store_lat);
-                const sln = parseFloat(aiSettings.store_lng);
-                if (!Number.isFinite(sl) || !Number.isFinite(sln)) return null;
-                return (
-                  <div className="mt-4">
-                    <label className="block text-xs uppercase font-bold text-stone-500 mb-2">Xem trước vị trí Atelier</label>
-                    <MapPreview lat={sl} lng={sln} />
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* Right panel: Compute allocation sidebar & Save */}
-          <div className="lg:col-span-4 space-y-6">
-            <div className="bg-white rounded-xl border border-sand p-6 shadow-sm space-y-6">
-              <header className="border-b border-sand pb-4">
-                <h3 className="font-display text-xl font-bold text-ink flex items-center gap-2">
-                  <Server className="h-6 w-6 text-antique" />
-                  Compute Allocation
-                </h3>
-                <p className="text-xs text-stone-500 mt-1">Quản lý tải và cụm GPU inference cho hệ thống.</p>
-              </header>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">GPU Cluster chính</label>
-                  <select
-                    value={aiSettings.ai_target_gpu}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_target_gpu: e.target.value })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none text-sm"
-                  >
-                    <option value="asia-se1-a">asia-southeast1-a (Primary A100)</option>
-                    <option value="asia-se1-b">asia-southeast1-b (Secondary V100)</option>
-                    <option value="asia-east1">asia-east1 (Fallback T4)</option>
-                  </select>
-                </div>
-
-                <div className="bg-warm-ivory p-4 rounded-lg border border-sand/50">
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-bold uppercase text-stone-500">Giới Hạn Kết Nối Đồng Thời</label>
-                    <span className="text-sm font-bold text-lotus">{aiSettings.ai_max_sessions}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={10}
-                    max={500}
-                    value={aiSettings.ai_max_sessions}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_max_sessions: parseInt(e.target.value) || 10 })}
-                    className="w-full accent-lotus cursor-pointer h-2 bg-sand rounded-lg appearance-none"
-                  />
-                  <div className="flex justify-between text-[10px] text-stone-500 font-bold uppercase mt-1">
-                    <span>10</span>
-                    <span>500</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs uppercase font-bold text-stone-500 mb-1">Timeout Suy Luận AI (ms)</label>
-                  <input
-                    type="number"
-                    value={aiSettings.ai_timeout}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_timeout: parseInt(e.target.value) || 1000 })}
-                    className="w-full border-0 border-b border-sand bg-transparent py-2 text-ink font-body-md focus:border-antique focus:ring-0 outline-none"
-                  />
-                </div>
-
-                <label className="flex items-center gap-3 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={aiSettings.ai_autoscaling}
-                    onChange={(e) => setAiSettings({ ...aiSettings, ai_autoscaling: e.target.checked })}
-                    className="rounded border-sand text-lotus focus:ring-lotus h-5 w-5"
-                  />
-                  <span className="text-sm font-semibold text-ink">Bật tự động giãn nở (Auto-scaling)</span>
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-sand/40 space-y-2">
-                <button
-                  type="submit"
-                  disabled={actioningConfig}
-                  className="w-full py-3 bg-lotus hover:bg-oxblood text-white rounded-lg text-sm font-semibold shadow-md flex justify-center items-center gap-2 disabled:opacity-50"
-                >
-                  <Save className="h-5 w-5" />
-                  {actioningConfig ? "Đang lưu cấu hình..." : "Lưu Toàn Bộ Cấu Hình"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => router.refresh()}
-                  className="w-full py-2.5 border border-sand bg-white text-stone-600 rounded-lg text-sm font-semibold hover:bg-stone-50"
-                >
-                  Huỷ bỏ
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
-        </>
-      )}
+      {tab === "config" && <SystemConfigPanel onSuccess={triggerSuccess} onError={triggerError} />}
 
       {tab === "notification-config" && (
         <NotificationConfigPanel />
@@ -1216,21 +749,22 @@ export default function AdminOverviewPage() {
               </div>
             </div>
 
-            <div className="w-52">
-              <label className="block text-[10px] uppercase font-bold text-stone-500 mb-1">Loại thao tác (Action)</label>
-              <select
-                value={logActionFilter}
-                onChange={(e) => {
-                  setLogActionFilter(e.target.value);
-                  setLogPage(1);
-                }}
-                className="w-full rounded-lg border border-sand bg-white py-1.5 px-3 text-xs text-ink focus:border-antique outline-none appearance-none"
-              >
-                <option value="all">Tất cả hành động</option>
-                <option value="ADMIN_UPDATE_USER">Cập nhật quyền người dùng</option>
-                <option value="ADMIN_UPDATE_SETTING">Thay đổi cấu hình hệ thống</option>
-              </select>
-            </div>
+            <AuditActionFilter
+              group={logGroup}
+              action={logActionFilter}
+              actions={logActions}
+              onGroupChange={(next) => {
+                setLogGroup(next);
+                if (logActionFilter !== "all" && next !== "all" && auditActionGroup(logActionFilter) !== next) {
+                  setLogActionFilter("all");
+                }
+                setLogPage(1);
+              }}
+              onActionChange={(next) => {
+                setLogActionFilter(next);
+                setLogPage(1);
+              }}
+            />
 
             <button
               onClick={fetchAuditLogs}
@@ -1267,7 +801,7 @@ export default function AdminOverviewPage() {
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <div className="font-semibold text-ink">{log.actorName || "Hệ thống"}</div>
-                          <div className="text-xs text-stone-500 font-mono mt-0.5">{log.actorEmail || "automated@system"}</div>
+                          <div className="text-xs text-stone-500 mt-0.5">{log.actorEmail || "automated@system"}</div>
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-xs font-semibold bg-stone-100 text-stone-700 border border-stone-200">

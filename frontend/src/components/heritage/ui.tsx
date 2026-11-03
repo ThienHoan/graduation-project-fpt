@@ -40,6 +40,8 @@ import {
   Map,
   RotateCcw,
   Menu,
+  ShieldAlert,
+  Download,
   type LucideIcon,
 } from "lucide-react";
 import { ManagerSidebar } from "@/components/dashboard/manager-sidebar";
@@ -48,7 +50,7 @@ import { StaffSidebar } from "@/components/dashboard/staff-sidebar";
 type BookingStepKey = (typeof bookingFlowSteps)[number]["key"];
 export type StaffNavKey = "overview" | "pending" | "all" | "refunds" | "map" | "inspection" | "chat" | "reviews";
 export type ManagerNavKey = "overview" | "inventory" | "accessories" | "inspection-log" | "penalty-review" | "laundry" | "damaged" | "finance" | "assets" | "reviews" | "refunds" | "chat" | "pricing" | "rejected-handovers" | "vouchers" | "product-stats" | "faq";
-export type AdminNavKey = "overview" | "roles" | "config" | "notification-config" | "logs";
+export type AdminNavKey = "overview" | "roles" | "security" | "config" | "notification-config" | "exports" | "logs";
 
 export function BookingFlowShell({
   currentStep,
@@ -564,9 +566,11 @@ export function AdminPortalShell({
   const items: { key: AdminNavKey; label: string; icon: LucideIcon; href: string }[] = [
     { key: "overview", label: "Tổng quan", icon: LayoutDashboard, href: "/dashboard/admin" },
     { key: "roles", label: "Vai trò & Tài khoản", icon: ShieldCheck, href: "/dashboard/admin#roles" },
+    { key: "security", label: "Bảo mật tài khoản", icon: ShieldAlert, href: "/dashboard/admin#security" },
     { key: "config", label: "Cấu hình hệ thống", icon: Sliders, href: "/dashboard/admin#config" },
     { key: "notification-config", label: "Cấu hình thông báo", icon: Bell, href: "/dashboard/admin#notification-config" },
-    { key: "logs", label: "Nhật ký kiểm soát", icon: FileText, href: "/dashboard/admin#logs" },
+    { key: "exports", label: "Xuất dữ liệu", icon: Download, href: "/dashboard/admin#exports" },
+    { key: "logs", label: "Nhật ký kiểm toán", icon: FileText, href: "/dashboard/admin#logs" },
   ];
 
   return (
@@ -574,11 +578,11 @@ export function AdminPortalShell({
       {/* Side Navigation */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sand bg-parchment p-4 lg:flex">
         <div className="mb-8 px-3 pt-4">
-          <h1 className="font-display text-3xl text-lotus">Cổ Phục Rental</h1>
+          <h1 className="font-bold text-3xl text-lotus">Cổ Phục Rental</h1>
           <p className="mt-1 text-sm text-stone-500">Hệ thống quản trị</p>
         </div>
         <div className="mb-8 flex items-center gap-4 rounded-xl border border-sand/70 bg-white p-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-lotus/10 font-display text-xl text-lotus">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-lotus/10 font-bold text-xl text-lotus">
             {initials}
           </div>
           <div className="min-w-0">
@@ -632,7 +636,7 @@ export function AdminPortalShell({
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-sand bg-mist/95 px-4 backdrop-blur md:px-6 lg:px-8">
           <div>
-            <h2 className="font-display text-3xl text-lotus">Cổ Phục Rental</h2>
+            <h2 className="font-bold text-3xl text-lotus">Cổ Phục Rental</h2>
             <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{subtitle}</p>
           </div>
           <div className="flex items-center gap-2 md:gap-3">
@@ -653,7 +657,7 @@ export function AdminPortalShell({
         <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-6 lg:px-8">
           <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 className="font-display text-4xl text-ink sm:text-5xl">{title}</h1>
+              <h1 className="font-bold text-4xl text-ink sm:text-5xl">{title}</h1>
               <p className="mt-2 text-base text-stone-600">{subtitle}</p>
             </div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-bronze">Super Admin</p>
