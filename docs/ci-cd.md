@@ -99,6 +99,15 @@ VERCEL_PROJECT_ID
 NEXT_PUBLIC_API_URL
 ```
 
+> **Socket.IO trên production (chống Mixed Content).** Trang production chạy
+> HTTPS, nên KHÔNG được để `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_SOCKET_URL` trỏ
+> thẳng IP backend bằng `http://` (vd `http://104.248.147.219:4000/api`) —
+> Socket.IO sẽ mở `http://.../socket.io/...` và bị trình duyệt chặn Mixed
+> Content. Đặt `NEXT_PUBLIC_API_URL=https://<domain>/backend-api` (hoặc bỏ hẳn)
+> để socket đi same-origin qua rewrite `/socket.io/*` của `next.config.js`.
+> `resolveSocketUrl` cũng tự lùi về URL tương đối nếu phát hiện `http://`
+> khác loopback khi trang HTTPS.
+
 Backend/Railway or Render:
 
 ```text

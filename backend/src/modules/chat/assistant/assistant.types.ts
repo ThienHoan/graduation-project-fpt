@@ -50,6 +50,11 @@ export type AssistantRouteOutput = {
   /** Câu hỏi lại đã dùng hết một lần hay chưa. */
   askAgain?: boolean;
   llmRequest?: string;
+  /**
+   * Intent AI gốc (`ai.sizing`, `ai.comparison`, ...). Caller dùng để chọn
+   * cách tra cứu/prompt phù hợp thay vì coi mọi câu AI là "tìm sản phẩm".
+   */
+  llmIntent?: string;
   usedLlm: boolean;
   /** Tin đã được xử lý trước đó (idempotency). */
   idempotentSkip?: boolean;

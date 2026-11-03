@@ -643,6 +643,7 @@ describe("AssistantRouterService", () => {
       action: "llm",
       route: "AI",
       intent: "ai.styling",
+      llmIntent: "ai.styling",
       usedLlm: true,
     });
     expect(handoff.open).not.toHaveBeenCalled();
