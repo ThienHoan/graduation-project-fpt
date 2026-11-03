@@ -1,5 +1,5 @@
 import { Transform } from "class-transformer";
-import { IsOptional, IsString, Max, Min } from "class-validator";
+import { IsIn, IsOptional, IsString, Max, Min } from "class-validator";
 
 const DEFAULT_LIMIT = 20;
 
@@ -34,4 +34,9 @@ export class AdminAuditLogQueryDto {
   @IsOptional()
   @IsString()
   entityType?: string;
+
+  /** admin = ADMIN_*, notification = notification.*, other = everything else. */
+  @IsOptional()
+  @IsIn(["all", "admin", "notification", "other"])
+  group?: "all" | "admin" | "notification" | "other";
 }

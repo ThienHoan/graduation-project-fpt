@@ -127,3 +127,33 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
 
 export const ADMIN_ROLE_OPTIONS: AppRole[] = ["customer", "staff", "manager_owner", "admin"];
 
+
+export const ADMIN_ROLE_LABELS: Record<AppRole, string> = {
+  admin: "Quản trị viên",
+  manager_owner: "Quản lý / Chủ cửa hàng",
+  staff: "Nhân viên",
+  customer: "Khách hàng",
+};
+
+export const ADMIN_AREA_LABELS: Record<string, string> = {
+  accessories: "Phụ kiện",
+  admin: "Quản trị hệ thống",
+  ai: "AI",
+  analytics: "Thống kê",
+  assets: "Kho trang phục",
+  bookings: "Đơn thuê",
+  chat: "Chat & FAQ",
+  financial: "Tài chính",
+  garments: "Trang phục",
+  inspections: "Kiểm tra trả hàng",
+  notifications: "Thông báo",
+  payments: "Thanh toán",
+  pricing: "Giá thuê",
+  refunds: "Hoàn tiền",
+  reviews: "Đánh giá",
+  users: "Người dùng",
+  vouchers: "Voucher",
+  wishlist: "Yêu thích",
+};
+
+export const ADMIN_SETTING_KEYS = new Set(ADMIN_SETTING_DEFINITIONS.map((definition) => definition.key));
