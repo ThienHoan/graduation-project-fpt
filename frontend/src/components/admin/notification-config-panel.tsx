@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Pagination } from "@/components/common/pagination";
 import {
   getNotificationLogs,
   getNotificationSettings,
@@ -43,6 +44,7 @@ const EMPTY_SETTINGS: NotificationSettingsForm = {
 };
 
 const DEFAULT_TEST_TEMPLATE = "booking.created";
+const TEMPLATES_PER_PAGE = 4;
 
 function toFormSettings(settings: NotificationSettings): NotificationSettingsForm {
   return {
@@ -83,6 +85,7 @@ export function NotificationConfigPanel() {
   const [templates, setTemplates] = useState<NotificationTemplatesMap>({});
   const [logs, setLogs] = useState<NotificationLogEntry[]>([]);
 
+  const [templatePage, setTemplatePage] = useState(1);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingTemplates, setSavingTemplates] = useState(false);
   const [sendingTest, setSendingTest] = useState(false);
@@ -245,6 +248,13 @@ export function NotificationConfigPanel() {
     }));
   }
 
+  const totalTemplatePages = Math.max(1, Math.ceil(templateEntries.length / TEMPLATES_PER_PAGE));
+  const currentTemplatePage = Math.min(templatePage, totalTemplatePages);
+  const pagedTemplateEntries = templateEntries.slice(
+    (currentTemplatePage - 1) * TEMPLATES_PER_PAGE,
+    currentTemplatePage * TEMPLATES_PER_PAGE,
+  );
+
   return (
     <section className="space-y-8 rounded-xl border border-sand bg-white p-6 shadow-sm">
       {successMsg ? (
@@ -342,7 +352,7 @@ export function NotificationConfigPanel() {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
-              {templateEntries.map(([key, template]) => (
+              {pagedTemplateEntries.map(([key, template]) => (
                 <div key={key} className="rounded-xl border border-sand bg-white p-4 shadow-sm">
                   <div className="mb-4 flex items-start justify-between gap-3">
                     <div>
@@ -391,6 +401,14 @@ export function NotificationConfigPanel() {
                 </div>
               ))}
             </div>
+
+            <Pagination
+              currentPage={currentTemplatePage}
+              totalItems={templateEntries.length}
+              pageSize={TEMPLATES_PER_PAGE}
+              onPageChange={setTemplatePage}
+              itemLabel="mẫu"
+            />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
@@ -415,7 +433,7 @@ export function NotificationConfigPanel() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-500">Data JSON</label>
-                <textarea rows={8} className="w-full rounded-lg border border-sand px-3 py-2 font-mono text-xs outline-none focus:border-antique" value={testDataJson} onChange={(e) => setTestDataJson(e.target.value)} />
+                <textarea rows={8} className="w-full rounded-lg border border-sand px-3 py-2 text-xs outline-none focus:border-antique" value={testDataJson} onChange={(e) => setTestDataJson(e.target.value)} />
               </div>
               <button type="submit" disabled={sendingTest} className="w-full rounded-lg bg-jade px-4 py-3 text-sm font-semibold text-white transition hover:bg-forest disabled:cursor-not-allowed disabled:opacity-60">
                 {sendingTest ? "Đang gửi..." : "Gửi thông báo thử"}

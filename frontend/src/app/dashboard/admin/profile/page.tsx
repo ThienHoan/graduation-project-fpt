@@ -121,7 +121,7 @@ export default function AdminProfilePage() {
       <header className="border-b border-sand bg-mist px-6 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
           <div>
-            <h1 className="font-display text-3xl text-lotus">Hồ sơ quản trị viên</h1>
+            <h1 className="font-bold text-3xl text-lotus">Hồ sơ quản trị viên</h1>
             <p className="text-sm text-stone-500">Cập nhật thông tin tài khoản quản trị hệ thống.</p>
           </div>
           <div className="flex items-center gap-3">
@@ -139,7 +139,7 @@ export default function AdminProfilePage() {
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
           <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
             <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lotus/10 font-display text-2xl text-lotus">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lotus/10 font-bold text-2xl text-lotus">
                 {(user.fullName ?? user.email).slice(0, 2).toUpperCase()}
               </div>
               <div className="min-w-0">
@@ -166,7 +166,7 @@ export default function AdminProfilePage() {
 
           <div className="flex flex-col gap-6">
             <form onSubmit={handleSubmit} className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-              <h2 className="font-display text-2xl text-ink">Thông tin liên hệ</h2>
+              <h2 className="font-bold text-2xl text-ink">Thông tin liên hệ</h2>
             <p className="mt-1 text-sm text-stone-500">Thông tin này dùng cho điều phối vận hành và hỗ trợ nội bộ.</p>
 
             {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
@@ -191,7 +191,7 @@ export default function AdminProfilePage() {
             </form>
 
             <div className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-              <h2 className="font-display text-2xl text-ink">Bảo mật & Mật khẩu</h2>
+              <h2 className="font-bold text-2xl text-ink">Bảo mật & Mật khẩu</h2>
               
               {pwdStep === "idle" ? (
                 <div className="mt-4">
