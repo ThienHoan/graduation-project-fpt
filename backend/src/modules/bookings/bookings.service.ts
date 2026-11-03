@@ -82,16 +82,16 @@ const RETURN_QUEUE_STATUSES: BookingStatus[] = [
 // ── Asset Status State Machine ───────────────────────────────────────────────
 // Chỉ cho phép chuyển trạng thái theo luồng quy định. Không chuyển tùy ý.
 const ASSET_STATUS_TRANSITIONS: Record<AssetStatus, AssetStatus[]> = {
-  [AssetStatus.available]:        [AssetStatus.reserved, AssetStatus.retired],
-  [AssetStatus.reserved]:        [AssetStatus.rented, AssetStatus.available],
-  [AssetStatus.rented]:          [AssetStatus.inspection_pending],
+  [AssetStatus.available]: [AssetStatus.reserved, AssetStatus.retired],
+  [AssetStatus.reserved]: [AssetStatus.rented, AssetStatus.available],
+  [AssetStatus.rented]: [AssetStatus.inspection_pending],
   [AssetStatus.inspection_pending]: [AssetStatus.damaged, AssetStatus.laundry, AssetStatus.cleaned, AssetStatus.maintenance],
-  [AssetStatus.laundry]:          [AssetStatus.cleaned, AssetStatus.damaged],
-  [AssetStatus.maintenance]:     [AssetStatus.damaged, AssetStatus.cleaned],
-  [AssetStatus.cleaned]:         [AssetStatus.available, AssetStatus.retired],
-  [AssetStatus.damaged]:         [AssetStatus.maintenance, AssetStatus.retired],
-  [AssetStatus.retired]:         [],
-  [AssetStatus.lost]:            [],
+  [AssetStatus.laundry]: [AssetStatus.cleaned, AssetStatus.damaged],
+  [AssetStatus.maintenance]: [AssetStatus.damaged, AssetStatus.cleaned],
+  [AssetStatus.cleaned]: [AssetStatus.available, AssetStatus.retired],
+  [AssetStatus.damaged]: [AssetStatus.maintenance, AssetStatus.retired],
+  [AssetStatus.retired]: [],
+  [AssetStatus.lost]: [],
 };
 
 // Kept as a compatibility reference while availability is served by booking-inventory.
@@ -405,7 +405,7 @@ export class BookingsService {
     const loyaltyTier = (customerAccount as { loyaltyTier?: string } | null)?.loyaltyTier;
     const memberDiscountRate =
       loyaltyTier === "premium" ? 0.10 :
-      loyaltyTier === "plus" ? 0.05 : 0;
+        loyaltyTier === "plus" ? 0.05 : 0;
     const memberDiscountAmount = Math.round(garmentRentalSubtotal * memberDiscountRate);
 
     const voucherCode = dto.voucherCode?.trim();
@@ -487,157 +487,157 @@ export class BookingsService {
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
     const booking = await this.prisma.runSerializable(async (tx) => {
-        for (const [sizeId, requestedQty] of requestedQtyBySize) {
-          const activeSize = await tx.garment_sizes.findFirst({
-            where: { id: sizeId, is_active: true, garments: { isActive: true, deletedAt: null } },
-            select: { id: true },
-          });
-          if (!activeSize) throw new BadRequestException("Sản phẩm hoặc size không còn được cho thuê.");
-          const { capacity, committed } = await this.computeSizeAvailability(
-            tx,
-            sizeId,
-            startDay,
-            endDay,
-          );
+      for (const [sizeId, requestedQty] of requestedQtyBySize) {
+        const activeSize = await tx.garment_sizes.findFirst({
+          where: { id: sizeId, is_active: true, garments: { isActive: true, deletedAt: null } },
+          select: { id: true },
+        });
+        if (!activeSize) throw new BadRequestException("Sản phẩm hoặc size không còn được cho thuê.");
+        const { capacity, committed } = await this.computeSizeAvailability(
+          tx,
+          sizeId,
+          startDay,
+          endDay,
+        );
 
+        if (committed + requestedQty > capacity) {
+          const s = sizeMap.get(sizeId)!;
+          throw new BadRequestException(
+            `"${s.garments.name}" (${s.size_label ?? "—"}) không còn đủ sản phẩm khả dụng cho khoảng thời gian đã chọn.`,
+          );
+        }
+      }
+
+      // Tồn kho phụ kiện đi kèm: chặn đơn khi phụ kiện đã tick không còn đủ
+      // asset khả dụng cho khoảng ngày (tính chung transaction để tránh oversell).
+      if (requestedQtyByAccessory.size > 0) {
+        const accNames = new Map(
+          (await tx.accessories.findMany({
+            where: { id: { in: [...requestedQtyByAccessory.keys()] } },
+            select: { id: true, name: true },
+          })).map((a) => [a.id, a.name] as const),
+        );
+        for (const [accessoryId, requestedQty] of requestedQtyByAccessory) {
+          const { capacity, committed } = accessoryAvailability(
+            await loadAccessoryInventory(tx, accessoryId, startDay, endDay),
+          );
           if (committed + requestedQty > capacity) {
-            const s = sizeMap.get(sizeId)!;
             throw new BadRequestException(
-              `"${s.garments.name}" (${s.size_label ?? "—"}) không còn đủ sản phẩm khả dụng cho khoảng thời gian đã chọn.`,
+              `Phụ kiện "${accNames.get(accessoryId) ?? accessoryId}" không còn đủ số lượng khả dụng cho khoảng thời gian đã chọn.`,
             );
           }
         }
+      }
 
-        // Tồn kho phụ kiện đi kèm: chặn đơn khi phụ kiện đã tick không còn đủ
-        // asset khả dụng cho khoảng ngày (tính chung transaction để tránh oversell).
-        if (requestedQtyByAccessory.size > 0) {
-          const accNames = new Map(
-            (await tx.accessories.findMany({
-              where: { id: { in: [...requestedQtyByAccessory.keys()] } },
-              select: { id: true, name: true },
-            })).map((a) => [a.id, a.name] as const),
-          );
-          for (const [accessoryId, requestedQty] of requestedQtyByAccessory) {
-            const { capacity, committed } = accessoryAvailability(
-              await loadAccessoryInventory(tx, accessoryId, startDay, endDay),
-            );
-            if (committed + requestedQty > capacity) {
-              throw new BadRequestException(
-                `Phụ kiện "${accNames.get(accessoryId) ?? accessoryId}" không còn đủ số lượng khả dụng cho khoảng thời gian đã chọn.`,
-              );
-            }
-          }
-        }
+      // Voucher được kiểm tra lại HOÀN TOÀN ở backend trong cùng transaction.
+      const voucherEval = voucherCode
+        ? await this.vouchers!.evaluate(tx, voucherCode, customerId, voucherLines)
+        : null;
+      const voucherDiscount = voucherEval?.discountAmount ?? 0;
 
-        // Voucher được kiểm tra lại HOÀN TOÀN ở backend trong cùng transaction.
-        const voucherEval = voucherCode
-          ? await this.vouchers!.evaluate(tx, voucherCode, customerId, voucherLines)
-          : null;
-        const voucherDiscount = voucherEval?.discountAmount ?? 0;
+      // So sánh ưu đãi: Chọn mức giảm tối ưu nhất cho khách hàng, không cộng dồn chồng chéo
+      let discountTotal = 0;
+      let appliedVoucher = null;
+      let discountReasonNote: string | null = null;
 
-        // So sánh ưu đãi: Chọn mức giảm tối ưu nhất cho khách hàng, không cộng dồn chồng chéo
-        let discountTotal = 0;
-        let appliedVoucher = null;
-        let discountReasonNote: string | null = null;
+      if (voucherEval && voucherDiscount >= memberDiscountAmount) {
+        // Voucher giảm nhiều hơn hoặc bằng ưu đãi thành viên -> Dùng voucher
+        discountTotal = voucherDiscount;
+        appliedVoucher = voucherEval;
+      } else if (memberDiscountAmount > 0) {
+        // Ưu đãi thành viên tốt hơn -> Dùng ưu đãi hạng, bảo lưu voucher cho khách
+        discountTotal = memberDiscountAmount;
+        appliedVoucher = null;
+        const tierLabel = loyaltyTier === "premium" ? "Premium (giảm 10%)" : "Plus (giảm 5%)";
+        discountReasonNote = `Ưu đãi thành viên ${tierLabel}: -${memberDiscountAmount.toLocaleString("vi-VN")}đ`;
+      }
 
-        if (voucherEval && voucherDiscount >= memberDiscountAmount) {
-          // Voucher giảm nhiều hơn hoặc bằng ưu đãi thành viên -> Dùng voucher
-          discountTotal = voucherDiscount;
-          appliedVoucher = voucherEval;
-        } else if (memberDiscountAmount > 0) {
-          // Ưu đãi thành viên tốt hơn -> Dùng ưu đãi hạng, bảo lưu voucher cho khách
-          discountTotal = memberDiscountAmount;
-          appliedVoucher = null;
-          const tierLabel = loyaltyTier === "premium" ? "Premium (giảm 10%)" : "Plus (giảm 5%)";
-          discountReasonNote = `Ưu đãi thành viên ${tierLabel}: -${memberDiscountAmount.toLocaleString("vi-VN")}đ`;
-        }
+      const rentalTotal = Math.max(0, subtotal - discountTotal);
 
-        const rentalTotal = Math.max(0, subtotal - discountTotal);
-
-        const created = await tx.booking.create({
-          data: {
-            customerId,
-            status: BookingStatus.pending_confirmation,
-            subtotal,
-            discountTotal,
-            voucherId: appliedVoucher?.voucher.id ?? null,
-            voucherCode: appliedVoucher?.voucher.code ?? null,
-            rentalStartDate: startDay,
-            rentalEndDate: endDay,
-            pickupMethod: dto.pickupMethod ?? "store_pickup",
-            deliveryAddressId: dto.pickupMethod === "delivery" ? dto.deliveryAddressId : null,
-            rentalTotal,
-            depositTotal,
-            shippingFee,
-            note: [
-              dto.note,
-              discountReasonNote,
-              shippingFee ? `Phí giao hàng: ${shippingFee.toLocaleString("vi-VN")} VND` : null,
-            ]
-              .filter(Boolean)
-              .join("\n\n") || null,
-            items: { create: itemsData },
-            deliveryRecords: dto.pickupMethod === "delivery" && deliveryAddressForRecord
-              ? { create: { method: "delivery", addressSnapshot: serializeAddressSnapshot(deliveryAddressForRecord) } }
-              : undefined,
-            paymentMethod: dto.pickupMethod === "delivery" ? "qr_code" : (dto.paymentMethod ?? "cash"),
-          },
-          include: {
-            items: {
-              include: {
-                garment_sizes: {
-                  include: {
-                    garments: {
-                      include: { images: { orderBy: { sortOrder: "asc" } } },
-                    },
+      const created = await tx.booking.create({
+        data: {
+          customerId,
+          status: BookingStatus.pending_confirmation,
+          subtotal,
+          discountTotal,
+          voucherId: appliedVoucher?.voucher.id ?? null,
+          voucherCode: appliedVoucher?.voucher.code ?? null,
+          rentalStartDate: startDay,
+          rentalEndDate: endDay,
+          pickupMethod: dto.pickupMethod ?? "store_pickup",
+          deliveryAddressId: dto.pickupMethod === "delivery" ? dto.deliveryAddressId : null,
+          rentalTotal,
+          depositTotal,
+          shippingFee,
+          note: [
+            dto.note,
+            discountReasonNote,
+            shippingFee ? `Phí giao hàng: ${shippingFee.toLocaleString("vi-VN")} VND` : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n") || null,
+          items: { create: itemsData },
+          deliveryRecords: dto.pickupMethod === "delivery" && deliveryAddressForRecord
+            ? { create: { method: "delivery", addressSnapshot: serializeAddressSnapshot(deliveryAddressForRecord) } }
+            : undefined,
+          paymentMethod: dto.pickupMethod === "delivery" ? "qr_code" : (dto.paymentMethod ?? "cash"),
+        },
+        include: {
+          items: {
+            include: {
+              garment_sizes: {
+                include: {
+                  garments: {
+                    include: { images: { orderBy: { sortOrder: "asc" } } },
                   },
                 },
-                garmentAsset: true,
               },
+              garmentAsset: true,
             },
-            accessoryItems: {
-              include: {
-                accessory: true,
-                accessoryAsset: true,
-                bookingItem: true,
-              },
-            },
-            deliveryAddress: true,
-            deliveryRecords: { orderBy: { createdAt: "desc" } },
           },
-        });
-        if (resolvedAccessories.length > 0) {
-          // Gắn mỗi phụ kiện vào booking item đầu tiên có cùng garment_size_id.
-          const itemQueueBySize = new Map<string, Array<{ id: string }>>();
-          for (const item of created.items as Array<{ id: string; garment_size_id: string | null }>) {
-            if (!item.garment_size_id) continue;
-            const queue = itemQueueBySize.get(item.garment_size_id) ?? [];
-            queue.push({ id: item.id });
-            itemQueueBySize.set(item.garment_size_id, queue);
-          }
-          for (const acc of resolvedAccessories) {
-            // Nhiều dòng đơn vị có thể chung 1 booking item (không shift queue).
-            const queue = itemQueueBySize.get(acc.garmentSizeId);
-            const target = queue?.[0];
-            if (!target) continue;
-            await tx.bookingAccessoryItem.create({
-              data: {
-                bookingId: created.id,
-                bookingItemId: target.id,
-                accessoryId: acc.accessoryId,
-                quantity: acc.quantity,
-                unitPrice: acc.unitPrice,
-                isIncluded: acc.isIncluded,
-                rentalTotal: acc.lineTotal,
-              },
-            });
-          }
-        }
-        if (appliedVoucher) {
-          await this.vouchers!.consume(tx, appliedVoucher, customerId, created.id);
-        }
-        return created;
+          accessoryItems: {
+            include: {
+              accessory: true,
+              accessoryAsset: true,
+              bookingItem: true,
+            },
+          },
+          deliveryAddress: true,
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
+        },
       });
+      if (resolvedAccessories.length > 0) {
+        // Gắn mỗi phụ kiện vào booking item đầu tiên có cùng garment_size_id.
+        const itemQueueBySize = new Map<string, Array<{ id: string }>>();
+        for (const item of created.items as Array<{ id: string; garment_size_id: string | null }>) {
+          if (!item.garment_size_id) continue;
+          const queue = itemQueueBySize.get(item.garment_size_id) ?? [];
+          queue.push({ id: item.id });
+          itemQueueBySize.set(item.garment_size_id, queue);
+        }
+        for (const acc of resolvedAccessories) {
+          // Nhiều dòng đơn vị có thể chung 1 booking item (không shift queue).
+          const queue = itemQueueBySize.get(acc.garmentSizeId);
+          const target = queue?.[0];
+          if (!target) continue;
+          await tx.bookingAccessoryItem.create({
+            data: {
+              bookingId: created.id,
+              bookingItemId: target.id,
+              accessoryId: acc.accessoryId,
+              quantity: acc.quantity,
+              unitPrice: acc.unitPrice,
+              isIncluded: acc.isIncluded,
+              rentalTotal: acc.lineTotal,
+            },
+          });
+        }
+      }
+      if (appliedVoucher) {
+        await this.vouchers!.consume(tx, appliedVoucher, customerId, created.id);
+      }
+      return created;
+    });
     await this.notificationsService.sendBookingNotification({
       userId: booking.customerId,
       templateKey: "booking.created",
@@ -1804,51 +1804,51 @@ export class BookingsService {
     let assignedAssetCode: string | null = null;
 
     await this.prisma.runSerializable(async (tx) => {
-        const booking = await tx.booking.findUnique({
-          where: { id: bookingId },
-          include: { items: true },
-        });
-        if (!booking) throw new NotFoundException("Booking not found.");
-        if (!assignableStatuses.includes(booking.status)) {
-          throw new BadRequestException(
-            `Không thể gán asset khi booking đang ở trạng thái '${booking.status}'.`,
-          );
-        }
-
-        const item = booking.items.find((candidate) => candidate.id === itemId);
-        if (!item) throw new NotFoundException("Booking item not found.");
-        if (item.garmentAssetId) throw new BadRequestException("Item already has an assigned asset.");
-        if (!item.garment_size_id) {
-          throw new BadRequestException("Booking item chưa có size nên không thể gán asset an toàn.");
-        }
-
-        const asset = await tx.garmentAsset.findUnique({
-          where: { id: dto.garmentAssetId },
-        });
-        if (!asset) throw new NotFoundException("Garment asset not found.");
-        this.assertAssetRentable(asset.status);
-
-        await assertAssetScheduleAvailable(tx, {
-          assetId: asset.id, bookingId, itemId,
-          startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
-          garmentId: item.garmentId, garmentSizeId: item.garment_size_id,
-        });
-
-        await tx.bookingItem.update({
-          where: { id: itemId },
-          data: { garmentAssetId: dto.garmentAssetId },
-        });
-        await tx.bookingStatusHistory.create({
-          data: {
-            bookingId,
-            fromStatus: booking.status,
-            toStatus: booking.status,
-            changedBy: staffId ?? null,
-            note: `Gán asset ${asset.assetCode}`,
-          },
-        });
-        assignedAssetCode = asset.assetCode;
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { items: true },
       });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (!assignableStatuses.includes(booking.status)) {
+        throw new BadRequestException(
+          `Không thể gán asset khi booking đang ở trạng thái '${booking.status}'.`,
+        );
+      }
+
+      const item = booking.items.find((candidate) => candidate.id === itemId);
+      if (!item) throw new NotFoundException("Booking item not found.");
+      if (item.garmentAssetId) throw new BadRequestException("Item already has an assigned asset.");
+      if (!item.garment_size_id) {
+        throw new BadRequestException("Booking item chưa có size nên không thể gán asset an toàn.");
+      }
+
+      const asset = await tx.garmentAsset.findUnique({
+        where: { id: dto.garmentAssetId },
+      });
+      if (!asset) throw new NotFoundException("Garment asset not found.");
+      this.assertAssetRentable(asset.status);
+
+      await assertAssetScheduleAvailable(tx, {
+        assetId: asset.id, bookingId, itemId,
+        startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+        garmentId: item.garmentId, garmentSizeId: item.garment_size_id,
+      });
+
+      await tx.bookingItem.update({
+        where: { id: itemId },
+        data: { garmentAssetId: dto.garmentAssetId },
+      });
+      await tx.bookingStatusHistory.create({
+        data: {
+          bookingId,
+          fromStatus: booking.status,
+          toStatus: booking.status,
+          changedBy: staffId ?? null,
+          note: `Gán asset ${asset.assetCode}`,
+        },
+      });
+      assignedAssetCode = asset.assetCode;
+    });
 
     const updated = await this.prisma.booking.findUnique({
       where: { id: bookingId },
@@ -2337,8 +2337,8 @@ export class BookingsService {
       const booking = await tx.booking.findUnique({ where: { id }, include: { items: true } });
       if (!booking) throw new NotFoundException("Booking not found.");
       if (booking.handoverStatus !== "REJECTED" ||
-          ![BookingStatus.ready_for_pickup, BookingStatus.delivering, BookingStatus.renting].includes(booking.status as never) ||
-          booking.confirmedAt?.getTime() !== new Date(dto.expectedDecidedAt).getTime()) {
+        ![BookingStatus.ready_for_pickup, BookingStatus.delivering, BookingStatus.renting].includes(booking.status as never) ||
+        booking.confirmedAt?.getTime() !== new Date(dto.expectedDecidedAt).getTime()) {
         throw new ConflictException("Biên bản đã thay đổi, vui lòng tải lại đơn.");
       }
       const previous = booking.conditionImages && !Array.isArray(booking.conditionImages) && typeof booking.conditionImages === "object"
@@ -2358,9 +2358,9 @@ export class BookingsService {
         // when damage was reported, rather than silently returning it to inventory.
         const ids = new Set(replacements.map((row) => row.itemId));
         if (ids.size !== booking.items.length || replacements.length !== booking.items.length ||
-            booking.items.some((item) => !ids.has(item.id)) ||
-            new Set(replacements.map((row) => row.garmentAssetId)).size !== replacements.length ||
-            replacements.some((row) => booking.items.some((item) => item.garmentAssetId === row.garmentAssetId))) {
+          booking.items.some((item) => !ids.has(item.id)) ||
+          new Set(replacements.map((row) => row.garmentAssetId)).size !== replacements.length ||
+          replacements.some((row) => booking.items.some((item) => item.garmentAssetId === row.garmentAssetId))) {
           throw new BadRequestException("Cần chọn asset thay thế riêng biệt cho tất cả sản phẩm.");
         }
         for (const row of replacements) {
@@ -2538,8 +2538,8 @@ export class BookingsService {
           include: { items: true, payments: true },
         });
         if (!current || current.status !== BookingStatus.awaiting_payment ||
-            !current.paymentDueAt || current.paymentDueAt >= now ||
-            current.payments.some((payment) => payment.status === PaymentStatus.paid)) return false;
+          !current.paymentDueAt || current.paymentDueAt >= now ||
+          current.payments.some((payment) => payment.status === PaymentStatus.paid)) return false;
         await releaseBookingAssets(tx, booking.id);
         // Ghi nhận yêu cầu hoàn tiền nếu đơn đã thu tiền trước khi hủy tự động.
         await ensureCancellationRefunds(tx, booking.id, undefined, "Tự động hủy đơn — quá hạn thanh toán");
