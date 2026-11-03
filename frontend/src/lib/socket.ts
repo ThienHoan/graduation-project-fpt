@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { resolveSocketUrl, shouldAddTrailingSlash } from "./socket-config";
+import { resolveSocketTransports, resolveSocketUrl, shouldAddTrailingSlash } from "./socket-config";
 
 export { shouldAddTrailingSlash };
 
@@ -41,9 +41,9 @@ export function createChatSocket(accessToken: string) {
   socket = io(chatSocketUrl, {
     auth: { token },
     // Đi qua rewrite của Vercel chỉ HTTP polling được proxy, WebSocket Upgrade
-    // bị trả 400. Thử `polling` trước để kết nối thành công rồi để engine.io tự
-    // nâng cấp lên `websocket` khi hạ tầng hỗ trợ.
-    transports: ["polling", "websocket"],
+    // bị chặn. `resolveSocketTransports` chọn `["polling"]` khi cùng origin (qua
+    // rewrite) và `["polling","websocket"]` khi nối thẳng backend.
+    transports: resolveSocketTransports(chatSocketUrl),
     // Phải là `true` khi nối trực tiếp backend (localhost:4000 cần `/socket.io/`)
     // và `false` khi đi qua rewrite Vercel (Next.js 308 bỏ "/" làm mất header
     // Upgrade). `shouldAddTrailingSlash` tự chọn theo origin đích.

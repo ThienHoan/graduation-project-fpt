@@ -193,3 +193,25 @@ describe("shouldAddTrailingSlash", () => {
     expect(shouldAddTrailingSlash("/chat", "https://www.cophuctruyenthong.tech")).toBe(false);
   });
 });
+
+describe("resolveSocketTransports", () => {
+  it("chỉ polling khi cùng origin (đi qua rewrite, không nâng cấp được WebSocket)", async () => {
+    const { resolveSocketTransports } = await loadSocketConfig();
+    expect(resolveSocketTransports("/chat", "https://graduation-project-fpt.vercel.app")).toEqual([
+      "polling",
+    ]);
+    expect(
+      resolveSocketTransports(
+        "https://graduation-project-fpt.vercel.app/chat",
+        "https://graduation-project-fpt.vercel.app",
+      ),
+    ).toEqual(["polling"]);
+  });
+
+  it("polling + websocket khi khác origin (nối thẳng backend)", async () => {
+    const { resolveSocketTransports } = await loadSocketConfig();
+    expect(
+      resolveSocketTransports("http://localhost:4000/chat", "http://localhost:3000"),
+    ).toEqual(["polling", "websocket"]);
+  });
+});
