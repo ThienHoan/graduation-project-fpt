@@ -906,8 +906,8 @@ export default function CustomerDashboardPage() {
                         type="button"
                         onClick={() => setSelectedBookingId(b.id)}
                         className={`group inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs transition shrink-0 active:scale-[0.98] ${isSelected
-                            ? "bg-white border-2 border-lotus text-ink shadow-xs font-bold ring-2 ring-lotus/15"
-                            : "bg-white/80 border border-sand text-stone-600 hover:border-lotus/40 hover:bg-white hover:text-ink shadow-2xs"
+                          ? "bg-white border-2 border-lotus text-ink shadow-xs font-bold ring-2 ring-lotus/15"
+                          : "bg-white/80 border border-sand text-stone-600 hover:border-lotus/40 hover:bg-white hover:text-ink shadow-2xs"
                           }`}
                       >
                         <span
@@ -1277,8 +1277,8 @@ export default function CustomerDashboardPage() {
                       type="button"
                       onClick={() => setSelectedTab(tab.key as HistoryTab)}
                       className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition active:scale-[0.98] ${isActive
-                          ? "bg-lotus text-white shadow-2xs font-bold"
-                          : "text-stone-600 hover:text-ink hover:bg-white/60"
+                        ? "bg-lotus text-white shadow-2xs font-bold"
+                        : "text-stone-600 hover:text-ink hover:bg-white/60"
                         }`}
                     >
                       <span>{tab.label}</span>
