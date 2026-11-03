@@ -553,11 +553,94 @@ export type StaffRefundSummary = {
 export type StaffBookingResponse = BookingResponse & {
   customerName: string | null;
   customerPhone: string | null;
+  customerEmail?: string | null;
   allAssignedAssetsInspected?: boolean;
   refunds?: StaffRefundSummary[];
 };
 
 // ---------- Staff Booking API functions ----------
+
+export interface StaffOverviewResponse {
+  metrics: {
+    pendingConfirmation: number;
+    deliveringToday: number;
+    returnToday: number;
+    overdue: number;
+    pendingInspection: number;
+  };
+  statusCounts: {
+    pending_confirmation: number;
+    confirmed: number;
+    awaiting_payment: number;
+    paid: number;
+    preparing: number;
+    ready_for_pickup: number;
+    delivering: number;
+    renting: number;
+    returned: number;
+    inspection_pending: number;
+    completed: number;
+    cancelled: number;
+    rejected: number;
+    overdue: number;
+    refund_pending: number;
+    total: number;
+  };
+  assetStatus: {
+    available: number;
+    reserved?: number;
+    rented?: number;
+    renting: number;
+    laundryMaintenance: number;
+    damagedPending: number;
+    total: number;
+  };
+  todaySchedule: Array<{
+    id: string;
+    bookingCode: string;
+    customerName: string;
+    customerPhone: string;
+    type: "pickup" | "delivery" | "return";
+    timeLabel: string;
+    status: string;
+    pickupMethod: string;
+    addressSnippet?: string;
+    itemCount: number;
+    rentalStartDate?: string;
+    rentalEndDate?: string;
+    createdAt?: string;
+  }>;
+  taskQueue: Array<{
+    id: string;
+    bookingId?: string;
+    priority: "P0" | "P1" | "P2" | "P3";
+    title: string;
+    description: string;
+    actionLabel: string;
+    targetTab: "pending" | "all" | "inspection" | "refunds";
+    targetStatus?: string;
+    bookingCode?: string;
+  }>;
+  alerts: Array<{
+    id: string;
+    severity: "warning" | "danger" | "info";
+    message: string;
+    bookingCode?: string;
+  }>;
+}
+
+export async function getStaffDashboardOverview(params?: {
+  schedulePeriod?: "today" | "month" | "year" | "custom";
+  scheduleFrom?: string;
+  scheduleTo?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.schedulePeriod) qs.set("schedulePeriod", params.schedulePeriod);
+  if (params?.scheduleFrom) qs.set("scheduleFrom", params.scheduleFrom);
+  if (params?.scheduleTo) qs.set("scheduleTo", params.scheduleTo);
+  const query = qs.toString();
+  return apiRequest<StaffOverviewResponse>(`/bookings/staff/overview${query ? `?${query}` : ""}`);
+}
 
 export async function getStaffPendingBookings() {
   return apiRequest<StaffBookingResponse[]>("/bookings/staff/pending");
@@ -567,11 +650,12 @@ export async function getBookingsNeedingAssets() {
   return apiRequest<StaffBookingResponse[]>("/bookings/staff/assets-needed");
 }
 
-export async function getStaffAllBookings(params?: { search?: string; status?: string; cursor?: string }) {
+export async function getStaffAllBookings(params?: { search?: string; status?: string; cursor?: string; limit?: number }) {
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.status) qs.set("status", params.status);
   if (params?.cursor) qs.set("cursor", params.cursor);
+  if (params?.limit) qs.set("limit", String(params.limit));
   const query = qs.toString();
   const res = await apiRequest<{ data: StaffBookingResponse[]; nextCursor: string | null }>(
     `/bookings/staff/all${query ? `?${query}` : ""}`,

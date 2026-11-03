@@ -1215,3 +1215,76 @@ describe("BookingsService overdue reporting", () => {  type Serialized = { overd
     expect(serializeWith(service, makeBooking("2026-09-30", "2026-10-04", { status: "completed" })).overdueAmount).toBe(0);
   });
 });
+
+describe("BookingsService getStaffOverview", () => {
+  it("returns metrics, live asset status, today schedule, and task queue", async () => {
+    const prisma = {
+      booking: {
+        groupBy: vi.fn().mockResolvedValue([
+          { status: "pending_confirmation", _count: { id: 3 } },
+          { status: "confirmed", _count: { id: 2 } },
+          { status: "renting", _count: { id: 5 } },
+          { status: "completed", _count: { id: 10 } },
+        ]),
+        count: vi.fn()
+          .mockResolvedValueOnce(2) // deliveringToday
+          .mockResolvedValueOnce(4) // returnToday
+          .mockResolvedValueOnce(1) // overdue
+          .mockResolvedValueOnce(2), // pendingInspection
+        findMany: vi.fn()
+          .mockResolvedValueOnce([
+            {
+              id: "b-1",
+              rentalStartDate: new Date("2026-10-01T00:00:00.000Z"),
+              rentalEndDate: new Date("2026-10-03T00:00:00.000Z"),
+              pickupMethod: "store_pickup",
+              status: "ready_for_pickup",
+              customer: { profile: { fullName: "Nguyễn Văn A", phone: "0901234567" }, email: "a@test.com" },
+              deliveryAddress: null,
+              items: [{ id: "item-1" }],
+            },
+          ])
+          .mockResolvedValueOnce([]),
+      },
+      garmentAsset: {
+        groupBy: vi.fn().mockResolvedValue([
+          { status: "available", _count: { id: 10 } },
+          { status: "rented", _count: { id: 5 } },
+          { status: "laundry", _count: { id: 2 } },
+          { status: "damaged", _count: { id: 1 } },
+        ]),
+      },
+    };
+
+    const service = new BookingsService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const res = await service.getStaffOverview();
+    expect(res.success).toBe(true);
+    expect(res.data!.metrics).toEqual({
+      pendingConfirmation: 3,
+      deliveringToday: 2,
+      returnToday: 4,
+      overdue: 1,
+      pendingInspection: 2,
+    });
+    expect(res.data!.assetStatus).toMatchObject({
+      available: 10,
+      renting: 5,
+      laundryMaintenance: 2,
+      damagedPending: 1,
+      total: 18,
+    });
+    expect(res.data!.todaySchedule).toHaveLength(1);
+    expect(res.data!.todaySchedule[0].customerName).toBe("Nguyễn Văn A");
+    expect(res.data!.taskQueue.length).toBeGreaterThan(0);
+  });
+});
+

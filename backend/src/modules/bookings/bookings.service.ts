@@ -848,6 +848,389 @@ export class BookingsService {
     return ok(this.serializeStaffBooking(booking));
   }
 
+  async getStaffOverview(opts?: { schedulePeriod?: string; scheduleFrom?: string; scheduleTo?: string }) {
+    const today = vietnamToday();
+    const tomorrow = new Date(today.getTime() + 86400000);
+
+    // Tính khoảng thời gian cho lịch trình theo period
+    let scheduleStart: Date = today;
+    let scheduleEnd: Date = tomorrow; // exclusive upper bound for range queries
+
+    const period = opts?.schedulePeriod ?? "today";
+
+    if (period === "month") {
+      // Từ đầu tháng đến cuối tháng (Vietnam)
+      const nowVN = new Date(today.getTime()); // today is already at VN midnight UTC
+      const firstDay = new Date(Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth(), 1));
+      const lastDay = new Date(Date.UTC(nowVN.getUTCFullYear(), nowVN.getUTCMonth() + 1, 0));
+      scheduleStart = firstDay;
+      scheduleEnd = new Date(lastDay.getTime() + 86400000);
+    } else if (period === "year") {
+      const nowVN = new Date(today.getTime());
+      const firstDay = new Date(Date.UTC(nowVN.getUTCFullYear(), 0, 1));
+      const lastDay = new Date(Date.UTC(nowVN.getUTCFullYear(), 11, 31));
+      scheduleStart = firstDay;
+      scheduleEnd = new Date(lastDay.getTime() + 86400000);
+    } else if (period === "custom" && opts?.scheduleFrom && opts?.scheduleTo) {
+      const from = new Date(opts.scheduleFrom);
+      const to = new Date(opts.scheduleTo);
+      if (Number.isFinite(from.getTime()) && Number.isFinite(to.getTime())) {
+        scheduleStart = from;
+        scheduleEnd = new Date(to.getTime() + 86400000);
+      }
+    }
+    // default: "today" — scheduleStart=today, scheduleEnd=tomorrow
+
+    const [
+      bookingStatusGroups,
+      deliveringTodayCount,
+      returnTodayCount,
+      overdueCount,
+      pendingInspectionCount,
+      assetGroups,
+      scheduleBookings,
+      unassignedBookings,
+    ] = await Promise.all([
+      // 1. Nhóm theo trạng thái đơn hàng (Toàn bộ vòng đời đơn thuê)
+      this.prisma.booking.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      }),
+      // 2. Giao / Bàn giao trong ca trực:
+      // Bao gồm: Đơn hẹn hôm nay HOẶC đơn đang sẵn sàng lấy/giao HOẶC đơn tới ngày bắt đầu nhưng chưa bàn giao xong
+      this.prisma.booking.count({
+        where: {
+          OR: [
+            {
+              rentalStartDate: today,
+              status: {
+                in: [
+                  BookingStatus.confirmed,
+                  BookingStatus.awaiting_payment,
+                  BookingStatus.paid,
+                  BookingStatus.preparing,
+                  BookingStatus.ready_for_pickup,
+                  BookingStatus.delivering,
+                ],
+              },
+            },
+            {
+              status: {
+                in: [BookingStatus.ready_for_pickup, BookingStatus.delivering],
+              },
+            },
+            {
+              rentalStartDate: { lte: today },
+              status: {
+                in: [BookingStatus.confirmed, BookingStatus.paid, BookingStatus.preparing],
+              },
+            },
+          ],
+        },
+      }),
+      // 3. Khách hẹn trả / Cần thu hồi (hôm nay hoặc đã đến hạn mà khách đang thuê chưa trả)
+      this.prisma.booking.count({
+        where: {
+          status: BookingStatus.renting,
+          rentalEndDate: { lte: today },
+        },
+      }),
+      // 4. Quá hạn (status overdue hoặc renting nhưng ngày trả nhỏ hơn hôm nay)
+      this.prisma.booking.count({
+        where: {
+          OR: [
+            { status: BookingStatus.overdue },
+            { status: BookingStatus.renting, rentalEndDate: { lt: today } },
+          ],
+        },
+      }),
+      // 5. Chờ kiểm tra hiện vật
+      this.prisma.booking.count({
+        where: {
+          status: { in: [BookingStatus.returned, BookingStatus.inspection_pending] },
+        },
+      }),
+      // 6. Nhóm trạng thái hiện vật (Read-only)
+      this.prisma.garmentAsset.groupBy({
+        by: ["status"],
+        _count: { id: true },
+      }),
+      // 7. Lịch trình theo kỳ (schedule period: today / month / year / custom)
+      this.prisma.booking.findMany({
+        where: {
+          status: { notIn: [BookingStatus.draft, BookingStatus.cancelled, BookingStatus.rejected] },
+          OR: [
+            // Lịch lấy / giao trang phục trong kỳ
+            { rentalStartDate: { gte: scheduleStart, lt: scheduleEnd } },
+            // Lịch trả trang phục trong kỳ
+            { rentalEndDate: { gte: scheduleStart, lt: scheduleEnd } },
+          ],
+        },
+        orderBy: [{ createdAt: "desc" }],
+        take: period === "today" ? 30 : 100,
+        include: {
+          customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
+          deliveryAddress: { select: { line1: true, district: true, city: true } },
+          items: { select: { id: true } },
+        },
+      }),
+      // 8. Đơn cận ngày (hôm nay hoặc ngày mai) chưa gán asset
+      this.prisma.booking.findMany({
+        where: {
+          rentalStartDate: { in: [today, tomorrow] },
+          status: { in: [BookingStatus.confirmed, BookingStatus.paid, BookingStatus.preparing] },
+          OR: [
+            { items: { some: { garmentAssetId: null } } },
+            { accessoryItems: { some: { accessoryAssetId: null } } },
+          ],
+        },
+        select: {
+          id: true,
+          rentalStartDate: true,
+          items: { where: { garmentAssetId: null }, select: { id: true } },
+          accessoryItems: { where: { accessoryAssetId: null }, select: { id: true } },
+        },
+        take: 10,
+      }),
+    ]);
+
+    // Xử lý thống kê trạng thái đơn thuê (Toàn bộ các trạng thái trong hệ thống)
+    const statusCounts: Record<string, number> = {
+      pending_confirmation: 0,
+      confirmed: 0,
+      awaiting_payment: 0,
+      paid: 0,
+      preparing: 0,
+      ready_for_pickup: 0,
+      delivering: 0,
+      renting: 0,
+      returned: 0,
+      inspection_pending: 0,
+      completed: 0,
+      cancelled: 0,
+      rejected: 0,
+      overdue: 0,
+      refund_pending: 0,
+      total: 0,
+    };
+    for (const group of bookingStatusGroups) {
+      statusCounts[group.status] = group._count.id;
+      statusCounts.total += group._count.id;
+    }
+
+    const pendingConfirmationCount = statusCounts.pending_confirmation;
+
+    // Xử lý thống kê asset
+    const assetCounts: Record<string, number> = {};
+    let totalAssets = 0;
+    for (const group of assetGroups) {
+      assetCounts[group.status] = group._count.id;
+      totalAssets += group._count.id;
+    }
+
+    const liveAssetStatus = {
+      available: (assetCounts[AssetStatus.available] ?? 0) + (assetCounts[AssetStatus.cleaned] ?? 0),
+      reserved: assetCounts[AssetStatus.reserved] ?? 0,
+      rented: assetCounts[AssetStatus.rented] ?? 0,
+      renting: (assetCounts[AssetStatus.rented] ?? 0) + (assetCounts[AssetStatus.reserved] ?? 0),
+      laundryMaintenance: (assetCounts[AssetStatus.laundry] ?? 0) + (assetCounts[AssetStatus.maintenance] ?? 0),
+      damagedPending:
+        (assetCounts[AssetStatus.inspection_pending] ?? 0) +
+        (assetCounts[AssetStatus.damaged] ?? 0) +
+        (assetCounts[AssetStatus.lost] ?? 0),
+      total: totalAssets,
+    };
+
+    // Format schedule items
+    const todaySchedule = scheduleBookings.map((b) => {
+      const isStartInPeriod = b.rentalStartDate >= scheduleStart && b.rentalStartDate < scheduleEnd;
+      const isEndInPeriod = b.rentalEndDate >= scheduleStart && b.rentalEndDate < scheduleEnd;
+      const isPickup = b.pickupMethod === "store_pickup";
+
+      // Kiểm tra đơn đã từng bàn giao cho khách hay chưa
+      const isHandedOver = (
+        [
+          BookingStatus.renting,
+          BookingStatus.overdue,
+          BookingStatus.returned,
+          BookingStatus.inspection_pending,
+          BookingStatus.completed,
+        ] as BookingStatus[]
+      ).includes(b.status);
+
+      let type: "pickup" | "delivery" | "return";
+      let timeLabel: string;
+
+      if (isHandedOver) {
+        // Đã bàn giao -> trọng tâm là theo dõi hạn trả / thu hồi đồ
+        type = "return";
+        if (b.status === BookingStatus.overdue) {
+          const overdueDays = Math.max(1, Math.floor((today.getTime() - b.rentalEndDate.getTime()) / 86400000));
+          timeLabel = `Quá hạn trả (${overdueDays} ngày)`;
+        } else if (b.status === BookingStatus.completed) {
+          timeLabel = "Đã hoàn tất";
+        } else if (b.status === BookingStatus.returned || b.status === BookingStatus.inspection_pending) {
+          timeLabel = "Đã nhận · Chờ kiểm tra";
+        } else if (b.rentalEndDate.getTime() === today.getTime()) {
+          timeLabel = "Hạn trả hôm nay";
+        } else if (b.rentalEndDate.getTime() < today.getTime()) {
+          timeLabel = "Đến hạn trả đồ";
+        } else {
+          const [ey, em, ed] = (b.rentalEndDate?.toISOString?.().slice(0, 10) ?? "").split("-");
+          timeLabel = ed && em && ey ? `Hạn trả: ${ed}/${em}/${ey}` : "Đến hạn trả đồ";
+        }
+      } else {
+        // Chưa bàn giao -> trọng tâm là chuẩn bị / bàn giao cho khách
+        type = isPickup ? "pickup" : "delivery";
+        if (b.status === BookingStatus.pending_confirmation) {
+          timeLabel = "Chờ duyệt đơn";
+        } else if (b.status === BookingStatus.awaiting_payment) {
+          timeLabel = "Chờ thanh toán";
+        } else if (b.status === BookingStatus.ready_for_pickup) {
+          timeLabel = isPickup ? "Sẵn sàng lấy tại quầy" : "Sẵn sàng giao ship";
+        } else if (b.status === BookingStatus.delivering) {
+          timeLabel = "Đang giao trên đường";
+        } else if (b.rentalStartDate.getTime() === today.getTime()) {
+          timeLabel = isPickup ? "Khách lấy hôm nay" : "Giao ship hôm nay";
+        } else if (b.rentalStartDate.getTime() < today.getTime()) {
+          timeLabel = isPickup ? "Quá ngày hẹn lấy" : "Quá ngày hẹn giao";
+        } else {
+          const [sy, sm, sd] = (b.rentalStartDate?.toISOString?.().slice(0, 10) ?? "").split("-");
+          timeLabel = isPickup
+            ? (sd && sm && sy ? `Lấy ngày: ${sd}/${sm}/${sy}` : "Chờ giao khách")
+            : (sd && sm && sy ? `Giao ngày: ${sd}/${sm}/${sy}` : "Chờ giao ship");
+        }
+      }
+
+      const addressSnippet = b.deliveryAddress
+        ? [b.deliveryAddress.line1, b.deliveryAddress.district, b.deliveryAddress.city].filter(Boolean).join(", ")
+        : undefined;
+
+      const bookingCode = b.id.slice(0, 8).toUpperCase();
+
+      return {
+        id: b.id,
+        bookingCode,
+        customerName: b.customer?.profile?.fullName || b.customer?.email || "Khách hàng",
+        customerPhone: b.customer?.profile?.phone || "",
+        type,
+        timeLabel,
+        status: b.status,
+        pickupMethod: b.pickupMethod,
+        addressSnippet,
+        itemCount: b.items.length,
+        rentalStartDate: b.rentalStartDate ? b.rentalStartDate.toISOString().slice(0, 10) : "",
+        rentalEndDate: b.rentalEndDate ? b.rentalEndDate.toISOString().slice(0, 10) : "",
+        createdAt: b.createdAt ? b.createdAt.toISOString() : new Date().toISOString(),
+      };
+    });
+
+    // Xây dựng Task Queue có thứ tự ưu tiên P0 -> P3
+    const taskQueue: Array<{
+      id: string;
+      bookingId?: string;
+      priority: "P0" | "P1" | "P2" | "P3";
+      title: string;
+      description: string;
+      actionLabel: string;
+      targetTab: "pending" | "all" | "inspection" | "refunds";
+      targetStatus?: string;
+      bookingCode?: string;
+    }> = [];
+
+    // P0: Quá hạn
+    if (overdueCount > 0) {
+      taskQueue.push({
+        id: "task-overdue",
+        priority: "P0",
+        title: "Xử lý đơn quá hạn",
+        description: `Có ${overdueCount} đơn thuê đã quá hạn trả đồ cần liên hệ giục khách hoàn trả.`,
+        actionLabel: "Xem đơn quá hạn",
+        targetTab: "all",
+        targetStatus: "overdue",
+      });
+    }
+
+    // P1: Chờ kiểm tra
+    if (pendingInspectionCount > 0) {
+      taskQueue.push({
+        id: "task-inspection",
+        priority: "P1",
+        title: "Kiểm tra hiện vật đồ trả",
+        description: `Có ${pendingInspectionCount} đơn đã trả đồ đang chờ kiểm tra tình trạng và phụ kiện.`,
+        actionLabel: "Kiểm tra ngay",
+        targetTab: "inspection",
+      });
+    }
+
+    // P2: Chờ xác nhận
+    if (pendingConfirmationCount > 0) {
+      taskQueue.push({
+        id: "task-pending",
+        priority: "P2",
+        title: "Xác nhận đơn mới",
+        description: `Có ${pendingConfirmationCount} đơn đặt mới đang chờ nhân viên kiểm tra và xác nhận.`,
+        actionLabel: "Duyệt đơn",
+        targetTab: "pending",
+      });
+    }
+
+    // P3: Giao / Bàn giao hôm nay
+    if (deliveringTodayCount > 0) {
+      taskQueue.push({
+        id: "task-delivering",
+        priority: "P3",
+        title: "Chuẩn bị & Bàn giao đồ hôm nay",
+        description: `Có ${deliveringTodayCount} đơn cần chuẩn bị sẵn sàng hoặc giao đi trong ngày hôm nay.`,
+        actionLabel: "Xem danh sách",
+        targetTab: "all",
+        targetStatus: "ready_for_pickup",
+      });
+    }
+
+    // Alerts vận hành
+    const alerts: Array<{
+      id: string;
+      severity: "warning" | "danger" | "info";
+      message: string;
+      bookingCode?: string;
+    }> = [];
+
+    if (unassignedBookings.length > 0) {
+      for (const ub of unassignedBookings) {
+        const code = ub.id.slice(0, 8).toUpperCase();
+        const unassignedItems = ub.items.length;
+        const unassignedAccs = ub.accessoryItems.length;
+        const details = [
+          unassignedItems > 0 ? `${unassignedItems} trang phục` : null,
+          unassignedAccs > 0 ? `${unassignedAccs} phụ kiện` : null,
+        ].filter(Boolean).join(" và ");
+
+        alerts.push({
+          id: `alert-unassigned-${ub.id}`,
+          severity: "warning",
+          message: `Đơn #${code} bắt đầu vào ${ub.rentalStartDate.toISOString().slice(0, 10)} chưa được gán ${details}.`,
+          bookingCode: code,
+        });
+      }
+    }
+
+    return ok({
+      metrics: {
+        pendingConfirmation: pendingConfirmationCount,
+        deliveringToday: deliveringTodayCount,
+        returnToday: returnTodayCount,
+        overdue: overdueCount,
+        pendingInspection: pendingInspectionCount,
+      },
+      statusCounts,
+      assetStatus: liveAssetStatus,
+      todaySchedule,
+      taskQueue,
+      alerts,
+    });
+  }
+
   async findAllPending() {
     const bookings = await this.prisma.booking.findMany({
       where: { status: BookingStatus.pending_confirmation },
@@ -908,11 +1291,22 @@ export class BookingsService {
     return ok(bookings.map((b) => this.serializeStaffBooking(b)));
   }
 
-  async findAllForStaff(search?: string, status?: string, cursor?: string) {
+  async findAllForStaff(search?: string, status?: string, cursor?: string, limit = 200) {
     const EXCLUDED: BookingStatus[] = [BookingStatus.draft, BookingStatus.cancelled, BookingStatus.rejected];
-    const statusFilter: BookingStatus[] = status && Object.values(BookingStatus).includes(status as BookingStatus)
-      ? [status as BookingStatus]
-      : (Object.values(BookingStatus) as BookingStatus[]).filter(s => !EXCLUDED.includes(s));
+    let statusFilter: BookingStatus[];
+
+    if (status && status.trim()) {
+      const parts = status
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean) as BookingStatus[];
+      const valid = parts.filter((s) => Object.values(BookingStatus).includes(s));
+      statusFilter = valid.length > 0
+        ? valid
+        : (Object.values(BookingStatus) as BookingStatus[]).filter((s) => !EXCLUDED.includes(s));
+    } else {
+      statusFilter = (Object.values(BookingStatus) as BookingStatus[]).filter((s) => !EXCLUDED.includes(s));
+    }
     const bookings = await this.prisma.booking.findMany({
       where: {
         status: { in: statusFilter },
@@ -926,7 +1320,7 @@ export class BookingsService {
       },
       orderBy: { createdAt: "desc" },
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      take: 50,
+      take: limit,
       include: {
         items: {
           include: {
@@ -949,7 +1343,7 @@ export class BookingsService {
     const serialized = bookings.map((b) => this.serializeStaffBooking(b));
     return ok({
       data: serialized,
-      nextCursor: bookings.length === 50 ? bookings[bookings.length - 1].id : null,
+      nextCursor: bookings.length === limit ? bookings[bookings.length - 1].id : null,
     });
   }
 
@@ -2377,6 +2771,7 @@ export class BookingsService {
       ...this.serializeBooking(booking),
       customerName: booking.customer?.profile?.fullName ?? booking.customer?.email ?? null,
       customerPhone: booking.customer?.profile?.phone ?? null,
+      customerEmail: booking.customer?.email ?? null,
     };
   }
 

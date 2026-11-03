@@ -67,6 +67,17 @@ export class BookingsController {
     return this.bookingsService.cancel(user.id, id);
   }
 
+  @Get("staff/overview")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  getStaffOverview(
+    @Query("schedulePeriod") schedulePeriod?: string,
+    @Query("scheduleFrom") scheduleFrom?: string,
+    @Query("scheduleTo") scheduleTo?: string,
+  ) {
+    return this.bookingsService.getStaffOverview({ schedulePeriod, scheduleFrom, scheduleTo });
+  }
+
   @Get("staff/pending")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")
@@ -79,7 +90,10 @@ export class BookingsController {
     @Query("search") search?: string,
     @Query("status") status?: string,
     @Query("cursor") cursor?: string,
-  ) { return this.bookingsService.findAllForStaff(search, status, cursor); }
+    @Query("limit") limit?: string,
+  ) {
+    return this.bookingsService.findAllForStaff(search, status, cursor, limit ? Number(limit) : 200);
+  }
 
   @Get("staff/returns")
   @UseGuards(JwtAuthGuard, RolesGuard)

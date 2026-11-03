@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
   X,
   Layers,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 import { StaffChatNavBadge } from "@/components/chat/staff-chat-nav-badge";
@@ -43,9 +44,9 @@ export const STAFF_NAV_GROUPS: StaffNavGroupConfig[] = [
     title: "Vận hành & Đơn hàng",
     icon: Layers,
     items: [
-      { key: "all", label: "Tất cả đơn thuê", icon: LayoutDashboard, href: "/dashboard/staff#all" },
-      { key: "pending", label: "Chờ xác nhận", icon: Clock, href: "/dashboard/staff#pending" },
-      { key: "map", label: "Bản đồ giao nhận", icon: Map, href: "/dashboard/staff#map" },
+      { key: "all", label: "Tất cả đơn thuê", icon: FileText, href: "/dashboard/staff/booking#all" },
+      { key: "pending", label: "Chờ xác nhận", icon: Clock, href: "/dashboard/staff/booking#pending" },
+      { key: "map", label: "Bản đồ giao nhận", icon: Map, href: "/dashboard/staff/booking#map" },
     ],
   },
   {
@@ -54,7 +55,7 @@ export const STAFF_NAV_GROUPS: StaffNavGroupConfig[] = [
     icon: ClipboardCheck,
     items: [
       { key: "inspection", label: "Kiểm tra hiện vật", icon: ClipboardCheck, href: "/dashboard/staff/inspection" },
-      { key: "refunds", label: "Xử lý hoàn cọc", icon: RotateCcw, href: "/dashboard/staff#refunds" },
+      { key: "refunds", label: "Xử lý hoàn cọc", icon: RotateCcw, href: "/dashboard/staff/booking#refunds" },
     ],
   },
   {
@@ -243,11 +244,12 @@ export function StaffSidebar({
         onCloseMobileDrawer();
       }
 
-      const isHashTab =
-        (item.href.includes("#") || item.href === "/dashboard/staff") &&
-        item.key !== "chat";
+      const targetPath = item.href.split("#")[0];
+      const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
+      const isSamePageHash =
+        item.href.includes("#") && currentPath === targetPath && item.key !== "chat";
 
-      if (isHashTab && onTabChange) {
+      if (isSamePageHash && onTabChange) {
         if (e) e.preventDefault();
         onTabChange(item.key);
       } else {
@@ -395,6 +397,69 @@ export function StaffSidebar({
                 aria-label="Kiểm tra hiện vật"
               >
                 <ClipboardCheck className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Standalone Top-Level Item: Tổng quan ca trực */}
+        <div className="mb-2">
+          {!isCollapsed ? (
+            <button
+              type="button"
+              onClick={(e) =>
+                handleItemClick(
+                  {
+                    key: "overview",
+                    label: "Tổng quan ca trực",
+                    icon: LayoutDashboard,
+                    href: "/dashboard/staff#overview",
+                  },
+                  e
+                )
+              }
+              className={`group flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-all duration-150 ${
+                active === "overview"
+                  ? "bg-lotus text-white shadow-xs font-bold"
+                  : "text-stone-700 hover:bg-white hover:text-lotus border border-transparent hover:border-sand/70 font-semibold"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <LayoutDashboard
+                  className={`h-4.5 w-4.5 shrink-0 transition-colors ${
+                    active === "overview" ? "text-white" : "text-stone-500 group-hover:text-lotus"
+                  }`}
+                />
+                <span className="truncate text-xs uppercase tracking-[0.08em]">
+                  Tổng quan ca trực
+                </span>
+              </div>
+            </button>
+          ) : (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={(e) =>
+                  handleItemClick(
+                    {
+                      key: "overview",
+                      label: "Tổng quan ca trực",
+                      icon: LayoutDashboard,
+                      href: "/dashboard/staff#overview",
+                    },
+                    e
+                  )
+                }
+                onMouseEnter={(e) => showTooltip("Tổng quan ca trực", e)}
+                onMouseLeave={hideTooltip}
+                className={`relative flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 ${
+                  active === "overview"
+                    ? "bg-lotus text-white shadow-md ring-2 ring-lotus/30"
+                    : "text-stone-600 hover:bg-white hover:text-lotus border border-sand/50"
+                }`}
+                aria-label="Tổng quan ca trực"
+              >
+                <LayoutDashboard className="h-5 w-5" />
               </button>
             </div>
           )}

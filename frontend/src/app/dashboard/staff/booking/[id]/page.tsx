@@ -28,6 +28,9 @@ import {
   Banknote,
   QrCode,
   Truck,
+  Phone,
+  Mail,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -273,6 +276,7 @@ export default function StaffBookingDetailPage() {
 
   const s = STATUS_LABELS[booking.status] ?? { label: booking.status, color: "bg-stone-100 text-stone-600" };
   const actions = NEXT_ACTIONS[booking.status] ?? [];
+  const isOverdue = booking.status === "overdue" || (booking.overdueDays ?? 0) > 0;
 
   return (
     <StaffPortalShell
@@ -282,12 +286,50 @@ export default function StaffBookingDetailPage() {
     >
       {/* Back link */}
       <Link
-        href="/dashboard/staff"
+        href="/dashboard/staff/booking"
         className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-lotus transition hover:text-oxblood"
       >
         <ArrowLeft className="h-4 w-4" />
         Quay lại danh sách
       </Link>
+
+      {/* Banner quá hạn – nổi bật ngay dưới breadcrumb để nhân viên liên hệ ngay */}
+      {isOverdue && (
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-rose-800 text-sm">
+                Đơn quá hạn {(booking.overdueDays ?? 0) > 0 ? `${booking.overdueDays} ngày` : ""}
+              </p>
+              <p className="text-xs text-rose-600 mt-0.5">
+                Liên hệ ngay với khách để thu hồi trang phục.
+                {(booking.overdueDays ?? 0) > 0 && ` Phụ phí tạm tính: ${new Intl.NumberFormat("vi-VN").format((booking.overdueDays ?? 0) * (booking.overdueFeePerDay ?? 100000))} ₫`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {booking.customerPhone && (
+              <a
+                href={`tel:${booking.customerPhone}`}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700 transition"
+              >
+                <Phone className="h-4 w-4" />
+                Gọi ngay
+              </a>
+            )}
+            {booking.customerEmail && (
+              <a
+                href={`mailto:${booking.customerEmail}?subject=Thông báo quá hạn trả trang phục - Đơn %23${booking.id.slice(0,8).toUpperCase()}`}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-rose-300 text-rose-700 bg-white text-sm font-semibold hover:bg-rose-50 transition"
+              >
+                <Mail className="h-4 w-4" />
+                Gửi email
+              </a>
+            )}
+          </div>
+        </div>
+      )}
 
       {actionError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -325,7 +367,25 @@ export default function StaffBookingDetailPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Khách hàng</p>
             <p className="mt-1 font-medium text-ink">{booking.customerName ?? "—"}</p>
             {booking.customerPhone && (
-              <p className="text-sm text-stone-500">{booking.customerPhone}</p>
+              <a
+                href={`tel:${booking.customerPhone}`}
+                className="mt-1 inline-flex items-center gap-1.5 text-sm text-lotus hover:text-oxblood font-mono transition"
+              >
+                <Phone className="h-3.5 w-3.5" />
+                {booking.customerPhone}
+              </a>
+            )}
+            {!booking.customerPhone && booking.customerEmail && (
+              <a
+                href={`mailto:${booking.customerEmail}`}
+                className="mt-1 inline-flex items-center gap-1.5 text-sm text-lotus hover:text-oxblood transition break-all"
+              >
+                <Mail className="h-3.5 w-3.5 shrink-0" />
+                {booking.customerEmail}
+              </a>
+            )}
+            {!booking.customerPhone && !booking.customerEmail && (
+              <p className="mt-1 text-xs text-stone-400 italic">Chưa có thông tin liên hệ</p>
             )}
           </div>
           <div>
