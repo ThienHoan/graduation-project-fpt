@@ -23,6 +23,9 @@ describe("LoyaltyService", () => {
       vouchers: {
         create: vi.fn(),
       },
+      booking: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       $executeRaw: vi.fn(),
       runSerializable: vi.fn((fn: any) => fn(prisma)),
     };
@@ -75,6 +78,89 @@ describe("LoyaltyService", () => {
       prisma.userAccount.findUnique.mockResolvedValueOnce(null);
       await expect(service.getMyLoyalty("non-existent")).rejects.toThrow(NotFoundException);
     });
+
+    it("calculates pendingPoints from active non-completed bookings that are paid", async () => {
+      prisma.userAccount.findUnique.mockResolvedValueOnce({
+        loyaltyPoints: 100,
+        loyaltyPointsLifetime: 100,
+        loyaltyTier: "basic",
+      });
+      prisma.booking.findMany.mockResolvedValueOnce([
+        {
+          id: "book-1",
+          rentalTotal: 450000,
+          discountTotal: 50000,
+          status: "renting",
+          rentalStartDate: new Date(),
+          rentalEndDate: new Date(),
+          createdAt: new Date(),
+          payments: [{ status: "paid" }],
+        },
+      ]);
+
+      const res = await service.getMyLoyalty("user-1");
+      expect(res.data?.pendingPoints).toBe(450); // 450000 / 1000
+      expect(res.data?.pendingBookings).toHaveLength(1);
+      expect(res.data?.pendingBookings[0].points).toBe(450);
+      expect(prisma.booking.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: expect.objectContaining({
+              in: expect.not.arrayContaining(["pending_confirmation"]),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("excludes confirmed booking if payment is not yet paid", async () => {
+      prisma.userAccount.findUnique.mockResolvedValueOnce({
+        loyaltyPoints: 100,
+        loyaltyPointsLifetime: 100,
+        loyaltyTier: "basic",
+      });
+      // Đơn confirmed nhưng chưa thanh toán (payments pending hoặc rỗng)
+      prisma.booking.findMany.mockResolvedValueOnce([
+        {
+          id: "book-unpaid",
+          rentalTotal: 840000,
+          status: "confirmed",
+          rentalStartDate: new Date(),
+          rentalEndDate: new Date(),
+          createdAt: new Date(),
+          payments: [{ status: "pending" }],
+        },
+      ]);
+
+      const res = await service.getMyLoyalty("user-1");
+      expect(res.data?.pendingPoints).toBe(0);
+      expect(res.data?.pendingBookings).toHaveLength(0);
+    });
+
+    it("includes confirmed booking if payment is successfully paid", async () => {
+      prisma.userAccount.findUnique.mockResolvedValueOnce({
+        loyaltyPoints: 100,
+        loyaltyPointsLifetime: 100,
+        loyaltyTier: "basic",
+      });
+      // Đơn confirmed nhưng khách đã thanh toán thành công
+      prisma.booking.findMany.mockResolvedValueOnce([
+        {
+          id: "book-paid-confirmed",
+          rentalTotal: 840000,
+          status: "confirmed",
+          rentalStartDate: new Date(),
+          rentalEndDate: new Date(),
+          createdAt: new Date(),
+          payments: [{ status: "paid" }],
+        },
+      ]);
+
+      const res = await service.getMyLoyalty("user-1");
+      expect(res.data?.pendingPoints).toBe(840);
+      expect(res.data?.pendingBookings).toHaveLength(1);
+      expect(res.data?.pendingBookings[0].points).toBe(840);
+    });
   });
 
   describe("awardPointsForBooking", () => {
@@ -85,6 +171,7 @@ describe("LoyaltyService", () => {
           findUnique: vi.fn().mockResolvedValue({ loyaltyPoints: 350 }),
         },
         loyalty_point_logs: {
+          findFirst: vi.fn().mockResolvedValue(null),
           create: vi.fn().mockResolvedValue({ id: "log-1" }),
         },
       };
@@ -114,6 +201,64 @@ describe("LoyaltyService", () => {
     it("returns null when rental spend is less than 1.000đ", async () => {
       const tx = { $executeRaw: vi.fn() };
       const result = await service.awardPointsForBooking(tx as any, "booking-2", "cust-2", 800);
+      expect(result).toBeNull();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it("prevents duplicate point awards if booking was already rewarded (webhook retry)", async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        loyalty_point_logs: {
+          findFirst: vi.fn().mockResolvedValue({ id: "log-already-awarded" }),
+          create: vi.fn(),
+        },
+      };
+
+      const result = await service.awardPointsForBooking(tx as any, "booking-repeat", "cust-1", 500000);
+      expect(result).toBeNull();
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.loyalty_point_logs.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("clawbackPointsForBooking", () => {
+    it("deducts points and records clawback log when booking has points", async () => {
+      const tx = {
+        $executeRaw: vi.fn().mockResolvedValue(1),
+        userAccount: {
+          findUnique: vi.fn().mockResolvedValue({ loyaltyPoints: 200 }),
+        },
+        loyalty_point_logs: {
+          findFirst: vi
+            .fn()
+            .mockResolvedValueOnce({ id: "earn-log-1", delta: 150 }) // earnedLog
+            .mockResolvedValueOnce(null), // alreadyClawed
+          create: vi.fn().mockResolvedValue({ id: "claw-log-1" }),
+        },
+      };
+
+      const result = await service.clawbackPointsForBooking(tx as any, "book-cancelled", "cust-1");
+      expect(result?.pointsDeducted).toBe(150);
+      expect(tx.$executeRaw).toHaveBeenCalled();
+      expect(tx.loyalty_point_logs.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            delta: -150,
+            reason: "clawback_cancelled",
+          }),
+        }),
+      );
+    });
+
+    it("returns null if booking had no points or was already clawed back", async () => {
+      const tx = {
+        $executeRaw: vi.fn(),
+        loyalty_point_logs: {
+          findFirst: vi.fn().mockResolvedValueOnce(null),
+        },
+      };
+
+      const result = await service.clawbackPointsForBooking(tx as any, "book-never-earned", "cust-1");
       expect(result).toBeNull();
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });

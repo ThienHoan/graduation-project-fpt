@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma, loyalty_tier } from "@prisma/client";
+import { BookingStatus, Prisma, loyalty_tier } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 
@@ -58,6 +58,12 @@ export class LoyaltyService {
     const delta = Math.floor(rentalSpend * POINTS_PER_VND);
     if (delta <= 0) return null;
 
+    // Tránh cộng trùng điểm nếu đơn thuê này đã từng được tích điểm
+    const existing = await tx.loyalty_point_logs.findFirst({
+      where: { bookingId, reason: "earn_rental" },
+    });
+    if (existing) return null;
+
     // Cập nhật atomic điểm và tự động nâng hạng theo lifetime points
     await tx.$executeRaw`
       UPDATE "user_accounts"
@@ -93,6 +99,60 @@ export class LoyaltyService {
     });
 
     return { pointsEarned: delta };
+  }
+
+  /**
+   * Thu hồi điểm khi đơn bị hủy sau khi đã hoàn tất tích điểm (idempotent, an toàn).
+   */
+  async clawbackPointsForBooking(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    customerId: string,
+    reason = "Đơn bị hủy hoặc hoàn tiền ngoại lệ",
+  ): Promise<{ pointsDeducted: number } | null> {
+    const earnedLog = await tx.loyalty_point_logs.findFirst({
+      where: { bookingId, reason: "earn_rental" },
+    });
+    if (!earnedLog || earnedLog.delta <= 0) return null;
+
+    const alreadyClawed = await tx.loyalty_point_logs.findFirst({
+      where: { bookingId, reason: "clawback_cancelled" },
+    });
+    if (alreadyClawed) return null;
+
+    const deduct = earnedLog.delta;
+
+    await tx.$executeRaw`
+      UPDATE "user_accounts"
+      SET
+        "loyalty_points"          = GREATEST(0, "loyalty_points" - ${deduct}),
+        "loyalty_points_lifetime" = GREATEST(0, "loyalty_points_lifetime" - ${deduct}),
+        "loyalty_tier"            = CASE
+          WHEN GREATEST(0, "loyalty_points_lifetime" - ${deduct}) >= ${TIER_THRESHOLDS.premium} THEN 'premium'::loyalty_tier
+          WHEN GREATEST(0, "loyalty_points_lifetime" - ${deduct}) >= ${TIER_THRESHOLDS.plus}    THEN 'plus'::loyalty_tier
+          ELSE 'basic'::loyalty_tier
+        END,
+        "updated_at"              = now()
+      WHERE "id" = ${customerId}::uuid
+    `;
+
+    const user = await tx.userAccount.findUnique({
+      where: { id: customerId },
+      select: { loyaltyPoints: true },
+    });
+
+    await tx.loyalty_point_logs.create({
+      data: {
+        customerId,
+        bookingId,
+        delta: -deduct,
+        reason: "clawback_cancelled",
+        meta: { originalLogId: earnedLog.id, reason },
+        balanceAfter: user?.loyaltyPoints ?? 0,
+      },
+    });
+
+    return { pointsDeducted: deduct };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -194,11 +254,92 @@ export class LoyaltyService {
     });
     if (!user) throw new NotFoundException("Không tìm thấy thông tin tài khoản.");
 
+    // Lấy các đơn thuê đã được xác nhận/thanh toán đang tiến hành nhưng chưa hoàn tất tích điểm
+    // Quy tắc nghiệp vụ:
+    // 1. TUYỆT ĐỐI KHÔNG tính pending points cho đơn 'pending_confirmation'
+    // 2. Với đơn 'confirmed' hoặc 'awaiting_payment': Chỉ tính khi đã thanh toán thành công thực tế (có Payment status 'paid')
+    // 3. Các đơn ở trạng thái sau thanh toán (paid, preparing, ready_for_pickup, delivering, renting, returned, inspection_pending, refund_pending, overdue) được tính
+    const candidateBookings = await this.prisma.booking.findMany({
+      where: {
+        customerId,
+        status: {
+          in: [
+            BookingStatus.confirmed,
+            BookingStatus.awaiting_payment,
+            BookingStatus.paid,
+            BookingStatus.preparing,
+            BookingStatus.ready_for_pickup,
+            BookingStatus.delivering,
+            BookingStatus.renting,
+            BookingStatus.returned,
+            BookingStatus.inspection_pending,
+            BookingStatus.refund_pending,
+            BookingStatus.overdue,
+          ],
+        },
+        pointLogs: {
+          none: {
+            reason: "earn_rental",
+          },
+        },
+      },
+      select: {
+        id: true,
+        rentalTotal: true,
+        discountTotal: true,
+        status: true,
+        rentalStartDate: true,
+        rentalEndDate: true,
+        createdAt: true,
+        payments: {
+          select: {
+            status: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const activeBookings = candidateBookings.filter((b) => {
+      const hasSuccessfulPayment = b.payments?.some((p) => p.status === "paid");
+      const postPaymentStatuses: BookingStatus[] = [
+        BookingStatus.paid,
+        BookingStatus.preparing,
+        BookingStatus.ready_for_pickup,
+        BookingStatus.delivering,
+        BookingStatus.renting,
+        BookingStatus.returned,
+        BookingStatus.inspection_pending,
+        BookingStatus.refund_pending,
+        BookingStatus.overdue,
+      ];
+      const isPostPaymentStatus = postPaymentStatuses.includes(b.status);
+
+      return hasSuccessfulPayment || isPostPaymentStatus;
+    });
+
+    const pendingBookings = activeBookings.map((b) => {
+      // b.rentalTotal đã là tiền thuê thực trả sau khi trừ ưu đãi/voucher
+      const earnableSpend = Math.max(0, Number(b.rentalTotal ?? 0));
+      const points = Math.floor(earnableSpend * POINTS_PER_VND);
+      return {
+        bookingId: b.id,
+        status: b.status,
+        rentalStartDate: b.rentalStartDate,
+        rentalEndDate: b.rentalEndDate,
+        earnableSpend,
+        points,
+      };
+    });
+
+    const pendingPoints = pendingBookings.reduce((sum, b) => sum + b.points, 0);
     const nextTier = this.calcNextTier(user.loyaltyPointsLifetime);
 
     return ok({
       points: user.loyaltyPoints,
       lifetimePoints: user.loyaltyPointsLifetime,
+      pendingPoints,
+      pendingBookings,
       tier: user.loyaltyTier,
       nextTier,
       tierBenefits: TIER_BENEFITS[user.loyaltyTier],

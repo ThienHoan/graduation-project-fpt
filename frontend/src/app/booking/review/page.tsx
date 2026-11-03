@@ -735,6 +735,24 @@ function BookingReviewInner() {
                   {shippingFee > 0 ? ` + Ship ${formatVND(shippingFee)}` : ""}
                 </span>
               </div>
+
+              {/* Điểm thưởng dự kiến (Estimated Points) */}
+              {Math.floor(Math.max(0, rentalTotal - effectiveDiscount) * 0.001) > 0 && (
+                <div className="mt-2.5 rounded-lg border border-amber-200/80 bg-amber-50/70 p-3 text-xs text-amber-950">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 font-bold text-amber-900">
+                      <Sparkles className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span>Điểm thưởng dự kiến:</span>
+                    </span>
+                    <span className="font-extrabold text-amber-700 text-sm">
+                      +{Math.floor(Math.max(0, rentalTotal - effectiveDiscount) * 0.001).toLocaleString("vi-VN")} điểm
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[10.5px] text-stone-500 leading-relaxed">
+                    Điểm sẽ được ghi nhận sau khi thanh toán thành công và cộng vào ví sau khi bạn hoàn tất trả trang phục, kiểm tra cọc.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="mt-8 border-t border-sand pt-6">

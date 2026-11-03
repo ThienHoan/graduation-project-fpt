@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { readStoredSession, type AuthenticatedUser } from "@/lib/auth";
 import {
   getMyLoyalty,
   getMyLoyaltyHistory,
@@ -24,36 +25,78 @@ import {
   Check,
   AlertCircle,
   HelpCircle,
+  ShieldCheck,
+  Zap,
+  TrendingUp,
+  Receipt,
+  Ticket,
 } from "lucide-react";
 
-const TIER_META: Record<
-  LoyaltyTier,
-  { label: string; badge: string; color: string; bgGradient: string; icon: typeof Award }
-> = {
+interface TierDesign {
+  label: string;
+  badge: string;
+  cardName: string;
+  cardGradient: string;
+  cardBorder: string;
+  cardGlow: string;
+  accentColor: string;
+  icon: typeof Award;
+  description: string;
+}
+
+const TIER_META: Record<LoyaltyTier, TierDesign> = {
   basic: {
-    label: "Hạng Basic",
+    label: "Hạng Khởi Đầu",
     badge: "Thành viên Khởi đầu",
-    color: "text-stone-700 border-stone-300",
-    bgGradient: "from-stone-100 via-sand/40 to-stone-200/50",
+    cardName: "HERITAGE BASIC CARD",
+    cardGradient: "from-[#1f1c19] via-[#2b2521] to-[#151311]",
+    cardBorder: "border-[#8a7a6b]/30 shadow-[0_25px_60px_-15px_rgba(20,18,16,0.5)]",
+    cardGlow: "from-sand/10 via-transparent to-transparent",
+    accentColor: "#c6a664",
     icon: Award,
+    description: "Khám phá vẻ đẹp cổ phục Việt Nam cùng đặc quyền tích điểm khởi nguyên.",
   },
   plus: {
-    label: "Hạng Plus",
+    label: "Hạng Thân Thiết",
     badge: "Thành viên Thân thiết",
-    color: "text-emerald-800 border-emerald-300",
-    bgGradient: "from-emerald-50 via-teal-50/60 to-emerald-100/50",
+    cardName: "HERITAGE PLUS NOBLE",
+    cardGradient: "from-[#0e2421] via-[#163a35] to-[#091816]",
+    cardBorder: "border-emerald-500/40 shadow-[0_25px_60px_-15px_rgba(13,34,31,0.6)]",
+    cardGlow: "from-emerald-500/15 via-transparent to-teal-900/10",
+    accentColor: "#34d399",
     icon: Sparkles,
+    description: "Ưu đãi giảm 5% giá trị thuê trang phục cùng quyền ưu tiên giữ size độc bản.",
   },
   premium: {
-    label: "Hạng Premium",
-    badge: "Thành viên Cao cấp",
-    color: "text-amber-900 border-amber-400",
-    bgGradient: "from-amber-50 via-yellow-50/60 to-amber-100/60",
+    label: "Hạng Hoàng Gia",
+    badge: "Thành viên Hoàng Gia",
+    cardName: "HERITAGE ROYAL PRIVILEGE",
+    cardGradient: "from-[#2b1010] via-[#401616] to-[#1c0808]",
+    cardBorder: "border-amber-400/50 shadow-[0_30px_70px_-15px_rgba(61,20,20,0.7)]",
+    cardGlow: "from-amber-400/20 via-lotus/20 to-transparent",
+    accentColor: "#fbbf24",
     icon: Crown,
+    description: "Đặc quyền cao nhất: Giảm 10% trọn đời, miễn phí phụ kiện và phục vụ riêng.",
   },
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  pending_confirmation: "Chờ xác nhận",
+  confirmed: "Đã xác nhận",
+  awaiting_payment: "Chờ thanh toán",
+  paid: "Đã thanh toán",
+  preparing: "Đang chuẩn bị",
+  ready_for_pickup: "Sẵn sàng lấy đồ",
+  delivering: "Đang giao hàng",
+  renting: "Đang thuê",
+  returned: "Đã trả đồ",
+  inspection_pending: "Đang kiểm tra",
+  refund_pending: "Chờ duyệt cọc",
+  overdue: "Quá hạn",
+};
+
 export default function CustomerLoyaltyPage() {
+  const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null);
   const [loyalty, setLoyalty] = useState<LoyaltyInfo | null>(null);
   const [rules, setRules] = useState<LoyaltyRedemptionRule[]>([]);
   const [history, setHistory] = useState<LoyaltyPointLog[]>([]);
@@ -67,6 +110,9 @@ export default function CustomerLoyaltyPage() {
     try {
       setLoading(true);
       setErrorMsg(null);
+      const session = readStoredSession();
+      if (session?.user) setCurrentUser(session.user);
+
       const [loyaltyRes, rulesRes, historyRes] = await Promise.all([
         getMyLoyalty(),
         getLoyaltyRedemptionRules(),
@@ -95,7 +141,6 @@ export default function CustomerLoyaltyPage() {
       const res = await redeemLoyaltyPoints(ruleId);
       if (res.success && res.data) {
         setSuccessVoucher({ code: res.data.voucherCode, name: res.data.voucherName });
-        // Tải lại dữ liệu điểm & lịch sử
         const [loyaltyRes, historyRes] = await Promise.all([getMyLoyalty(), getMyLoyaltyHistory()]);
         if (loyaltyRes.success && loyaltyRes.data) setLoyalty(loyaltyRes.data);
         if (historyRes.success && historyRes.data) setHistory(historyRes.data);
@@ -118,10 +163,15 @@ export default function CustomerLoyaltyPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-lotus border-t-transparent" />
-          <p className="text-xs text-stone-500 font-medium">Đang tải thông tin điểm thưởng...</p>
+      <div className="flex min-h-[460px] items-center justify-center">
+        <div className="flex flex-col items-center gap-3.5">
+          <div className="relative flex h-12 w-12 items-center justify-center">
+            <div className="absolute inset-0 animate-ping rounded-full bg-lotus/20" />
+            <div className="h-9 w-9 animate-spin rounded-full border-2 border-lotus border-t-transparent" />
+          </div>
+          <p className="font-sans text-xs text-stone-500 font-medium tracking-wide">
+            Đang tải dữ liệu điểm thưởng & hội viên...
+          </p>
         </div>
       </div>
     );
@@ -133,167 +183,355 @@ export default function CustomerLoyaltyPage() {
 
   const lifetimePoints = loyalty?.lifetimePoints ?? 0;
   const currentPoints = loyalty?.points ?? 0;
+  const pendingPoints = loyalty?.pendingPoints ?? 0;
+  const pendingBookings = loyalty?.pendingBookings ?? [];
   const nextTier = loyalty?.nextTier;
   const progressPercent = nextTier
     ? Math.min(100, Math.round((lifetimePoints / nextTier.targetPoints) * 100))
     : 100;
 
   return (
-    <div className="space-y-8 pb-12">
-      {/* Header */}
-      <div>
-        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-lotus">
-          Chương Trình Khách Hàng Thân Thiết
-        </span>
-        <h1 className="mt-1 font-serif text-2xl font-bold text-ink sm:text-3xl">
-          Điểm Thưởng & Hạng Thành Viên
-        </h1>
-        <p className="mt-1 text-sm text-stone-500">
-          Tích luỹ 1 điểm cho mỗi 1.000đ giá trị thuê khi đơn hoàn tất. Đổi điểm lấy mã giảm giá và mở khoá đặc quyền hạng thành viên.
-        </p>
+    <div className="space-y-8 pb-16 max-w-6xl mx-auto">
+      {/* ── Editorial Header ── */}
+      <div className="relative overflow-hidden rounded-3xl border border-sand/80 bg-gradient-to-r from-parchment via-mist to-parchment/70 p-6 sm:p-8 shadow-xs">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-radial from-antique/20 to-transparent blur-2xl" />
+        <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-sand bg-white/95 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-lotus shadow-2xs">
+              <Sparkles className="h-3 w-3 text-antique" />
+              <span>Chương Trình Khách Hàng Thân Thiết</span>
+            </div>
+            <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-ink">
+              Điểm Thưởng & Hạng Thành Viên
+            </h1>
+            <p className="text-xs sm:text-sm text-stone-600 max-w-xl leading-relaxed">
+              Tích luỹ <strong className="text-ink font-semibold">1 điểm cho mỗi 1.000đ</strong> tiền thuê thực trả khi đơn hoàn tất. Quy đổi điểm nhận mã giảm giá và mở khoá các đặc quyền cao cấp.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-semibold text-stone-600 bg-white/80 border border-sand/60 px-3.5 py-2 rounded-xl shadow-2xs">
+            <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0" />
+            <span>Tích điểm tự động & minh bạch 100%</span>
+          </div>
+        </div>
       </div>
 
       {errorMsg && (
-        <div className="flex items-center gap-2.5 rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" />
+        <div className="flex items-center gap-3 rounded-2xl border border-red-200/80 bg-red-50/90 p-4 text-xs font-medium text-red-800 shadow-xs">
+          <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Thông báo đổi voucher thành công */}
+      {/* Thông báo đổi voucher thành công (Pop-in Banner) */}
       {successVoucher && (
-        <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/80 p-5 shadow-xs">
+        <div className="relative overflow-hidden rounded-2xl border border-emerald-300/80 bg-gradient-to-r from-emerald-50 via-teal-50/60 to-emerald-50 p-5 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-2xs">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
               <div>
-                <h3 className="text-sm font-bold text-emerald-900">
-                  Đổi mã giảm giá thành công!
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                  Đổi mã thành công
+                </span>
+                <h3 className="text-sm font-bold text-emerald-950">
+                  {successVoucher.name}
                 </h3>
-                <p className="text-xs text-emerald-700 mt-0.5">
-                  Mã voucher của bạn: <strong className="font-mono">{successVoucher.code}</strong> ({successVoucher.name})
+                <p className="text-xs text-emerald-800/90 mt-0.5">
+                  Mã ưu đãi của bạn:{" "}
+                  <strong className="font-mono font-bold text-emerald-950 bg-white px-2 py-0.5 rounded border border-emerald-300 tracking-wider">
+                    {successVoucher.code}
+                  </strong>
                 </p>
               </div>
             </div>
+
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => handleCopy(successVoucher.code)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-emerald-300 px-3 py-2 text-xs font-semibold text-emerald-800 shadow-xs hover:bg-emerald-50 transition"
+                className="group inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-900 shadow-2xs transition hover:bg-emerald-50 active:scale-[0.98]"
               >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 text-stone-500" />}
                 <span>{copied ? "Đã sao chép" : "Sao chép mã"}</span>
               </button>
               <Link
                 href="/catalog"
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-800 transition"
+                className="group inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-emerald-800 active:scale-[0.98]"
               >
-                <span>Dùng ngay</span>
-                <ArrowRight className="h-3.5 w-3.5" />
+                <span>Thuê đồ ngay</span>
+                <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
               </Link>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Thẻ Hạng Thành Viên & Điểm Thưởng ── */}
-      <div
-        className={`relative overflow-hidden rounded-3xl border ${tierInfo.color} bg-gradient-to-br ${tierInfo.bgGradient} p-6 sm:p-8 shadow-sm`}
-      >
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-sand/80 bg-white/80 px-3 py-1 text-xs font-bold uppercase tracking-wider backdrop-blur-xs">
-              <TierIcon className="h-3.5 w-3.5 text-lotus" />
-              <span>{tierInfo.badge}</span>
+      {/* ── THẺ HỘI VIÊN KIM LOẠI (Imperial Double-Bezel Card) ── */}
+      <div className="rounded-3xl bg-stone-900/5 p-1.5 ring-1 ring-black/5 shadow-sm">
+        <div
+          className={`relative overflow-hidden rounded-[calc(1.5rem-0.125rem)] border ${tierInfo.cardBorder} bg-gradient-to-br ${tierInfo.cardGradient} p-6 sm:p-8 text-white`}
+        >
+          {/* Subtle Ambient Radial Glows */}
+          <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-radial from-white/10 to-transparent blur-2xl" />
+          <div className="pointer-events-none absolute -left-16 -bottom-16 h-56 w-56 rounded-full bg-radial from-antique/15 to-transparent blur-xl" />
+
+          {/* Background Watermark Pattern */}
+          <div className="pointer-events-none absolute inset-0 opacity-[0.03] bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]" />
+
+          <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            {/* Card Information Left Block */}
+            <div className="space-y-3.5 max-w-lg">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 border border-white/20 backdrop-blur-md shadow-inner shrink-0">
+                  <TierIcon className="h-6 w-6 text-amber-300" />
+                </div>
+                <div>
+                  <span className="font-mono text-[10px] tracking-widest text-white/60 uppercase block">
+                    {tierInfo.cardName}
+                  </span>
+                  <div className="inline-flex items-center gap-2 mt-0.5">
+                    <span className="font-display text-2xl sm:text-3xl font-bold tracking-wide text-white">
+                      {tierInfo.label}
+                    </span>
+                    <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-200 border border-white/20">
+                      {tierInfo.badge}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs sm:text-sm text-white/80 leading-relaxed font-normal">
+                {tierInfo.description}
+              </p>
+
+              {/* Card Meta details */}
+              <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] text-white/65">
+                <span>
+                  Chủ thẻ:{" "}
+                  <strong className="text-white font-medium">
+                    {currentUser?.fullName ?? currentUser?.email?.split("@")[0] ?? "Quý khách"}
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Mã thẻ:{" "}
+                  <strong className="text-white font-mono tracking-wider font-semibold">
+                    {currentUser?.id ? `HV-${currentUser.id.slice(0, 8).toUpperCase()}` : "HV-MEMBER"}
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Điểm xét hạng:{" "}
+                  <strong className="text-amber-300 font-sans font-bold tabular-nums">
+                    {lifetimePoints.toLocaleString("vi-VN")}
+                  </strong>{" "}
+                  điểm
+                </span>
+              </div>
             </div>
-            <h2 className="font-serif text-2xl font-bold sm:text-3xl text-ink">
-              {tierInfo.label}
-            </h2>
-            <p className="text-xs text-stone-600 max-w-md">
-              Tổng điểm trọn đời đã tích: <strong className="text-ink">{lifetimePoints.toLocaleString("vi-VN")} điểm</strong>
-            </p>
+
+            {/* Dual Vault: Khối Điểm Khả Dụng & Điểm Chờ */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto">
+              {/* Điểm Khả Dụng */}
+              <div className="relative overflow-hidden rounded-2xl border border-white/15 bg-white/10 p-4 sm:p-5 backdrop-blur-md transition hover:bg-white/[0.14] min-w-[200px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                <div className="flex items-center justify-between text-white/70">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">
+                    Điểm Khả Dụng
+                  </span>
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-400/20 text-amber-300">
+                    <Zap className="h-3 w-3" />
+                  </div>
+                </div>
+
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="font-sans text-3xl sm:text-4xl font-extrabold text-white tracking-tight tabular-nums">
+                    {currentPoints.toLocaleString("vi-VN")}
+                  </span>
+                  <span className="text-xs font-semibold text-white/70">điểm</span>
+                </div>
+
+                <div className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-emerald-300 bg-emerald-500/20 rounded-lg px-2.5 py-1 border border-emerald-400/20 w-fit">
+                  <CheckCircle2 className="h-3 w-3 shrink-0" />
+                  <span>Sẵn sàng đổi voucher</span>
+                </div>
+              </div>
+
+              {/* Điểm Chờ Tích Lũy (Pending Points) */}
+              <div className="relative overflow-hidden rounded-2xl border border-amber-400/25 bg-amber-500/10 p-4 sm:p-5 backdrop-blur-md transition hover:bg-amber-500/15 min-w-[200px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+                <div className="flex items-center justify-between text-amber-200">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">
+                    Điểm Chờ Kích Hoạt
+                  </span>
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-400/20 text-amber-300">
+                    <Clock className="h-3 w-3" />
+                  </div>
+                </div>
+
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="font-sans text-3xl sm:text-4xl font-extrabold text-amber-300 tracking-tight tabular-nums">
+                    +{pendingPoints.toLocaleString("vi-VN")}
+                  </span>
+                  <span className="text-xs font-semibold text-amber-200/80">điểm</span>
+                </div>
+
+                <div className="mt-2.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-200 bg-amber-500/20 rounded-lg px-2.5 py-1 border border-amber-400/20 w-fit">
+                  <span>
+                    {pendingBookings.length > 0
+                      ? `Từ ${pendingBookings.length} đơn đã thanh toán`
+                      : "Cộng sau khi trả đồ"}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Hộp điểm khả dụng */}
-          <div className="flex flex-col rounded-2xl border border-sand/80 bg-white/90 p-5 shadow-xs backdrop-blur-xs min-w-[200px]">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
-              Điểm Thưởng Khả Dụng
-            </span>
-            <div className="mt-1 flex items-baseline gap-1.5">
-              <span className="font-serif text-3xl sm:text-4xl font-extrabold text-lotus">
-                {currentPoints.toLocaleString("vi-VN")}
+          {/* ── Lộ Trình Tiến Cấp Hội Viên (Tier Progression Track) ── */}
+          <div className="mt-7 pt-6 border-t border-white/10 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+              <span className="text-white/80 font-medium flex items-center gap-1.5">
+                <TrendingUp className="h-3.5 w-3.5 text-amber-300" />
+                <span>
+                  Tiến trình nâng hạng: <strong className="text-white uppercase font-sans tracking-wide">{tierInfo.badge}</strong>
+                </span>
               </span>
-              <span className="text-xs font-medium text-stone-500">điểm</span>
+              {nextTier ? (
+                <span className="font-medium text-amber-200 text-xs">
+                  Cần thêm <strong className="font-bold text-amber-300 tabular-nums">{nextTier.pointsNeeded.toLocaleString("vi-VN")}</strong> điểm để lên {TIER_META[nextTier.tier].label}
+                </span>
+              ) : (
+                <span className="font-medium text-amber-300 text-xs">
+                  ★ Bạn đã đạt hạng Premium cao nhất với toàn bộ đặc quyền
+                </span>
+              )}
             </div>
-            <span className="mt-1 text-[11px] text-stone-400">
-              Dùng để đổi các mã giảm giá bên dưới
-            </span>
-          </div>
-        </div>
 
-        {/* Thanh Tiến Trình Lên Hạng */}
-        {nextTier ? (
-          <div className="mt-6 pt-6 border-t border-sand/60">
-            <div className="flex items-center justify-between text-xs font-medium mb-1.5">
-              <span className="text-stone-600">
-                Tiến trình lên <strong className="text-ink uppercase">{TIER_META[nextTier.tier].label}</strong>
-              </span>
-              <span className="font-semibold text-lotus">
-                Còn thiếu {nextTier.pointsNeeded.toLocaleString("vi-VN")} điểm
-              </span>
-            </div>
-            <div className="h-2.5 w-full rounded-full bg-sand/50 overflow-hidden">
+            {/* Custom Multi-milestone Progress Bar */}
+            <div className="relative h-2.5 w-full rounded-full bg-black/40 overflow-hidden border border-white/10 p-[1px]">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-lotus to-oxblood transition-all duration-700 ease-out"
+                className="h-full rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-200 transition-all duration-700 ease-out shadow-[0_0_10px_rgba(251,191,36,0.5)]"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
-            <div className="mt-1.5 flex justify-between text-[11px] text-stone-400">
-              <span>{lifetimePoints.toLocaleString("vi-VN")} điểm</span>
-              <span>Mục tiêu: {nextTier.targetPoints.toLocaleString("vi-VN")} điểm</span>
+
+            <div className="flex justify-between items-center text-[10px] sm:text-[11px] text-white/55 font-sans pt-0.5">
+              <span>Đã tích: <strong className="text-white font-semibold tabular-nums">{lifetimePoints.toLocaleString("vi-VN")}</strong> điểm</span>
+              {nextTier ? (
+                <span>Mục tiêu: <strong className="text-white font-semibold tabular-nums">{nextTier.targetPoints.toLocaleString("vi-VN")}</strong> điểm</span>
+              ) : (
+                <span className="text-amber-200 font-medium">Hạng cao nhất</span>
+              )}
             </div>
           </div>
-        ) : (
-          <div className="mt-6 pt-6 border-t border-sand/60 flex items-center gap-2 text-xs font-semibold text-amber-900">
-            <Crown className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>Chúc mừng bạn! Bạn đã đạt hạng Premium cao nhất với toàn bộ đặc quyền tối đa.</span>
-          </div>
-        )}
 
-        {/* Danh sách quyền lợi của hạng hiện tại */}
-        <div className="mt-6 pt-6 border-t border-sand/60">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-stone-600 mb-3 flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-lotus" />
-            <span>Đặc Quyền Của Bạn:</span>
-          </h4>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {loyalty?.tierBenefits?.map((benefit, idx) => (
-              <div key={idx} className="flex items-start gap-2 text-xs text-stone-700 font-medium">
-                <CheckCircle2 className="h-3.5 w-3.5 text-lotus shrink-0 mt-0.5" />
-                <span>{benefit}</span>
-              </div>
-            ))}
+          {/* ── Danh sách đặc quyền hạng hiện tại ── */}
+          <div className="mt-5 pt-5 border-t border-white/10">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-white/50 block mb-2.5">
+              Đặc quyền của bạn
+            </span>
+            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+              {loyalty?.tierBenefits?.map((benefit, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/90 font-medium backdrop-blur-xs"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                  <span className="truncate">{benefit}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Bảng Đổi Điểm Lấy Voucher ── */}
+      {/* ── KHỐI ĐƠN THUÊ ĐANG CHỜ TÍCH ĐIỂM (Pending Ledger Bento) ── */}
+      {pendingBookings.length > 0 && (
+        <section className="space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-amber-700 shrink-0" />
+                <h3 className="font-display text-xl sm:text-2xl font-bold text-ink">
+                  Đơn Thuê Đang Chờ Tích Điểm
+                </h3>
+              </div>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Các đơn đã thanh toán thành công. Điểm sẽ tự động cộng vào ví sau khi bạn hoàn tất trả đồ và kiểm tra cọc.
+              </p>
+            </div>
+            <span className="rounded-full bg-amber-100 border border-amber-300/80 px-3 py-1 text-xs font-bold text-amber-900 w-fit">
+              {pendingBookings.length} đơn · +{pendingPoints.toLocaleString("vi-VN")} điểm chờ
+            </span>
+          </div>
+
+          <div className="divide-y divide-sand/70 rounded-2xl border border-sand bg-white shadow-xs overflow-hidden">
+            {pendingBookings.map((b) => (
+              <div
+                key={b.bookingId}
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 hover:bg-stone-50/60 transition gap-3"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Link
+                      href={`/booking/success?bookingId=${b.bookingId}`}
+                      className="font-mono text-xs font-bold text-ink hover:text-lotus hover:underline transition flex items-center gap-1"
+                      title="Xem chi tiết đơn hàng"
+                    >
+                      <Receipt className="h-3.5 w-3.5 text-stone-400" />
+                      <span>#{b.bookingId.slice(0, 8).toUpperCase()}</span>
+                    </Link>
+                    <span className="rounded-full bg-amber-50 border border-amber-300/80 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
+                      Chờ trả trang phục và kiểm tra
+                    </span>
+                    <span className="text-[11px] text-stone-400 font-medium">
+                      ({STATUS_LABELS[b.status] ?? b.status})
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-stone-500">
+                    Tiền thuê tính điểm: <strong className="text-ink font-semibold tabular-nums">{Number(b.earnableSpend).toLocaleString("vi-VN")}đ</strong>
+                  </p>
+                </div>
+
+                <div className="text-left sm:text-right space-y-0.5">
+                  <span className="font-sans text-base sm:text-lg font-bold text-amber-700 tabular-nums">
+                    +{b.points.toLocaleString("vi-VN")} điểm
+                  </span>
+                  <span className="text-[10px] text-stone-400 block font-medium">
+                    (Chưa thể sử dụng · Tự động kích hoạt khi hoàn tất đơn)
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── BẢNG ĐỔI ĐIỂM LẤY VOUCHER (Privilege Ticket Treasury) ── */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
-            <h3 className="font-serif text-lg font-bold text-ink sm:text-xl flex items-center gap-2">
-              <Gift className="h-5 w-5 text-lotus" />
-              <span>Đổi Điểm Lấy Mã Giảm Giá</span>
+            <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-lotus mb-1">
+              <Gift className="h-3.5 w-3.5" />
+              <span>Kho Ưu Đãi Hội Viên</span>
+            </div>
+            <h3 className="font-display text-xl sm:text-2xl font-bold text-ink">
+              Đổi Điểm Lấy Mã Giảm Giá
             </h3>
             <p className="text-xs text-stone-500 mt-0.5">
-              Chọn gói voucher bạn muốn nhận. Mã sẽ được tạo ngay và áp dụng tại bước thanh toán thuê.
+              Chọn mức voucher mong muốn. Mã sẽ được tạo ngay và tự động lưu trong tài khoản để dùng khi thanh toán.
             </p>
+          </div>
+
+          <div className="text-xs font-medium text-stone-600 bg-sand/30 rounded-xl px-3 py-1.5 border border-sand/60 w-fit">
+            Số dư khả dụng: <strong className="text-lotus font-bold font-sans text-sm tabular-nums">{currentPoints.toLocaleString("vi-VN")}</strong> điểm
           </div>
         </div>
 
         {rules.length === 0 ? (
-          <div className="rounded-2xl border border-sand bg-white p-8 text-center text-xs text-stone-500">
-            Hiện chưa có gói voucher nào khả dụng để đổi. Vui lòng quay lại sau!
+          <div className="rounded-2xl border border-dashed border-sand bg-white/60 p-10 text-center text-xs text-stone-500">
+            Hiện chưa có gói voucher nào khả dụng để quy đổi. Quý khách vui lòng quay lại sau!
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -304,59 +542,96 @@ export default function CustomerLoyaltyPage() {
               return (
                 <div
                   key={rule.id}
-                  className="flex flex-col justify-between rounded-2xl border border-sand bg-white p-5 shadow-xs transition hover:shadow-md"
+                  className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border transition-all duration-300 ${
+                    canRedeem
+                      ? "border-sand bg-white shadow-xs hover:shadow-md hover:border-lotus/40 hover:-translate-y-0.5"
+                      : "border-stone-200/80 bg-stone-50/60 opacity-80"
+                  }`}
                 >
-                  <div className="space-y-2.5">
+                  {/* Decorative Ticket Side Notches */}
+                  <div className="pointer-events-none absolute -left-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full border border-sand bg-mist" />
+                  <div className="pointer-events-none absolute -right-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full border border-sand bg-mist" />
+
+                  <div className="p-5 space-y-3.5">
+                    {/* Header: Cost & Validity */}
                     <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center rounded-lg bg-amber-50 border border-amber-200/80 px-2.5 py-1 text-xs font-bold text-amber-800">
-                        {rule.pointsRequired.toLocaleString("vi-VN")} điểm
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-300/80 px-2.5 py-0.5 text-xs font-bold text-amber-900 shadow-2xs">
+                        <Ticket className="h-3 w-3 text-amber-700" />
+                        <span className="tabular-nums font-sans">{rule.pointsRequired.toLocaleString("vi-VN")}</span> điểm
                       </span>
-                      <span className="text-[11px] text-stone-400">
+                      <span className="text-[11px] font-medium text-stone-400">
                         HSD {rule.voucherValidityDays} ngày
                       </span>
                     </div>
 
-                    <h4 className="font-serif text-base font-bold text-ink">
-                      {rule.voucherName}
-                    </h4>
+                    {/* Voucher Title */}
+                    <div>
+                      <h4 className="font-display text-lg font-bold text-ink group-hover:text-lotus transition leading-snug">
+                        {rule.voucherName}
+                      </h4>
 
-                    <div className="text-xs text-stone-500 space-y-1">
-                      {rule.discountType === "fixed" ? (
-                        <p>
-                          Giảm trực tiếp: <strong className="text-lotus">{rule.discountValue.toLocaleString("vi-VN")}đ</strong>
-                        </p>
-                      ) : (
-                        <p>
-                          Giảm: <strong className="text-lotus">{rule.discountValue}%</strong>
-                          {rule.maxDiscountAmount && ` (tối đa ${rule.maxDiscountAmount.toLocaleString("vi-VN")}đ)`}
-                        </p>
-                      )}
-                      {rule.minOrderValue > 0 && (
-                        <p>
-                          Áp dụng cho đơn từ: <strong>{rule.minOrderValue.toLocaleString("vi-VN")}đ</strong>
-                        </p>
-                      )}
+                      <div className="mt-3 text-xs text-stone-600 space-y-1 bg-mist/80 p-2.5 rounded-xl border border-sand/60">
+                        {rule.discountType === "fixed" ? (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-stone-500">Giảm trực tiếp:</span>
+                            <span className="font-bold text-lotus text-sm font-sans tabular-nums">
+                              {rule.discountValue.toLocaleString("vi-VN")}đ
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-stone-500">Tỷ lệ giảm:</span>
+                            <span className="font-bold text-lotus text-sm font-sans tabular-nums">
+                              {rule.discountValue}%
+                              {rule.maxDiscountAmount && ` (tối đa ${rule.maxDiscountAmount.toLocaleString("vi-VN")}đ)`}
+                            </span>
+                          </div>
+                        )}
+                        {rule.minOrderValue > 0 && (
+                          <div className="flex items-baseline justify-between text-[11px] pt-1 border-t border-sand/40">
+                            <span className="text-stone-400">Đơn tối thiểu:</span>
+                            <span className="font-medium text-stone-700 tabular-nums">
+                              {rule.minOrderValue.toLocaleString("vi-VN")}đ
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="mt-5 pt-4 border-t border-sand/60">
+                  {/* Nested Button-in-Button CTA */}
+                  <div className="p-5 pt-0">
                     <button
                       type="button"
                       disabled={!canRedeem || isRedeeming}
                       onClick={() => handleRedeem(rule.id)}
-                      className={`w-full inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition ${
+                      className={`w-full group/btn relative flex items-center justify-between rounded-full p-1.5 pr-4 text-xs font-bold uppercase tracking-wider transition-all duration-300 ${
                         canRedeem
-                          ? "bg-lotus text-white hover:bg-oxblood active:scale-[0.98] shadow-xs cursor-pointer"
-                          : "bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed"
+                          ? "bg-lotus text-white hover:bg-oxblood shadow-xs active:scale-[0.98] cursor-pointer"
+                          : "bg-stone-200/80 text-stone-400 cursor-not-allowed"
                       }`}
                     >
-                      {isRedeeming ? (
-                        <span>Đang xử lý...</span>
-                      ) : canRedeem ? (
-                        <span>Đổi voucher ngay</span>
-                      ) : (
-                        <span>Thiếu {(rule.pointsRequired - currentPoints).toLocaleString("vi-VN")} điểm</span>
-                      )}
+                      <div className={`flex h-7 w-7 items-center justify-center rounded-full transition-transform ${
+                        canRedeem ? "bg-white/20 text-white group-hover/btn:scale-105" : "bg-stone-300 text-stone-400"
+                      }`}>
+                        <Gift className="h-3.5 w-3.5" />
+                      </div>
+
+                      <span className="flex-1 text-center font-bold">
+                        {isRedeeming ? (
+                          "Đang khởi tạo..."
+                        ) : canRedeem ? (
+                          "Đổi mã giảm giá"
+                        ) : (
+                          `Thiếu ${(rule.pointsRequired - currentPoints).toLocaleString("vi-VN")} điểm`
+                        )}
+                      </span>
+
+                      <div className={`flex h-5 w-5 items-center justify-center rounded-full transition-transform ${
+                        canRedeem ? "bg-white/20 group-hover/btn:translate-x-0.5" : "opacity-0"
+                      }`}>
+                        <ArrowRight className="h-3 w-3" />
+                      </div>
                     </button>
                   </div>
                 </div>
@@ -366,18 +641,23 @@ export default function CustomerLoyaltyPage() {
         )}
       </section>
 
-      {/* ── Lịch Sử Tích & Dùng Điểm (Ledger) ── */}
-      <section className="space-y-4">
+      {/* ── LỊCH SỬ GIAO DỊCH ĐIỂM (Ledger Audit) ── */}
+      <section className="space-y-3.5">
         <div className="flex items-center justify-between">
-          <h3 className="font-serif text-lg font-bold text-ink sm:text-xl flex items-center gap-2">
-            <Clock className="h-5 w-5 text-lotus" />
-            <span>Lịch Sử Giao Dịch Điểm</span>
-          </h3>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-lotus" />
+            <h3 className="font-display text-xl sm:text-2xl font-bold text-ink">
+              Lịch Sử Giao Dịch Điểm
+            </h3>
+          </div>
+          <span className="text-xs text-stone-400 font-sans">
+            {history.length} bản ghi gần nhất
+          </span>
         </div>
 
         {history.length === 0 ? (
           <div className="rounded-2xl border border-sand bg-white p-8 text-center text-xs text-stone-400">
-            Chưa có lịch sử tích hoặc dùng điểm nào. Hãy hoàn thành các đơn thuê để nhận điểm thưởng!
+            Chưa có biến động điểm nào được ghi nhận. Hãy hoàn tất các đơn thuê đầu tiên để tích lũy!
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-sand bg-white shadow-xs">
@@ -395,30 +675,32 @@ export default function CustomerLoyaltyPage() {
                 return (
                   <div
                     key={log.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 transition hover:bg-stone-50/60"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-4 sm:p-4.5 transition hover:bg-stone-50/70"
                   >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={`inline-flex items-center justify-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                          className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                             isEarn
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-amber-100 text-amber-800"
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-amber-100 text-amber-900 border border-amber-200"
                           }`}
                         >
-                          {isEarn ? "Tích điểm" : "Đổi voucher"}
+                          {isEarn ? "Tích lũy" : "Quy đổi"}
                         </span>
                         <span className="text-xs font-semibold text-ink">
                           {log.reason === "earn_rental"
-                            ? "Tích luỹ sau khi hoàn thành đơn thuê"
+                            ? "Tích lũy sau khi hoàn thành đơn thuê"
                             : log.reason === "redeem_voucher"
                             ? `Đổi mã voucher ${String(log.meta?.voucherCode ?? "")}`
+                            : log.reason === "clawback_cancelled"
+                            ? "Thu hồi điểm do hủy/hoàn đơn"
                             : log.reason}
                         </span>
                       </div>
-                      <p className="text-[11px] text-stone-400">
+                      <p className="text-[11px] text-stone-400 font-medium">
                         {formattedDate} • Số dư sau giao dịch:{" "}
-                        <strong className="text-stone-600">
+                        <strong className="text-stone-700 font-semibold tabular-nums">
                           {log.balanceAfter.toLocaleString("vi-VN")} điểm
                         </strong>
                       </p>
@@ -426,7 +708,7 @@ export default function CustomerLoyaltyPage() {
 
                     <div className="sm:text-right">
                       <span
-                        className={`font-serif text-sm sm:text-base font-bold ${
+                        className={`font-sans text-sm sm:text-base font-bold tabular-nums ${
                           isEarn ? "text-emerald-700" : "text-amber-700"
                         }`}
                       >
@@ -442,54 +724,105 @@ export default function CustomerLoyaltyPage() {
         )}
       </section>
 
-      {/* ── Bảng Quy Chuẩn Hạng Thành Viên (Cẩm nang) ── */}
-      <section className="rounded-2xl border border-sand bg-parchment/60 p-5 sm:p-6 space-y-4">
-        <h4 className="font-serif text-base font-bold text-ink flex items-center gap-2">
-          <HelpCircle className="h-4 w-4 text-lotus" />
-          <span>Thông Tin Các Hạng Thành Viên</span>
-        </h4>
+      {/* ── CẨM NANG ĐẶC QUYỀN 3 HẠNG THÀNH VIÊN (Editorial Guide) ── */}
+      <section className="rounded-3xl border border-sand bg-parchment/60 p-6 sm:p-7 space-y-5">
+        <div className="flex items-center gap-2">
+          <HelpCircle className="h-4 w-4 text-lotus shrink-0" />
+          <h4 className="font-display text-xl sm:text-2xl font-bold text-ink">
+            Quy Chuẩn & Hệ Thống Thứ Hạng Thành Viên
+          </h4>
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-3 text-xs">
-          <div className="rounded-xl border border-sand bg-white p-4 space-y-2">
-            <div className="font-bold text-stone-800 flex items-center gap-1.5">
-              <Award className="h-4 w-4 text-stone-600" />
-              <span>Hạng Basic (Mặc định)</span>
+          {/* Basic */}
+          <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${
+            currentTier === "basic"
+              ? "border-lotus/40 bg-white shadow-md ring-1 ring-lotus/20"
+              : "border-sand bg-white/80"
+          }`}>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="rounded-md bg-stone-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-stone-700">
+                  Khởi Đầu
+                </span>
+                {currentTier === "basic" && (
+                  <span className="text-[10px] font-bold text-lotus bg-lotus/10 px-2 py-0.5 rounded-full">
+                    Hạng hiện tại
+                  </span>
+                )}
+              </div>
+              <h5 className="font-display text-lg font-bold text-ink">Hạng Basic</h5>
+              <p className="text-[11px] text-stone-500 leading-relaxed">
+                Tự động kích hoạt ngay khi quý khách tạo tài khoản tại xưởng Cổ Phục.
+              </p>
+              <ul className="space-y-1.5 pt-2 text-[11px] text-stone-600 border-t border-sand/50">
+                <li className="flex items-center gap-1.5">✓ Tích 1 điểm / 1.000đ thuê thực trả</li>
+                <li className="flex items-center gap-1.5">✓ Quy đổi điểm nhận mã giảm giá</li>
+                <li className="flex items-center gap-1.5">✓ Nhận tin bộ sưu tập mới sớm</li>
+              </ul>
             </div>
-            <p className="text-stone-500 text-[11px]">Dành cho khách hàng mới gia nhập.</p>
-            <ul className="space-y-1 text-stone-600 text-[11px]">
-              <li>✓ Tích 1 điểm / 1.000đ thuê</li>
-              <li>✓ Đổi điểm lấy voucher</li>
-            </ul>
           </div>
 
-          <div className="rounded-xl border border-emerald-200 bg-white p-4 space-y-2">
-            <div className="font-bold text-emerald-800 flex items-center gap-1.5">
-              <Sparkles className="h-4 w-4 text-emerald-600" />
-              <span>Hạng Plus (Từ 2.000 điểm)</span>
+          {/* Plus */}
+          <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${
+            currentTier === "plus"
+              ? "border-emerald-500 bg-white shadow-md ring-1 ring-emerald-500/20"
+              : "border-emerald-200/80 bg-white/80"
+          }`}>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="rounded-md bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+                  Thân Thiết
+                </span>
+                {currentTier === "plus" && (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                    Hạng hiện tại
+                  </span>
+                )}
+              </div>
+              <h5 className="font-display text-lg font-bold text-emerald-950">Hạng Plus</h5>
+              <p className="text-[11px] text-stone-500 leading-relaxed">
+                Đạt từ <strong className="text-emerald-800 tabular-nums">2.000 điểm trọn đời</strong> (~2.000.000đ tiền thuê).
+              </p>
+              <ul className="space-y-1.5 pt-2 text-[11px] text-emerald-900 border-t border-emerald-100 font-medium">
+                <li className="flex items-center gap-1.5">✓ Toàn bộ đặc quyền của hạng Basic</li>
+                <li className="flex items-center gap-1.5 font-bold text-emerald-800">★ Giảm trực tiếp 5% tiền thuê trang phục</li>
+                <li className="flex items-center gap-1.5">✓ Ưu tiên hỗ trợ giữ size mùa cao điểm</li>
+              </ul>
             </div>
-            <p className="text-stone-500 text-[11px]">Tương đương ~2.000.000đ chi tiêu tích luỹ.</p>
-            <ul className="space-y-1 text-stone-600 text-[11px]">
-              <li>✓ Toàn bộ quyền lợi Basic</li>
-              <li>✓ Giảm 5% tiền thuê trang phục</li>
-              <li>✓ Ưu tiên giữ size trang phục hot</li>
-            </ul>
           </div>
 
-          <div className="rounded-xl border border-amber-300 bg-white p-4 space-y-2">
-            <div className="font-bold text-amber-900 flex items-center gap-1.5">
-              <Crown className="h-4 w-4 text-amber-600" />
-              <span>Hạng Premium (Từ 6.000 điểm)</span>
+          {/* Premium */}
+          <div className={`relative flex flex-col justify-between rounded-2xl border p-5 transition ${
+            currentTier === "premium"
+              ? "border-amber-400 bg-white shadow-md ring-1 ring-amber-400/30"
+              : "border-amber-300/80 bg-white/80"
+          }`}>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                  Hoàng Gia
+                </span>
+                {currentTier === "premium" && (
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                    Hạng hiện tại
+                  </span>
+                )}
+              </div>
+              <h5 className="font-display text-lg font-bold text-amber-950">Hạng Premium</h5>
+              <p className="text-[11px] text-stone-500 leading-relaxed">
+                Đạt từ <strong className="text-amber-900 tabular-nums">6.000 điểm trọn đời</strong> (~6.000.000đ tiền thuê).
+              </p>
+              <ul className="space-y-1.5 pt-2 text-[11px] text-amber-950 border-t border-amber-100 font-medium">
+                <li className="flex items-center gap-1.5">✓ Toàn bộ đặc quyền của hạng Plus</li>
+                <li className="flex items-center gap-1.5 font-bold text-amber-900">★ Giảm trực tiếp 10% tiền thuê trang phục</li>
+                <li className="flex items-center gap-1.5">★ Miễn phí phụ kiện đi kèm theo bộ</li>
+                <li className="flex items-center gap-1.5">✓ Chuyên viên stylist tư vấn riêng 1-1</li>
+              </ul>
             </div>
-            <p className="text-stone-500 text-[11px]">Tương đương ~6.000.000đ chi tiêu tích luỹ.</p>
-            <ul className="space-y-1 text-stone-600 text-[11px]">
-              <li>✓ Toàn bộ quyền lợi Plus</li>
-              <li>✓ Giảm 10% tiền thuê trang phục</li>
-              <li>✓ Miễn phí 1 phụ kiện đi kèm</li>
-              <li>✓ Hỗ trợ ưu tiên đặc biệt</li>
-            </ul>
           </div>
         </div>
       </section>
     </div>
   );
 }
-

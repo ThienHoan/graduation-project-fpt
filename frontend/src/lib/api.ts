@@ -2976,9 +2976,20 @@ export async function syncWishlist(garmentIds: string[]) {
 // ── Loyalty / Tích điểm & Hạng thành viên ──────────────────────────────────
 export type LoyaltyTier = "basic" | "plus" | "premium";
 
+export type PendingBookingLoyalty = {
+  bookingId: string;
+  status: string;
+  rentalStartDate: string;
+  rentalEndDate: string;
+  earnableSpend: number;
+  points: number;
+};
+
 export type LoyaltyInfo = {
   points: number;
   lifetimePoints: number;
+  pendingPoints: number;
+  pendingBookings: PendingBookingLoyalty[];
   tier: LoyaltyTier;
   nextTier: {
     tier: LoyaltyTier;

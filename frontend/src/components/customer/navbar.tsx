@@ -303,26 +303,97 @@ export function CustomerNavbar({
             {/* Khối tài khoản người dùng */}
             {status === "authenticated" && session ? (
               <div ref={accountRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setAccountOpen(!accountOpen)}
-                  className={`flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${activeTier.button}`}
-                  aria-label="Tài khoản"
-                >
-                  <span className="relative">
-                    <span
-                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${activeTier.avatar}`}
+                {loyaltyTier === "premium" ? (
+                  /* ── Gemini AI Pro / Ultra 7-Color Rainbow Animated Border (Siêu Sắc Nét & Rực Rỡ) ── */
+                  <div className="relative inline-flex p-[3px] rounded-full overflow-hidden shadow-[0_0_18px_rgba(255,0,128,0.38)] transition hover:shadow-[0_0_26px_rgba(255,0,128,0.55)]">
+                    {/* Hào quang quang phổ 7 màu phát sáng phía sau */}
+                    <span className="pointer-events-none absolute -inset-[4px] rounded-full bg-[conic-gradient(from_0deg_at_50%_50%,#ff0055,#ff5500,#ffcc00,#00e676,#00d2ff,#4444ff,#aa00ff,#ff00aa,#ff0055)] opacity-85 blur-[8px] animate-gemini-spin" />
+                    {/* Dải sáng 7 màu xoay 360 độ quanh viền cực rõ */}
+                    <span className="pointer-events-none absolute inset-[-250%] animate-gemini-spin bg-[conic-gradient(from_0deg_at_50%_50%,#ff0055,#ff5500,#ffcc00,#00e676,#00d2ff,#4444ff,#aa00ff,#ff00aa,#ff0055)]" />
+                    <button
+                      type="button"
+                      onClick={() => setAccountOpen(!accountOpen)}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
+                        isDark
+                          ? "bg-[#180a0a] text-amber-100 hover:bg-[#240e0e]"
+                          : "bg-white text-ink hover:bg-stone-50"
+                      }`}
+                      aria-label="Tài khoản VIP"
                     >
-                      {userInitial}
+                      <span className="relative">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-xs">
+                          {userInitial}
+                        </span>
+                        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 ring-2 ring-white text-[9px] font-black text-white leading-none shadow-xs">
+                          <Crown className="h-2.5 w-2.5" />
+                        </span>
+                      </span>
+                      <span className="hidden max-w-[80px] truncate sm:inline">
+                        {displayName.split(" ")[0]}
+                      </span>
+                      <span className="hidden sm:inline-flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-2xs">
+                        VIP
+                      </span>
+                      <ChevronDown className="h-3 w-3 opacity-60" />
+                    </button>
+                  </div>
+                ) : loyaltyTier === "plus" ? (
+                  /* ── Gemini AI Plus Emerald-Cyan Aurora Animated Border (Siêu Sắc Nét & Rực Rỡ) ── */
+                  <div className="relative inline-flex p-[3px] rounded-full overflow-hidden shadow-[0_0_16px_rgba(0,230,118,0.4)] transition hover:shadow-[0_0_24px_rgba(0,230,118,0.55)]">
+                    {/* Hào quang lục ngọc chuyển sắc phía sau */}
+                    <span className="pointer-events-none absolute -inset-[4px] rounded-full bg-[conic-gradient(from_0deg_at_50%_50%,#00c853,#00e676,#00e5ff,#00b0ff,#1de9b6,#76ff03,#00c853)] opacity-85 blur-[7px] animate-gemini-spin" />
+                    {/* Dải sáng xoay 360 độ quanh viền cực rõ */}
+                    <span className="pointer-events-none absolute inset-[-250%] animate-gemini-spin bg-[conic-gradient(from_0deg_at_50%_50%,#00c853,#00e676,#00e5ff,#00b0ff,#1de9b6,#76ff03,#00c853)]" />
+                    <button
+                      type="button"
+                      onClick={() => setAccountOpen(!accountOpen)}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
+                        isDark
+                          ? "bg-[#081a17] text-emerald-100 hover:bg-[#0c2622]"
+                          : "bg-white text-ink hover:bg-stone-50"
+                      }`}
+                      aria-label="Tài khoản Plus"
+                    >
+                      <span className="relative">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-xs">
+                          {userInitial}
+                        </span>
+                        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[9px] font-black text-white leading-none shadow-xs">
+                          <Award className="h-2.5 w-2.5" />
+                        </span>
+                      </span>
+                      <span className="hidden max-w-[80px] truncate sm:inline">
+                        {displayName.split(" ")[0]}
+                      </span>
+                      <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-emerald-600 leading-none">
+                        PLUS
+                      </span>
+                      <ChevronDown className="h-3 w-3 opacity-60" />
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Basic Tier Default Clean Button ── */
+                  <button
+                    type="button"
+                    onClick={() => setAccountOpen(!accountOpen)}
+                    className={`flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${activeTier.button}`}
+                    aria-label="Tài khoản"
+                  >
+                    <span className="relative">
+                      <span
+                        className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${activeTier.avatar}`}
+                      >
+                        {userInitial}
+                      </span>
+                      {activeTier.badge}
                     </span>
-                    {activeTier.badge}
-                  </span>
-                  <span className="hidden max-w-[80px] truncate sm:inline">
-                    {displayName.split(" ")[0]}
-                  </span>
-                  {activeTier.label}
-                  <ChevronDown className="h-3 w-3 opacity-60" />
-                </button>
+                    <span className="hidden max-w-[80px] truncate sm:inline">
+                      {displayName.split(" ")[0]}
+                    </span>
+                    {activeTier.label}
+                    <ChevronDown className="h-3 w-3 opacity-60" />
+                  </button>
+                )}
 
                 {accountOpen && (
                   <div

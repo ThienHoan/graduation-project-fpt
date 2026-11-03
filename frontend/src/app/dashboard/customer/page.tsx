@@ -419,12 +419,9 @@ export default function CustomerDashboardPage() {
     );
   }, [bookings]);
 
-  const visibleBookings = useMemo(() => {
-    if (showPendingTestOrders) return sortedBookings;
-    return sortedBookings.filter((b) => !TEST_ORDER_STATUSES.has(b.status));
-  }, [sortedBookings, showPendingTestOrders]);
-
-  const hiddenPendingTestCount = sortedBookings.length - visibleBookings.length;
+  // Hiển thị toàn bộ đơn hàng thực tế của khách hàng, bao gồm cả đơn 'pending_confirmation' (Chờ xác nhận)
+  const visibleBookings = sortedBookings;
+  const hiddenPendingTestCount = 0;
 
   // Active Booking
   const activeBooking = visibleBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));

@@ -656,10 +656,41 @@ function BookingSuccessInner() {
                       </h3>
 
                       <div className="space-y-2.5 text-xs">
-                        <div className="flex justify-between text-stone-600">
-                          <span>Tiền thuê đồ ({booking.days} ngày):</span>
-                          <span className="font-semibold text-ink">{formatVND(booking.rentalTotal)}</span>
-                        </div>
+                        {(() => {
+                          const discount = Number(booking.discountTotal ?? 0);
+                          const rawSubtotal = Number(
+                            booking.subtotal && booking.subtotal > 0
+                              ? booking.subtotal
+                              : booking.rentalTotal + discount,
+                          );
+
+                          return (
+                            <>
+                              <div className="flex justify-between text-stone-600">
+                                <span>Tiền thuê đồ ({booking.days} ngày):</span>
+                                <span className="font-semibold text-ink">{formatVND(rawSubtotal)}</span>
+                              </div>
+
+                              {discount > 0 && (
+                                <div className="flex justify-between text-emerald-700 font-medium">
+                                  <span>
+                                    {booking.voucherCode
+                                      ? `Ưu đãi voucher (${booking.voucherCode}):`
+                                      : "Ưu đãi thành viên:"}
+                                  </span>
+                                  <span>-{formatVND(discount)}</span>
+                                </div>
+                              )}
+
+                              {discount > 0 && (
+                                <div className="flex justify-between text-stone-500 text-[11px] bg-stone-50/80 px-2 py-1 rounded">
+                                  <span>Tiền thuê thực trả:</span>
+                                  <span className="font-medium text-stone-700">{formatVND(booking.rentalTotal)}</span>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
 
                         <div className="flex justify-between text-stone-600">
                           <span className="flex items-center gap-1.5">
@@ -675,13 +706,6 @@ function BookingSuccessInner() {
                           <div className="flex justify-between text-stone-600">
                             <span>Phí vận chuyển giao nhận:</span>
                             <span className="font-semibold text-ink">{formatVND(booking.shippingFee)}</span>
-                          </div>
-                        )}
-
-                        {typeof booking.discountTotal === "number" && booking.discountTotal > 0 && (
-                          <div className="flex justify-between text-emerald-700 font-medium">
-                            <span>Ưu đãi voucher ({booking.voucherCode ?? "Giảm giá"}):</span>
-                            <span>-{formatVND(booking.discountTotal)}</span>
                           </div>
                         )}
 
@@ -702,7 +726,7 @@ function BookingSuccessInner() {
                               </span>
                             </div>
                             <span className="font-display text-2xl sm:text-3xl font-bold text-lotus">
-                              {formatVND(booking.rentalTotal + booking.depositTotal + (booking.shippingFee ?? 0) - (booking.discountTotal ?? 0))}
+                              {formatVND(booking.rentalTotal + booking.depositTotal + (booking.shippingFee ?? 0))}
                             </span>
                           </div>
                         </div>
@@ -715,6 +739,96 @@ function BookingSuccessInner() {
                             <span>Đã xác nhận giữ đồ</span>
                           </span>
                         </div>
+
+                        {/* Điểm thưởng theo từng giai đoạn đơn thuê */}
+                        {(() => {
+                          const points = Math.floor(Number(booking.rentalTotal ?? 0) * 0.001);
+                          if (points <= 0) return null;
+
+                          const isCancelled = booking.status === "cancelled" || booking.status === "rejected";
+                          const isCompleted = booking.status === "completed";
+                          const isPaidPending = [
+                            "paid",
+                            "preparing",
+                            "ready_for_pickup",
+                            "delivering",
+                            "renting",
+                            "returned",
+                            "inspection_pending",
+                            "refund_pending",
+                            "overdue",
+                          ].includes(booking.status);
+
+                          if (isCancelled) {
+                            return (
+                              <div className="rounded-xl border border-stone-200 bg-stone-100/80 p-3 text-xs mt-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium text-stone-500 flex items-center gap-1.5">
+                                    <Sparkles className="h-3.5 w-3.5 text-stone-400" />
+                                    <span>Điểm thưởng dự kiến:</span>
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="line-through text-stone-400 font-bold">+{points.toLocaleString("vi-VN")} điểm</span>
+                                    <span className="rounded bg-stone-200 px-1.5 py-0.5 text-[10px] font-semibold text-stone-600">Đã hủy</span>
+                                  </div>
+                                </div>
+                                <p className="mt-1 text-[10.5px] text-stone-400 leading-relaxed">
+                                  Điểm thưởng dự kiến không còn hiệu lực do đơn thuê đã bị hủy.
+                                </p>
+                              </div>
+                            );
+                          }
+
+                          if (isCompleted) {
+                            return (
+                              <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs mt-2 shadow-2xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                                    <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                                    <span>Điểm thưởng đã tích lũy:</span>
+                                  </span>
+                                  <span className="font-extrabold text-emerald-700 text-sm">+{points.toLocaleString("vi-VN")} điểm</span>
+                                </div>
+                                <p className="mt-1 text-[10.5px] text-emerald-800/80 leading-relaxed">
+                                  Đã cộng vào ví khả dụng và ghi nhận vào điểm tích lũy xét hạng thành viên.
+                                </p>
+                              </div>
+                            );
+                          }
+
+                          if (isPaidPending) {
+                            return (
+                              <div className="rounded-xl border border-amber-300/80 bg-amber-50/80 p-3 text-xs mt-2 shadow-2xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-amber-950 flex items-center gap-1.5">
+                                    <Clock className="h-3.5 w-3.5 text-amber-600" />
+                                    <span>Điểm chờ tích lũy:</span>
+                                  </span>
+                                  <span className="font-extrabold text-amber-700 text-sm">+{points.toLocaleString("vi-VN")} điểm</span>
+                                </div>
+                                <p className="mt-1 text-[10.5px] text-amber-800/80 leading-relaxed">
+                                  Đã ghi nhận điểm chờ. Điểm sẽ tự động cộng vào ví sau khi bạn hoàn tất trả trang phục và kiểm tra cọc.
+                                </p>
+                              </div>
+                            );
+                          }
+
+                          // Mặc định: pending_confirmation hoặc confirmed chưa thanh toán
+                          return (
+                            <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-3 text-xs mt-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                                  <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                                  <span>Điểm thưởng dự kiến:</span>
+                                </span>
+                                <span className="font-extrabold text-amber-700 text-sm">+{points.toLocaleString("vi-VN")} điểm</span>
+                              </div>
+                              <p className="mt-1 text-[10.5px] text-stone-500 leading-relaxed">
+                                Điểm sẽ được ghi nhận sau khi thanh toán thành công và cộng vào ví sau khi bạn hoàn tất trả trang phục, kiểm tra cọc.
+                              </p>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Nút in & Hành động chính - Ẩn khi in */}

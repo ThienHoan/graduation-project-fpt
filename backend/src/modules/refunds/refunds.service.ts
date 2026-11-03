@@ -174,7 +174,7 @@ export class RefundsService {
       });
       if (claimed.count !== 1) throw new ConflictException("Booking was already processed.");
 
-      const earnableTotal = Math.max(0, Number(booking.rentalTotal) - Number(booking.discountTotal ?? 0));
+      const earnableTotal = Math.max(0, Number(booking.rentalTotal));
       await this.loyaltyService.awardPointsForBooking(tx, bookingId, booking.customerId, earnableTotal);
 
       await tx.bookingStatusHistory.create({
@@ -343,7 +343,7 @@ export class RefundsService {
           data: { status: BookingStatus.completed },
         });
         if (claimedBooking.count === 1) {
-          const earnableTotal = Math.max(0, Number(refund.booking.rentalTotal) - Number(refund.booking.discountTotal ?? 0));
+          const earnableTotal = Math.max(0, Number(refund.booking.rentalTotal));
           await this.loyaltyService.awardPointsForBooking(tx, refund.bookingId, refund.booking.customerId, earnableTotal);
 
           await tx.bookingStatusHistory.create({
