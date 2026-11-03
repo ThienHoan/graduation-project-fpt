@@ -251,6 +251,9 @@ export default function CustomerDashboardPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [sendingBookingId, setSendingBookingId] = useState<string | null>(null);
 
+  // Đơn thuê được chọn để xem chi tiết trên khung Spotlight (cho phép khách xem BẤT KỲ đơn nào)
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+
   function showToast(type: "success" | "error", message: string) {
     setToast({ type, message });
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -280,14 +283,24 @@ export default function CustomerDashboardPage() {
 
   // Poll delivery tracking every 10s for active deliveries
   useEffect(() => {
-    const deliveryBooking = bookings
-      .filter((b) => b.pickupMethod === "delivery" && ["delivering", "ready_for_pickup"].includes(b.status))
-      .sort((a, b) => {
-        const priority = (status: string) => (status === "delivering" ? 0 : 1);
-        const byPriority = priority(a.status) - priority(b.status);
-        if (byPriority !== 0) return byPriority;
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      })[0];
+    // Ưu tiên đơn đang chọn nếu là đơn giao hàng, ngược lại lấy đơn giao hàng mới nhất
+    const deliveryBooking =
+      (selectedBookingId
+        ? bookings.find(
+            (b) =>
+              b.id === selectedBookingId &&
+              b.pickupMethod === "delivery" &&
+              ["delivering", "ready_for_pickup"].includes(b.status),
+          )
+        : null) ||
+      bookings
+        .filter((b) => b.pickupMethod === "delivery" && ["delivering", "ready_for_pickup"].includes(b.status))
+        .sort((a, b) => {
+          const priority = (status: string) => (status === "delivering" ? 0 : 1);
+          const byPriority = priority(a.status) - priority(b.status);
+          if (byPriority !== 0) return byPriority;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        })[0];
 
     if (!deliveryBooking) {
       setDeliveryTrack(null);
@@ -320,7 +333,7 @@ export default function CustomerDashboardPage() {
     fetchTracking();
     const interval = setInterval(fetchTracking, 10000);
     return () => clearInterval(interval);
-  }, [bookings]);
+  }, [bookings, selectedBookingId]);
 
   // Handle open chat via query param
   useEffect(() => {
@@ -423,8 +436,18 @@ export default function CustomerDashboardPage() {
   const visibleBookings = sortedBookings;
   const hiddenPendingTestCount = 0;
 
-  // Active Booking
-  const activeBooking = visibleBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
+  // Đơn thuê hiển thị trên khung chi tiết chính (khách hàng có thể xem BẤT KỲ ĐƠN NÀO):
+  // 1. Khách chủ động chọn đơn bất kỳ qua dropdown, carousel chips hoặc nút "Xem" ở bảng -> Hiển thị đúng đơn đó.
+  // 2. Mặc định: Ưu tiên đơn đang hoạt động (active), nếu không có thì hiển thị đơn mới nhất.
+  const activeBooking = useMemo(() => {
+    if (!sortedBookings.length) return null;
+    if (selectedBookingId) {
+      const found = sortedBookings.find((b) => b.id === selectedBookingId);
+      if (found) return found;
+    }
+    const defaultActive = sortedBookings.find((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
+    return defaultActive ?? sortedBookings[0];
+  }, [sortedBookings, selectedBookingId]);
 
   // Overdue Bookings
   const overdueBookings = useMemo(() => {
@@ -503,7 +526,7 @@ export default function CustomerDashboardPage() {
     if (excessDebt > 0) {
       return (
         <div className="flex flex-col items-start gap-1">
-          <span className="inline-flex items-center gap-1 rounded-md bg-red-50 border border-red-200 px-2 py-0.5 text-[11px] font-bold text-red-700">
+          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2.5 py-0.5 text-[11px] font-bold text-red-700 font-sans tabular-nums">
             <AlertTriangle className="h-3 w-3 text-red-600 shrink-0" />
             <span>Cần đền bù: +{formatVND(excessDebt)}</span>
           </span>
@@ -521,7 +544,7 @@ export default function CustomerDashboardPage() {
     if (refund && (refund.status === "refunded" || refund.status === "partially_refunded")) {
       return (
         <div className="flex flex-col items-start gap-1">
-          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 font-sans tabular-nums">
             <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
             <span>Đã hoàn cọc {formatVND(refund.amount)}</span>
           </span>
@@ -543,12 +566,12 @@ export default function CustomerDashboardPage() {
     if (b.status === "refund_pending" || (refund && refund.status === "pending")) {
       return (
         <div className="flex flex-col items-start gap-1">
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200/90 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200/90 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 font-sans tabular-nums">
             <Clock className="h-3 w-3 text-amber-600 shrink-0" />
             <span>Đang hoàn: {formatVND(remaining > 0 ? remaining : deposit)}</span>
           </span>
           {penalty > 0 && (
-            <span className="text-[10px] text-stone-500">
+            <span className="text-[10px] text-stone-500 font-sans tabular-nums">
               (Đã trừ khấu trừ {formatVND(penalty)})
             </span>
           )}
@@ -559,7 +582,7 @@ export default function CustomerDashboardPage() {
     if (penalty > 0) {
       return (
         <div className="flex flex-col items-start gap-1">
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 font-sans tabular-nums">
             <AlertCircle className="h-3 w-3 text-amber-600 shrink-0" />
             <span>Khấu trừ: -{formatVND(penalty)}</span>
           </span>
@@ -575,8 +598,8 @@ export default function CustomerDashboardPage() {
     }
 
     return (
-      <span className="text-xs text-stone-500">
-        Cọc: {formatVND(deposit)}
+      <span className="text-xs text-stone-600 font-sans tabular-nums">
+        Cọc: <strong className="text-ink">{formatVND(deposit)}</strong>
       </span>
     );
   }
@@ -585,22 +608,44 @@ export default function CustomerDashboardPage() {
   function renderRowActions(b: BookingResponse) {
     const isCompleted = b.status === "completed" || b.status === "returned";
     const hasInspection = b.status === "completed" || b.status === "refund_pending" || b.status === "returned";
+    const isViewing = activeBooking?.id === b.id;
 
     return (
-      <div className="flex items-center justify-end gap-1.5">
+      <div className="flex items-center justify-end gap-1.5 flex-wrap">
+        {isViewing ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-lotus/10 border border-lotus/25 px-2.5 py-1 text-[11px] font-bold text-lotus font-sans">
+            <CheckCircle2 className="h-3 w-3 text-lotus shrink-0" />
+            <span>Đang xem</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedBookingId(b.id);
+              const el = document.getElementById("booking-spotlight-section");
+              if (el) el.scrollIntoView({ behavior: "smooth" });
+            }}
+            className="inline-flex items-center gap-1 rounded-full border border-sand bg-mist px-2.5 py-1 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
+            title="Đưa đơn này lên khung xem chi tiết phía trên"
+          >
+            <RotateCcw className="h-3 w-3 text-lotus" />
+            <span>Xem</span>
+          </button>
+        )}
+
         <Link
           href={`/booking/success?bookingId=${b.id}`}
-          className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus"
-          title="Xem chi tiết đơn thuê"
+          className="inline-flex items-center gap-1 rounded-full border border-sand bg-white px-3 py-1 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
+          title="Xem biên nhận / hóa đơn chi tiết"
         >
-          <span>Chi tiết</span>
+          <span>Hóa đơn</span>
         </Link>
 
         {hasInspection && (
           <button
             type="button"
             onClick={() => void handleOpenInspectionModal(b)}
-            className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus"
+            className="inline-flex items-center gap-1 rounded-full border border-sand bg-white px-3 py-1 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
             title="Xem biên bản kiểm tra đồ & ảnh chụp thực tế"
           >
             <ClipboardCheck className="h-3.5 w-3.5 text-stone-500" />
@@ -618,7 +663,7 @@ export default function CustomerDashboardPage() {
                 garmentName: b.items[0]?.garmentName ?? "Trang phục",
               })
             }
-            className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-900 shadow-2xs transition hover:bg-amber-100"
+            className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-3 py-1 text-xs font-semibold text-amber-900 shadow-2xs transition hover:bg-amber-100 active:scale-[0.98]"
             title="Đánh giá chất lượng trang phục"
           >
             <Sparkles className="h-3.5 w-3.5 text-amber-600" />
@@ -630,7 +675,7 @@ export default function CustomerDashboardPage() {
           type="button"
           disabled={sendingBookingId === b.id}
           onClick={() => void handleSendBookingCard(b.id, "booking_support")}
-          className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2 py-1.5 text-xs font-medium text-stone-600 shadow-2xs transition hover:text-jade hover:border-jade disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-full border border-sand bg-white px-2.5 py-1 text-xs font-medium text-stone-600 shadow-2xs transition hover:text-jade hover:border-jade disabled:opacity-40 active:scale-[0.98]"
           title="Gửi thẻ đơn vào khung chat hỗ trợ"
         >
           <MessageSquare className="h-3.5 w-3.5" />
@@ -643,22 +688,22 @@ export default function CustomerDashboardPage() {
   return (
     <div className="space-y-8 pb-12">
       {/* 1. Header Banner & Profile Status */}
-      <header className="relative overflow-hidden rounded-2xl border border-sand bg-white p-6 sm:p-8 shadow-xs">
-        <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-lotus/10 px-3 py-1 text-xs font-semibold text-lotus border border-lotus/20">
-                <Award className="h-3.5 w-3.5 text-lotus" />
+      <header className="relative overflow-hidden rounded-[2rem] border border-sand/80 bg-gradient-to-r from-parchment via-mist to-parchment/70 p-6 sm:p-8 shadow-xs">
+        <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/95 border border-sand px-3 py-1 text-xs font-bold uppercase tracking-wider text-lotus shadow-2xs">
+                <Award className="h-3.5 w-3.5 text-antique" />
                 <span>Thành viên Cổ Phục Rental</span>
               </span>
-              <span className="text-xs text-stone-400 font-sans" suppressHydrationWarning>
+              <span className="text-xs text-stone-500 font-sans" suppressHydrationWarning>
                 • {new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
               </span>
             </div>
             <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-ink">
               Xin chào, {userName}
             </h1>
-            <p className="text-xs sm:text-sm text-stone-600 max-w-xl">
+            <p className="text-xs sm:text-sm text-stone-600 max-w-xl leading-relaxed">
               Quản lý hành trình trải nghiệm di sản của bạn: theo dõi tiến trình đơn thuê, đối soát tiền cọc minh bạch và lưu giữ khoảnh khắc văn hóa.
             </p>
           </div>
@@ -666,70 +711,72 @@ export default function CustomerDashboardPage() {
           <div className="flex shrink-0 items-center gap-3">
             <Link
               href="/catalog"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-white shadow-sm transition hover:bg-oxblood"
+              className="group inline-flex items-center gap-2.5 rounded-full bg-lotus px-6 py-3 text-xs font-bold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
             >
               <span>Thuê cổ phục mới</span>
-              <ArrowRight className="h-3.5 w-3.5" />
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20 transition group-hover:translate-x-0.5">
+                <ArrowRight className="h-3 w-3" />
+              </div>
             </Link>
           </div>
         </div>
 
         {/* Decorative corner background motif */}
-        <div className="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-radial from-antique/20 to-transparent blur-2xl" />
+        <div className="pointer-events-none absolute -right-12 -top-12 h-52 w-52 rounded-full bg-radial from-antique/25 to-transparent blur-2xl" />
       </header>
 
       {/* 2. Quick Metric Cards (Overview) */}
-      <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3.5 sm:gap-4 lg:grid-cols-4">
         {/* Card 1: Active orders */}
-        <div className="rounded-2xl border border-sand bg-white p-4 sm:p-5 shadow-2xs transition hover:shadow-xs">
+        <div className="group relative overflow-hidden rounded-2xl border border-sand bg-white p-5 shadow-2xs transition-all duration-300 hover:shadow-md hover:border-lotus/40 hover:-translate-y-0.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-stone-500">Đơn đang hoạt động</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lotus/10 text-lotus">
-              <Layers className="h-4 w-4" />
+            <span className="text-xs font-semibold text-stone-500">Đơn đang hoạt động</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lotus/10 text-lotus transition group-hover:bg-lotus group-hover:text-white">
+              <Layers className="h-4.5 w-4.5" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-ink">
+          <div className="mt-3 flex items-baseline gap-1.5">
+            <span className="font-sans text-3xl sm:text-4xl font-extrabold text-ink tabular-nums">
               {loading ? "—" : stats.activeCount}
             </span>
-            <span className="text-xs text-stone-500">đơn</span>
+            <span className="text-xs font-medium text-stone-500">đơn</span>
           </div>
           <p className="mt-1 text-[11px] text-stone-400">
-            {stats.activeCount > 0 ? "Đang chuẩn bị & trên lịch thuê" : "Hiện không có đơn thuê dở dang"}
+            {stats.activeCount > 0 ? "Đang chuẩn bị & trên lịch thuê" : "Hiện không có đơn dở dang"}
           </p>
         </div>
 
         {/* Card 2: Safe Deposit */}
-        <div className="rounded-2xl border border-sand bg-white p-4 sm:p-5 shadow-2xs transition hover:shadow-xs">
+        <div className="group relative overflow-hidden rounded-2xl border border-sand bg-white p-5 shadow-2xs transition-all duration-300 hover:shadow-md hover:border-jade/40 hover:-translate-y-0.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-stone-500">Cọc được bảo đảm</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-jade/10 text-jade">
-              <ShieldCheck className="h-4 w-4" />
+            <span className="text-xs font-semibold text-stone-500">Cọc được bảo đảm</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-jade/10 text-jade transition group-hover:bg-jade group-hover:text-white">
+              <ShieldCheck className="h-4.5 w-4.5" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-1.5">
-            <span className="text-xl sm:text-2xl font-bold text-jade">
+          <div className="mt-3 flex items-baseline gap-1">
+            <span className="font-sans text-2xl sm:text-3xl font-extrabold text-jade tabular-nums">
               {loading ? "—" : formatVND(stats.totalHoldingDeposit)}
             </span>
           </div>
           <p className="mt-1 text-[11px] text-stone-400">
-            {stats.refundPendingCount > 0 ? `${stats.refundPendingCount} đơn đang chờ hoàn tiền` : "Bảo chứng hoàn trả 100% khi nhận đồ"}
+            {stats.refundPendingCount > 0 ? `${stats.refundPendingCount} đơn đang chờ duyệt cọc` : "Bảo chứng hoàn trả 100% khi nhận đồ"}
           </p>
         </div>
 
         {/* Card 3: Completed orders */}
-        <div className="rounded-2xl border border-sand bg-white p-4 sm:p-5 shadow-2xs transition hover:shadow-xs">
+        <div className="group relative overflow-hidden rounded-2xl border border-sand bg-white p-5 shadow-2xs transition-all duration-300 hover:shadow-md hover:border-antique/50 hover:-translate-y-0.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-stone-500">Đơn đã hoàn tất</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-antique/15 text-stone-700">
-              <CheckCircle2 className="h-4 w-4 text-antique" />
+            <span className="text-xs font-semibold text-stone-500">Đơn đã hoàn tất</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-antique/15 text-stone-700 transition group-hover:bg-antique group-hover:text-ink">
+              <CheckCircle2 className="h-4.5 w-4.5 text-antique group-hover:text-ink" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-ink">
+          <div className="mt-3 flex items-baseline gap-1.5">
+            <span className="font-sans text-3xl sm:text-4xl font-extrabold text-ink tabular-nums">
               {loading ? "—" : stats.completedCount}
             </span>
-            <span className="text-xs text-stone-500">lần thuê</span>
+            <span className="text-xs font-medium text-stone-500">lần thuê</span>
           </div>
           <p className="mt-1 text-[11px] text-stone-400">
             Lịch sử lưu giữ kỷ niệm di sản
@@ -739,12 +786,12 @@ export default function CustomerDashboardPage() {
         {/* Card 4: Measurements & Try-on */}
         <Link
           href="/try-on"
-          className="group rounded-2xl border border-sand bg-white p-4 sm:p-5 shadow-2xs transition hover:border-lotus hover:shadow-xs"
+          className="group relative overflow-hidden rounded-2xl border border-sand bg-gradient-to-br from-white via-parchment/30 to-mist p-5 shadow-2xs transition-all duration-300 hover:border-lotus hover:shadow-md hover:-translate-y-0.5"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-stone-500 group-hover:text-lotus transition">Phòng thử đồ AI</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lotus/10 text-lotus group-hover:bg-lotus group-hover:text-white transition">
-              <Sparkles className="h-4 w-4" />
+            <span className="text-xs font-semibold text-stone-600 group-hover:text-lotus transition">Phòng thử đồ AI</span>
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lotus/10 text-lotus group-hover:bg-lotus group-hover:text-white transition">
+              <Sparkles className="h-4.5 w-4.5" />
             </div>
           </div>
           <div className="mt-3 flex items-center gap-1.5 text-sm font-bold text-ink group-hover:text-lotus transition">
@@ -792,12 +839,12 @@ export default function CustomerDashboardPage() {
             </div>
           )}
 
-          {/* 3. Hero Active Booking Section */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+          {/* 3. Hero Active / Selected Booking Section */}
+          <section id="booking-spotlight-section" className="space-y-4 scroll-mt-24">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-center gap-2.5">
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-ink">
-                  Đơn thuê hiện tại
+                  Chi tiết đơn thuê
                 </h2>
                 {activeBooking && (
                   <span className="relative flex h-2.5 w-2.5">
@@ -805,13 +852,81 @@ export default function CustomerDashboardPage() {
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                   </span>
                 )}
+                {sortedBookings.length > 1 && (
+                  <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-[11px] font-bold text-stone-700 font-sans">
+                    {sortedBookings.length} đơn
+                  </span>
+                )}
               </div>
-              {activeBooking && (
-                <span className="text-xs text-stone-500">
-                  Mã đơn: <strong className="text-ink">#{activeBooking.id.slice(0, 8).toUpperCase()}</strong>
-                </span>
+
+              {/* Bộ chọn đơn thuê nhanh (Dropdown) */}
+              {sortedBookings.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-stone-500 hidden sm:inline whitespace-nowrap">Đang xem:</span>
+                  <div className="relative">
+                    <select
+                      value={activeBooking?.id ?? ""}
+                      onChange={(e) => setSelectedBookingId(e.target.value)}
+                      className="appearance-none rounded-full border border-sand bg-white py-1.5 pl-3.5 pr-8 text-xs font-semibold text-ink shadow-2xs focus:border-lotus focus:outline-none transition cursor-pointer hover:border-lotus/60 max-w-[280px] sm:max-w-[340px] truncate"
+                    >
+                      {sortedBookings.map((b) => {
+                        const st = statusOf(b.status);
+                        const garmentName = b.items[0]?.garmentName ?? "Trang phục";
+                        return (
+                          <option key={b.id} value={b.id}>
+                            #{b.id.slice(0, 8).toUpperCase()} • {garmentName} ({st.label})
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+                  </div>
+                </div>
               )}
             </div>
+
+            {/* Thanh Carousel Chips chọn nhanh bất kỳ đơn thuê nào */}
+            {sortedBookings.length > 1 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-stone-500 px-1">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Layers className="h-3.5 w-3.5 text-antique" />
+                    <span>Chọn xem đơn bất kỳ của bạn:</span>
+                  </span>
+                  <span className="text-[11px] text-stone-400">Bấm chip để chuyển đổi</span>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {sortedBookings.map((b, idx) => {
+                    const isSelected = activeBooking?.id === b.id;
+                    const st = statusOf(b.status);
+                    const name = b.items[0]?.garmentName ?? "Trang phục cổ";
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setSelectedBookingId(b.id)}
+                        className={`group inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs transition shrink-0 active:scale-[0.98] ${
+                          isSelected
+                            ? "bg-white border-2 border-lotus text-ink shadow-xs font-bold ring-2 ring-lotus/15"
+                            : "bg-white/80 border border-sand text-stone-600 hover:border-lotus/40 hover:bg-white hover:text-ink shadow-2xs"
+                        }`}
+                      >
+                        <span
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                            isSelected ? "bg-lotus text-white" : "bg-sand/60 text-stone-600"
+                          }`}
+                        >
+                          {idx + 1}
+                        </span>
+                        <span className="font-mono text-[11px] text-stone-700">#{b.id.slice(0, 8).toUpperCase()}</span>
+                        <span className="max-w-[120px] sm:max-w-[150px] truncate text-stone-900">{name}</span>
+                        <span className={statusBadgeClass(st.color)}>{st.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {loading ? (
               <div className="rounded-2xl border border-sand bg-white p-6 sm:p-8 shadow-xs">
@@ -825,146 +940,185 @@ export default function CustomerDashboardPage() {
                 </div>
               </div>
             ) : activeBooking ? (
-              <div className="overflow-hidden rounded-2xl border border-sand bg-white shadow-sm transition">
-                {/* Active Booking Card Header */}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand/70 bg-mist/60 px-6 py-3.5">
-                  <div className="flex items-center gap-2.5 text-xs text-stone-600">
-                    <Calendar className="h-4 w-4 text-antique" />
-                    <span>Thời gian thuê: <strong>{formatDate(activeBooking.rentalStartDate)}</strong> đến <strong>{formatDate(activeBooking.rentalEndDate)}</strong> ({activeBooking.days} ngày)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-stone-500">
-                      {activeBooking.pickupMethod === "delivery" ? (
-                        <span className="inline-flex items-center gap-1 font-medium text-stone-700">
-                          <Truck className="h-3.5 w-3.5 text-jade" /> Giao tận nơi
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 font-medium text-stone-700">
-                          <Store className="h-3.5 w-3.5 text-lotus" /> Nhận tại xưởng
-                        </span>
-                      )}
-                    </span>
-                    <span className={statusBadgeClass(statusOf(activeBooking.status).color)}>
-                      {statusOf(activeBooking.status).label}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="p-6 sm:p-7 space-y-6">
-                  {/* Garment Details & Financial Summary */}
-                  <div className="flex flex-col sm:flex-row items-start gap-5">
-                    {/* Visual Outfit Thumbnail */}
-                    <CustomerGarmentThumbnail
-                      imageUrl={activeBooking.items[0]?.imageUrl}
-                      garmentId={activeBooking.items[0]?.garmentId}
-                      garmentName={activeBooking.items[0]?.garmentName}
-                      sizeLabel={activeBooking.items[0]?.sizeLabel}
-                    />
-
-                    {/* Meta info */}
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-display text-2xl sm:text-3xl font-bold text-ink break-words">
-                        {activeBooking.items[0]?.garmentName ?? "Trang phục cung đình"}
-                      </h3>
-
-                      {activeBooking.items.length > 1 && (
-                        <p className="mt-1 text-xs text-stone-500">
-                          và {activeBooking.items.length - 1} trang phục / phụ kiện đi kèm khác
-                        </p>
-                      )}
-
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                        <div className="rounded-lg bg-mist border border-sand px-3 py-1.5">
-                          <span className="text-stone-500 block text-[10px] uppercase font-semibold">Tiền thuê</span>
-                          <span className="font-bold text-ink">{formatVND(activeBooking.rentalTotal)}</span>
-                        </div>
-                        <div className="rounded-lg bg-mist border border-sand px-3 py-1.5">
-                          <span className="text-stone-500 block text-[10px] uppercase font-semibold">Tiền cọc</span>
-                          <span className="font-bold text-jade">{formatVND(activeBooking.depositTotal)}</span>
-                        </div>
-                        <div className="rounded-lg bg-mist border border-sand px-3 py-1.5">
-                          <span className="text-stone-500 block text-[10px] uppercase font-semibold">Tổng chi phí</span>
-                          <span className="font-bold text-lotus">{formatVND(activeBooking.rentalTotal + activeBooking.depositTotal)}</span>
-                        </div>
+              <div className="relative rounded-[2rem] bg-stone-900/5 p-1.5 ring-1 ring-black/5 shadow-xs">
+                <div className="overflow-hidden rounded-[calc(2rem-0.375rem)] border border-sand bg-white shadow-sm transition">
+                  {/* Active Booking Card Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand/70 bg-gradient-to-r from-mist via-parchment/30 to-mist px-6 py-4">
+                    <div className="flex items-center gap-2.5 text-xs text-stone-600">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-antique/15 text-antique">
+                        <Calendar className="h-4 w-4" />
                       </div>
+                      <span>
+                        Thời gian thuê: <strong className="text-ink font-sans tabular-nums">{formatDate(activeBooking.rentalStartDate)}</strong> đến <strong className="text-ink font-sans tabular-nums">{formatDate(activeBooking.rentalEndDate)}</strong> ({activeBooking.days} ngày)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-stone-500">
+                        {activeBooking.pickupMethod === "delivery" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-jade/10 px-2.5 py-1 font-medium text-jade border border-jade/20">
+                            <Truck className="h-3.5 w-3.5" /> Giao tận nơi
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-lotus/10 px-2.5 py-1 font-medium text-lotus border border-lotus/20">
+                            <Store className="h-3.5 w-3.5" /> Nhận tại xưởng
+                          </span>
+                        )}
+                      </span>
+                      <span className={statusBadgeClass(statusOf(activeBooking.status).color)}>
+                        {statusOf(activeBooking.status).label}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Stepper progress */}
-                  <div className="border-t border-sand/80 pt-5">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
-                      Tiến trình thực hiện
-                    </p>
-                    <BookingStatusStepper
-                      status={activeBooking.status}
-                      pickupMethod={activeBooking.pickupMethod}
-                    />
-                  </div>
+                  <div className="p-6 sm:p-7 space-y-6">
+                    {/* Garment Details & Financial Summary */}
+                    <div className="flex flex-col sm:flex-row items-start gap-5">
+                      {/* Visual Outfit Thumbnail */}
+                      <CustomerGarmentThumbnail
+                        imageUrl={activeBooking.items[0]?.imageUrl}
+                        garmentId={activeBooking.items[0]?.garmentId}
+                        garmentName={activeBooking.items[0]?.garmentName}
+                        sizeLabel={activeBooking.items[0]?.sizeLabel}
+                      />
 
-                  {/* Damage / Penalty excess alert */}
-                  {Number(activeBooking.penaltyTotal ?? 0) > Number(activeBooking.depositTotal ?? 0) && (
-                    <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-xs">
-                      <div className="flex items-center gap-2 font-bold text-red-800 uppercase tracking-wider mb-1">
-                        <ShieldAlert className="h-4 w-4 text-red-600 shrink-0" />
-                        <span>Thông báo: Khoản bồi thường hư hại vượt tiền cọc</span>
+                      {/* Meta info */}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-display text-2xl sm:text-3xl font-bold text-ink break-words">
+                          {activeBooking.items[0]?.garmentName ?? "Trang phục cung đình"}
+                        </h3>
+
+                        {activeBooking.items.length > 1 && (
+                          <p className="mt-1 text-xs text-stone-500">
+                            và {activeBooking.items.length - 1} trang phục / phụ kiện đi kèm khác
+                          </p>
+                        )}
+
+                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="rounded-xl bg-stone-50/80 border border-sand/70 p-3.5 transition hover:border-sand">
+                            <span className="text-stone-500 block text-[10px] uppercase font-bold tracking-wider">Tiền thuê trang phục</span>
+                            <span className="font-sans font-extrabold text-base sm:text-lg text-ink tabular-nums mt-0.5 block">{formatVND(activeBooking.rentalTotal)}</span>
+                          </div>
+                          <div className="rounded-xl bg-emerald-50/40 border border-emerald-200/60 p-3.5 transition hover:border-emerald-300">
+                            <div className="flex items-center justify-between">
+                              <span className="text-emerald-700 block text-[10px] uppercase font-bold tracking-wider">Tiền cọc bảo chứng</span>
+                              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded-full">Hoàn 100%</span>
+                            </div>
+                            <span className="font-sans font-extrabold text-base sm:text-lg text-jade tabular-nums mt-0.5 block">{formatVND(activeBooking.depositTotal)}</span>
+                          </div>
+                          <div className="rounded-xl bg-rose-50/30 border border-lotus/20 p-3.5 transition hover:border-lotus/40">
+                            <span className="text-oxblood block text-[10px] uppercase font-bold tracking-wider">Tổng chi phí tạm tính</span>
+                            <span className="font-sans font-extrabold text-base sm:text-lg text-lotus tabular-nums mt-0.5 block">{formatVND(activeBooking.rentalTotal + activeBooking.depositTotal)}</span>
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-red-900/90 leading-relaxed">
-                        Đơn hàng đã được thẩm định với chi phí hư tổn là <strong>{formatVND(activeBooking.penaltyTotal ?? 0)}</strong> (vượt tiền cọc {formatVND(activeBooking.depositTotal ?? 0)}). Quý khách có khoản đền bù bổ sung cần thanh toán: <strong className="text-red-700 text-sm">+{formatVND((activeBooking.penaltyTotal ?? 0) - activeBooking.depositTotal)}</strong>. Vui lòng bấm &ldquo;Xem chi tiết&rdquo; hoặc liên hệ atelier để được hỗ trợ.
+                    </div>
+
+                    {/* Stepper progress */}
+                    <div className="border-t border-sand/80 pt-5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-3">
+                        Tiến trình thực hiện
                       </p>
+                      <BookingStatusStepper
+                        status={activeBooking.status}
+                        pickupMethod={activeBooking.pickupMethod}
+                      />
                     </div>
-                  )}
 
-                  {/* Handover summary component */}
-                  <HandoverSummary handover={activeBooking.handover} compact />
+                    {/* Damage / Penalty excess alert */}
+                    {Number(activeBooking.penaltyTotal ?? 0) > Number(activeBooking.depositTotal ?? 0) && (
+                      <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-xs">
+                        <div className="flex items-center gap-2 font-bold text-red-800 uppercase tracking-wider mb-1">
+                          <ShieldAlert className="h-4 w-4 text-red-600 shrink-0" />
+                          <span>Thông báo: Khoản bồi thường hư hại vượt tiền cọc</span>
+                        </div>
+                        <p className="text-red-900/90 leading-relaxed">
+                          Đơn hàng đã được thẩm định với chi phí hư tổn là <strong>{formatVND(activeBooking.penaltyTotal ?? 0)}</strong> (vượt tiền cọc {formatVND(activeBooking.depositTotal ?? 0)}). Quý khách có khoản đền bù bổ sung cần thanh toán: <strong className="text-red-700 text-sm">+{formatVND((activeBooking.penaltyTotal ?? 0) - activeBooking.depositTotal)}</strong>. Vui lòng bấm &ldquo;Xem chi tiết&rdquo; hoặc liên hệ atelier để được hỗ trợ.
+                        </p>
+                      </div>
+                    )}
 
-                  {/* Action Buttons with clear primary/secondary hierarchy */}
-                  <div className="flex flex-wrap items-center gap-3 border-t border-sand/80 pt-5">
-                    <Link
-                      href={`/booking/success?bookingId=${activeBooking.id}`}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-lotus px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood"
-                    >
-                      <span>Xem hóa đơn & Chi tiết</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
+                    {/* Handover summary component */}
+                    <HandoverSummary handover={activeBooking.handover} compact />
 
-                    <button
-                      type="button"
-                      disabled={sendingBookingId === activeBooking.id}
-                      onClick={() => void handleSendBookingCard(activeBooking.id, "booking_support")}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-sand bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-jade hover:text-jade disabled:opacity-40"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5 text-jade" />
-                      <span>{sendingBookingId === activeBooking.id ? "Đang gửi..." : "Hỗ trợ đơn hàng"}</span>
-                    </button>
+                    {/* Action Buttons with clear primary/secondary hierarchy */}
+                    <div className="flex flex-wrap items-center gap-3 border-t border-sand/80 pt-5">
+                      <Link
+                        href={`/booking/success?bookingId=${activeBooking.id}`}
+                        className="group inline-flex items-center justify-between gap-3 rounded-full bg-lotus pl-5 pr-2 py-2 text-xs font-semibold uppercase tracking-wider text-white shadow-xs transition hover:bg-oxblood active:scale-[0.98]"
+                      >
+                        <span>Xem hóa đơn & Chi tiết</span>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 transition group-hover:bg-white/30 group-hover:translate-x-0.5">
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </span>
+                      </Link>
 
-                    <button
-                      type="button"
-                      disabled={sendingBookingId === activeBooking.id}
-                      onClick={() => void handleSendBookingCard(activeBooking.id, "complaint")}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-sand bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-oxblood hover:text-oxblood disabled:opacity-40"
-                    >
-                      <AlertCircle className="h-3.5 w-3.5 text-oxblood" />
-                      <span>{sendingBookingId === activeBooking.id ? "Đang gửi..." : "Khiếu nại"}</span>
-                    </button>
-
-                    {CANCELLABLE_STATUSES.has(activeBooking.status) && (
                       <button
                         type="button"
-                        disabled={cancellingId === activeBooking.id}
-                        onClick={() =>
-                          setConfirmDialog({
-                            title: "Xác nhận hủy đơn thuê",
-                            message: "Bạn có chắc muốn hủy đơn thuê này? Tiền cọc sẽ được hoàn trả theo chính sách hủy của cửa hàng.",
-                            danger: true,
-                            onConfirm: () => handleCancel(activeBooking.id),
-                          })
-                        }
-                        className="ml-auto inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-stone-500 hover:text-red-700 transition"
+                        disabled={sendingBookingId === activeBooking.id}
+                        onClick={() => void handleSendBookingCard(activeBooking.id, "booking_support")}
+                        className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-jade hover:text-jade hover:bg-jade/5 disabled:opacity-40 active:scale-[0.98]"
                       >
-                        <X className="h-3.5 w-3.5" />
-                        <span>{cancellingId === activeBooking.id ? "Đang hủy..." : "Hủy đơn"}</span>
+                        <MessageSquare className="h-3.5 w-3.5 text-jade" />
+                        <span>{sendingBookingId === activeBooking.id ? "Đang gửi..." : "Hỗ trợ đơn hàng"}</span>
                       </button>
-                    )}
+
+                      <button
+                        type="button"
+                        disabled={sendingBookingId === activeBooking.id}
+                        onClick={() => void handleSendBookingCard(activeBooking.id, "complaint")}
+                        className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-oxblood hover:text-oxblood hover:bg-rose-50/50 disabled:opacity-40 active:scale-[0.98]"
+                      >
+                        <AlertCircle className="h-3.5 w-3.5 text-oxblood" />
+                        <span>{sendingBookingId === activeBooking.id ? "Đang gửi..." : "Khiếu nại"}</span>
+                      </button>
+
+                      {(activeBooking.status === "completed" || activeBooking.status === "returned") && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setReviewingItem({
+                              bookingId: activeBooking.id,
+                              garmentId: activeBooking.items[0]?.garmentId ?? "",
+                              garmentName: activeBooking.items[0]?.garmentName ?? "Trang phục",
+                            })
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-4 py-2 text-xs font-semibold text-amber-900 shadow-2xs transition hover:bg-amber-100 active:scale-[0.98]"
+                        >
+                          <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                          <span>Đánh giá trang phục</span>
+                        </button>
+                      )}
+
+                      {(activeBooking.status === "completed" || activeBooking.status === "refund_pending" || activeBooking.status === "returned") && (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenInspectionModal(activeBooking)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-700 shadow-2xs transition hover:border-lotus hover:text-lotus active:scale-[0.98]"
+                        >
+                          <ClipboardCheck className="h-3.5 w-3.5 text-stone-500" />
+                          <span>Biên bản kiểm tra</span>
+                        </button>
+                      )}
+
+                      {CANCELLABLE_STATUSES.has(activeBooking.status) && (
+                        <button
+                          type="button"
+                          disabled={cancellingId === activeBooking.id}
+                          onClick={() =>
+                            setConfirmDialog({
+                              title: "Xác nhận hủy đơn thuê",
+                              message: "Bạn có chắc muốn hủy đơn thuê này? Tiền cọc sẽ được hoàn trả theo chính sách hủy của cửa hàng.",
+                              danger: true,
+                              onConfirm: () => handleCancel(activeBooking.id),
+                            })
+                          }
+                          className="ml-auto inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium text-stone-500 hover:text-red-700 hover:bg-red-50/50 transition active:scale-[0.98]"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          <span>{cancellingId === activeBooking.id ? "Đang hủy..." : "Hủy đơn"}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -974,10 +1128,10 @@ export default function CustomerDashboardPage() {
                   <HeritageMascot mood="idle" size="md" showSparkles={false} />
                 </div>
                 <h3 className="font-display text-2xl font-bold text-ink">
-                  Không có đơn thuê đang hoạt động
+                  Bạn chưa có đơn thuê nào
                 </h3>
                 <p className="mx-auto mt-2 max-w-md text-xs sm:text-sm text-stone-500">
-                  Bạn hiện không có trang phục nào trong giai đoạn chuẩn bị hoặc đang mặc. Hãy chọn cho mình một bộ cổ phục ưng ý cho sự kiện sắp tới.
+                  Hãy chọn cho mình một bộ cổ phục ưng ý từ bộ sưu tập để bắt đầu trải nghiệm văn hóa truyền thống.
                 </p>
                 <div className="mt-6 flex justify-center">
                   <Link
@@ -1020,13 +1174,13 @@ export default function CustomerDashboardPage() {
               <DeliveryTracker data={deliveryTrack || DEMO_DELIVERY_TRACK} />
             </section>
           ) : (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-sand bg-white p-5 shadow-2xs">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-sand bg-gradient-to-r from-white via-mist/50 to-white p-5 shadow-2xs">
               <div className="flex items-center gap-3.5">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-lotus/10 text-lotus ring-1 ring-lotus/20">
                   <Truck className="h-5 w-5" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-semibold text-ink">
+                  <h4 className="text-sm font-bold text-ink">
                     Hệ thống giám sát giao hàng thời gian thực
                   </h4>
                   <p className="text-xs text-stone-500">
@@ -1037,7 +1191,7 @@ export default function CustomerDashboardPage() {
               <button
                 type="button"
                 onClick={() => setShowDemoTracking(true)}
-                className="shrink-0 rounded-xl bg-mist border border-sand px-4 py-2 text-xs font-semibold text-stone-700 hover:border-lotus hover:text-lotus transition shadow-2xs"
+                className="shrink-0 rounded-full bg-mist border border-sand px-4 py-2 text-xs font-semibold text-stone-700 hover:border-lotus hover:text-lotus transition shadow-2xs active:scale-[0.98]"
               >
                 Xem thử mô phỏng GPS 🛵
               </button>
@@ -1057,20 +1211,20 @@ export default function CustomerDashboardPage() {
               </div>
 
               {/* Search bar */}
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+              <div className="relative w-full sm:w-72">
+                <Search className="absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Tìm theo tên đồ hoặc mã đơn..."
-                  className="w-full rounded-xl border border-sand bg-white py-2 pl-9 pr-3 text-xs text-ink placeholder:text-stone-400 focus:border-lotus focus:outline-none transition shadow-2xs"
+                  className="w-full rounded-full border border-sand bg-white py-2 pl-10 pr-8 text-xs text-ink placeholder:text-stone-400 focus:border-lotus focus:ring-1 focus:ring-lotus/20 focus:outline-none transition shadow-2xs"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -1084,7 +1238,7 @@ export default function CustomerDashboardPage() {
                 {overdueBookings.map((b) => (
                   <div
                     key={b.id}
-                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50/80 px-4 py-3 text-xs text-red-900"
+                    className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50/80 px-4 py-3 text-xs text-red-900 shadow-2xs"
                   >
                     <div className="flex items-start gap-2.5">
                       <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
@@ -1093,13 +1247,13 @@ export default function CustomerDashboardPage() {
                           Đơn #{b.id.slice(0, 8).toUpperCase()} đã quá hạn trả {b.overdueDays} ngày
                         </p>
                         <p className="mt-0.5 text-red-800">
-                          Hạn trả gốc: {formatDate(b.rentalEndDate)} · Phí quá hạn hiện tại: <strong>{formatVND(b.overdueAmount ?? 0)}</strong> ({(b.overdueFeePerDay ?? 0).toLocaleString("vi-VN")}đ/ngày).
+                          Hạn trả gốc: {formatDate(b.rentalEndDate)} · Phí quá hạn hiện tại: <strong className="font-sans tabular-nums">{formatVND(b.overdueAmount ?? 0)}</strong> ({(b.overdueFeePerDay ?? 0).toLocaleString("vi-VN")}đ/ngày).
                         </p>
                       </div>
                     </div>
                     <Link
                       href={`/booking/success?bookingId=${b.id}`}
-                      className="shrink-0 rounded-lg bg-red-700 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-red-800"
+                      className="shrink-0 rounded-full bg-red-700 px-3.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-red-800 active:scale-[0.98]"
                     >
                       Xử lý hoàn trả
                     </Link>
@@ -1108,36 +1262,40 @@ export default function CustomerDashboardPage() {
               </div>
             )}
 
-            {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-sand pb-3">
-              {[
-                { key: "all", label: "Tất cả", count: visibleBookings.length },
-                { key: "active", label: "Đang hoạt động", count: sortedBookings.filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status)).length },
-                { key: "refund", label: "Chờ hoàn cọc", count: sortedBookings.filter((b) => b.status === "refund_pending").length },
-                { key: "completed", label: "Đã hoàn tất", count: sortedBookings.filter((b) => b.status === "completed" || b.status === "returned").length },
-                { key: "cancelled", label: "Đã hủy", count: sortedBookings.filter((b) => b.status === "cancelled").length },
-              ].map((tab) => {
-                const isActive = selectedTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setSelectedTab(tab.key as HistoryTab)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${isActive
-                        ? "bg-lotus text-white shadow-2xs"
-                        : "text-stone-600 hover:bg-white hover:text-ink"
+            {/* Filter Tabs - Editorial Segmented Pill Control */}
+            <div className="flex items-center overflow-x-auto pb-1 scrollbar-none">
+              <div className="inline-flex items-center gap-1.5 rounded-2xl bg-sand/35 p-1.5 border border-sand/70 backdrop-blur-xs">
+                {[
+                  { key: "all", label: "Tất cả", count: visibleBookings.length },
+                  { key: "active", label: "Đang hoạt động", count: sortedBookings.filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status)).length },
+                  { key: "refund", label: "Chờ hoàn cọc", count: sortedBookings.filter((b) => b.status === "refund_pending").length },
+                  { key: "completed", label: "Đã hoàn tất", count: sortedBookings.filter((b) => b.status === "completed" || b.status === "returned").length },
+                  { key: "cancelled", label: "Đã hủy", count: sortedBookings.filter((b) => b.status === "cancelled").length },
+                ].map((tab) => {
+                  const isActive = selectedTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setSelectedTab(tab.key as HistoryTab)}
+                      className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition active:scale-[0.98] ${
+                        isActive
+                          ? "bg-lotus text-white shadow-2xs font-bold"
+                          : "text-stone-600 hover:text-ink hover:bg-white/60"
                       }`}
-                  >
-                    <span>{tab.label}</span>
-                    <span
-                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${isActive ? "bg-white/20 text-white" : "bg-sand/60 text-stone-600"
-                        }`}
                     >
-                      {tab.count}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span>{tab.label}</span>
+                      <span
+                        className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold font-mono ${
+                          isActive ? "bg-white/25 text-white" : "bg-sand/60 text-stone-600"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Table / Card List */}
@@ -1165,7 +1323,7 @@ export default function CustomerDashboardPage() {
                 <div className="hidden overflow-x-auto md:block">
                   <table className="w-full min-w-[760px] border-collapse text-left text-xs">
                     <thead>
-                      <tr className="border-b border-sand bg-mist text-stone-500 font-semibold uppercase tracking-[0.12em] text-[10px]">
+                      <tr className="border-b border-sand bg-gradient-to-r from-mist via-parchment/30 to-mist text-stone-500 font-semibold uppercase tracking-[0.14em] text-[10px]">
                         <th className="px-5 py-3.5">Trang phục & Mã đơn</th>
                         <th className="px-5 py-3.5 whitespace-nowrap">Thời gian</th>
                         <th className="px-5 py-3.5">Trạng thái</th>
@@ -1190,25 +1348,44 @@ export default function CustomerDashboardPage() {
                         pagedHistory.map((b) => {
                           const st = statusOf(b.status);
                           return (
-                            <tr key={b.id} className="transition hover:bg-mist/60">
+                            <tr key={b.id} className="group transition hover:bg-amber-50/20">
                               {/* Garment name & code with thumbnail */}
                               <td className="px-5 py-4 max-w-[280px]">
-                                <div className="flex items-center gap-3">
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    setSelectedBookingId(b.id);
+                                    const el = document.getElementById("booking-spotlight-section");
+                                    if (el) el.scrollIntoView({ behavior: "smooth" });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      setSelectedBookingId(b.id);
+                                      const el = document.getElementById("booking-spotlight-section");
+                                      if (el) el.scrollIntoView({ behavior: "smooth" });
+                                    }
+                                  }}
+                                  className="flex items-center gap-3 cursor-pointer group/title text-left focus:outline-none"
+                                  title="Nhấp để xem chi tiết đơn này ở khung phía trên"
+                                >
                                   <CustomerGarmentThumbnail
                                     imageUrl={b.items[0]?.imageUrl}
                                     garmentId={b.items[0]?.garmentId}
                                     garmentName={b.items[0]?.garmentName}
                                     sizeLabel={b.items[0]?.sizeLabel}
-                                    className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-sand bg-stone-100 shadow-2xs"
+                                    className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs group-hover/title:scale-105 transition"
                                   />
                                   <div className="min-w-0">
-                                    <div className="font-bold text-ink truncate">
+                                    <div className="font-bold text-ink truncate group-hover/title:text-lotus transition">
                                       {b.items[0]?.garmentName ?? "Trang phục cổ"}
                                     </div>
                                     <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-stone-400">
-                                      <span>#{b.id.slice(0, 8).toUpperCase()}</span>
+                                      <span className="font-mono text-[10px] font-semibold text-stone-500 bg-sand/35 px-1.5 py-0.2 rounded border border-sand/60">
+                                        #{b.id.slice(0, 8).toUpperCase()}
+                                      </span>
                                       {b.items.length > 1 && (
-                                        <span className="rounded bg-sand/60 px-1 text-[9px] text-stone-600">
+                                        <span className="rounded-full bg-sand/60 px-1.5 text-[9px] font-medium text-stone-600">
                                           +{b.items.length - 1} món
                                         </span>
                                       )}
@@ -1219,7 +1396,7 @@ export default function CustomerDashboardPage() {
 
                               {/* Dates */}
                               <td className="px-5 py-4 whitespace-nowrap text-stone-600">
-                                <div>{formatDate(b.rentalStartDate)} – {formatDate(b.rentalEndDate)}</div>
+                                <div className="font-sans tabular-nums text-stone-800">{formatDate(b.rentalStartDate)} – {formatDate(b.rentalEndDate)}</div>
                                 <div className="text-[10px] text-stone-400">{b.days} ngày thuê</div>
                               </td>
 
@@ -1232,10 +1409,10 @@ export default function CustomerDashboardPage() {
 
                               {/* Total Price */}
                               <td className="px-5 py-4 whitespace-nowrap">
-                                <div className="font-semibold text-ink">
+                                <div className="font-sans font-extrabold text-ink tabular-nums text-sm">
                                   {formatVND(b.rentalTotal + b.depositTotal)}
                                 </div>
-                                <div className="text-[10px] text-stone-400">
+                                <div className="font-sans tabular-nums text-[10px] text-stone-400">
                                   Thuê: {formatVND(b.rentalTotal)}
                                 </div>
                               </td>
@@ -1272,25 +1449,45 @@ export default function CustomerDashboardPage() {
                       const st = statusOf(b.status);
                       return (
                         <div key={b.id} className="p-4 space-y-3">
-                          <div className="flex items-start gap-3">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              setSelectedBookingId(b.id);
+                              const el = document.getElementById("booking-spotlight-section");
+                              if (el) el.scrollIntoView({ behavior: "smooth" });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                setSelectedBookingId(b.id);
+                                const el = document.getElementById("booking-spotlight-section");
+                                if (el) el.scrollIntoView({ behavior: "smooth" });
+                              }
+                            }}
+                            className="flex items-start gap-3 cursor-pointer group/m-title focus:outline-none"
+                            title="Nhấp để xem chi tiết đơn này ở khung phía trên"
+                          >
                             <CustomerGarmentThumbnail
                               imageUrl={b.items[0]?.imageUrl}
                               garmentId={b.items[0]?.garmentId}
                               garmentName={b.items[0]?.garmentName}
                               sizeLabel={b.items[0]?.sizeLabel}
-                              className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs"
+                              className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-sand bg-stone-100 shadow-2xs group-hover/m-title:scale-105 transition"
                             />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-2">
-                                <h4 className="font-bold text-sm text-ink truncate">
+                                <h4 className="font-bold text-sm text-ink truncate group-hover/m-title:text-lotus transition">
                                   {b.items[0]?.garmentName ?? "Trang phục cổ"}
                                 </h4>
                                 <span className={statusBadgeClass(st.color)}>
                                   {st.label}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-stone-400">
-                                #{b.id.slice(0, 8).toUpperCase()} · {formatDate(b.rentalStartDate)} – {formatDate(b.rentalEndDate)}
+                              <p className="text-[11px] text-stone-400 font-sans tabular-nums mt-0.5">
+                                <span className="font-mono text-[10px] text-stone-500 bg-sand/35 px-1 py-0.2 rounded border border-sand/60 mr-1.5">
+                                  #{b.id.slice(0, 8).toUpperCase()}
+                                </span>
+                                {formatDate(b.rentalStartDate)} – {formatDate(b.rentalEndDate)}
                               </p>
                             </div>
                           </div>
@@ -1298,7 +1495,7 @@ export default function CustomerDashboardPage() {
                           <div className="grid grid-cols-2 gap-2 text-xs bg-mist/60 rounded-xl p-3 border border-sand/60">
                             <div>
                               <span className="text-[10px] text-stone-400 block">Tổng thanh toán</span>
-                              <span className="font-semibold text-ink">{formatVND(b.rentalTotal + b.depositTotal)}</span>
+                              <span className="font-sans font-extrabold text-ink tabular-nums text-sm">{formatVND(b.rentalTotal + b.depositTotal)}</span>
                             </div>
                             <div>
                               <span className="text-[10px] text-stone-400 block">Tình trạng cọc</span>
@@ -1318,7 +1515,7 @@ export default function CustomerDashboardPage() {
                 {/* Pagination */}
                 {!loading && totalPages > 1 && (
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sand bg-mist/40 px-5 py-3.5">
-                    <p className="text-xs text-stone-500">
+                    <p className="text-xs text-stone-500 font-sans tabular-nums">
                       Hiển thị {(currentPage - 1) * HISTORY_PAGE_SIZE + 1}–{Math.min(currentPage * HISTORY_PAGE_SIZE, filteredHistory.length)} trong tổng số {filteredHistory.length} đơn
                     </p>
                     <div className="flex items-center gap-1.5">
@@ -1338,8 +1535,8 @@ export default function CustomerDashboardPage() {
                           onClick={() => setHistoryPage(page)}
                           className={
                             page === currentPage
-                              ? "flex h-8 min-w-8 items-center justify-center rounded-lg bg-lotus px-2 text-xs font-semibold text-white shadow-2xs"
-                              : "flex h-8 min-w-8 items-center justify-center rounded-lg border border-sand bg-white px-2 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus"
+                              ? "flex h-8 min-w-8 items-center justify-center rounded-lg bg-lotus px-2 text-xs font-semibold text-white shadow-2xs font-sans tabular-nums"
+                              : "flex h-8 min-w-8 items-center justify-center rounded-lg border border-sand bg-white px-2 text-xs font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus font-sans tabular-nums"
                           }
                         >
                           {page}
@@ -1375,10 +1572,10 @@ export default function CustomerDashboardPage() {
               <Link
                 key={item.title}
                 href={item.href || "/dashboard/customer"}
-                className="group block rounded-2xl border border-sand bg-white p-5 shadow-2xs transition hover:border-lotus hover:shadow-xs"
+                className="group block rounded-2xl border border-sand bg-white p-5 shadow-2xs transition duration-200 hover:border-lotus/60 hover:shadow-sm"
               >
                 <div className="mb-3 flex items-start justify-between gap-4">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.accent}`}>
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl transition duration-200 group-hover:scale-105 ${item.accent}`}>
                     {item.icon === "face_retouching_natural" ? (
                       <Sparkles className="h-5 w-5" />
                     ) : item.icon === "straighten" ? (
@@ -1387,7 +1584,9 @@ export default function CustomerDashboardPage() {
                       <Layers className="h-5 w-5" />
                     )}
                   </div>
-                  <ArrowRight className="h-4 w-4 text-stone-400 group-hover:text-lotus group-hover:translate-x-1 transition" />
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sand/30 text-stone-400 group-hover:bg-lotus/10 group-hover:text-lotus transition">
+                    <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition" />
+                  </div>
                 </div>
                 <h4 className="font-display text-xl font-bold text-ink group-hover:text-lotus transition">
                   {item.title}
@@ -1400,10 +1599,10 @@ export default function CustomerDashboardPage() {
           </div>
 
           {/* Heritage Care & Support Atelier Card */}
-          <div className="rounded-2xl border border-sand bg-radial from-parchment/60 to-mist p-6 shadow-2xs space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lotus text-white">
-                <Store className="h-4 w-4" />
+          <div className="relative rounded-2xl border border-sand bg-gradient-to-br from-mist via-parchment/40 to-sand/25 p-6 shadow-2xs space-y-4 overflow-hidden">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lotus text-white shadow-xs">
+                <Store className="h-5 w-5" />
               </div>
               <div>
                 <h4 className="font-display text-lg font-bold text-ink">
@@ -1415,10 +1614,10 @@ export default function CustomerDashboardPage() {
               </div>
             </div>
 
-            <div className="space-y-2 text-xs text-stone-600 border-t border-sand/80 pt-3">
+            <div className="space-y-2.5 text-xs text-stone-600 border-t border-sand/80 pt-3.5">
               <div className="flex items-center justify-between">
                 <span>Hotline tư vấn:</span>
-                <a href="tel:19001234" className="font-bold text-ink hover:text-lotus">
+                <a href="tel:19001234" className="font-sans font-bold text-ink hover:text-lotus tabular-nums">
                   0908 123 456
                 </a>
               </div>
@@ -1437,7 +1636,7 @@ export default function CustomerDashboardPage() {
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("chat:open"));
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-sand bg-white py-2.5 text-xs font-semibold text-stone-800 shadow-2xs hover:border-lotus hover:text-lotus transition"
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-sand bg-white py-2.5 text-xs font-semibold text-stone-800 shadow-2xs hover:border-lotus hover:text-lotus transition active:scale-[0.98]"
             >
               <MessageSquare className="h-3.5 w-3.5 text-lotus" />
               <span>Nhắn tin với nhân viên tư vấn</span>

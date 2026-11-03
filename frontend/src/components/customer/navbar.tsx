@@ -372,27 +372,36 @@ export function CustomerNavbar({
                     </button>
                   </div>
                 ) : (
-                  /* ── Basic Tier Default Clean Button ── */
-                  <button
-                    type="button"
-                    onClick={() => setAccountOpen(!accountOpen)}
-                    className={`flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${activeTier.button}`}
-                    aria-label="Tài khoản"
-                  >
-                    <span className="relative">
-                      <span
-                        className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${activeTier.avatar}`}
-                      >
-                        {userInitial}
+                  /* ── Basic Tier — Gemini-style Warm Gold Animated Border ── */
+                  <div className="relative inline-flex p-[2.5px] rounded-full overflow-hidden shadow-[0_0_12px_rgba(198,166,100,0.30)] transition hover:shadow-[0_0_20px_rgba(198,166,100,0.45)]">
+                    {/* Hào quang vàng cổ phong phía sau */}
+                    <span className="pointer-events-none absolute -inset-[4px] rounded-full bg-[conic-gradient(from_0deg_at_50%_50%,#c6a664,#e8c97a,#f5e0a0,#d4a853,#b8855a,#e8c97a,#c6a664)] opacity-70 blur-[7px] animate-gemini-spin" />
+                    {/* Dải vàng xoay quanh viền */}
+                    <span className="pointer-events-none absolute inset-[-250%] animate-gemini-spin bg-[conic-gradient(from_0deg_at_50%_50%,#c6a664,#e8c97a,#f5e0a0,#d4a853,#b8855a,#e8c97a,#c6a664)]" />
+                    <button
+                      type="button"
+                      onClick={() => setAccountOpen(!accountOpen)}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
+                        isDark
+                          ? "bg-[#1a1510] text-amber-100 hover:bg-[#221c12]"
+                          : "bg-white text-ink hover:bg-stone-50"
+                      }`}
+                      aria-label="Tài khoản"
+                    >
+                      <span className="relative">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white bg-gradient-to-tr from-amber-700 to-amber-500 shadow-xs">
+                          {userInitial}
+                        </span>
                       </span>
-                      {activeTier.badge}
-                    </span>
-                    <span className="hidden max-w-[80px] truncate sm:inline">
-                      {displayName.split(" ")[0]}
-                    </span>
-                    {activeTier.label}
-                    <ChevronDown className="h-3 w-3 opacity-60" />
-                  </button>
+                      <span className="hidden max-w-[80px] truncate sm:inline">
+                        {displayName.split(" ")[0]}
+                      </span>
+                      <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-amber-700 leading-none">
+                        Basic
+                      </span>
+                      <ChevronDown className="h-3 w-3 opacity-60" />
+                    </button>
+                  </div>
                 )}
 
                 {accountOpen && (

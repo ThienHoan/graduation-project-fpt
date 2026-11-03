@@ -431,16 +431,51 @@ function BookingSuccessInner() {
                             </div>
                           </div>
 
-                          {/* Price Subtotal */}
-                          <div className="text-left sm:text-right border-t border-sand/40 pt-2 sm:border-0 sm:pt-0 sm:shrink-0">
-                            <span className="text-[11px] text-stone-400 block">Thành tiền thuê</span>
-                            <span className="font-display text-lg sm:text-xl font-bold text-ink">
-                              {formatVND(item.dailyPrice * booking.days)}
-                            </span>
-                            <span className="text-[10px] text-emerald-700 block mt-0.5">
-                              Cọc: {formatVND(item.depositAmount)} (hoàn trả)
-                            </span>
-                          </div>
+                          {/* Price Subtotal với chiết khấu minh bạch */}
+                          {(() => {
+                            const discountTotal = Number(booking.discountTotal ?? 0);
+                            const totalRaw = booking.items.reduce((acc, it) => acc + Number(it.dailyPrice) * booking.days, 0);
+                            const rawItemTotal = Number(item.dailyPrice) * booking.days;
+                            const itemDiscount = discountTotal > 0 && totalRaw > 0
+                              ? (booking.items.length === 1 ? discountTotal : Math.round((rawItemTotal / totalRaw) * discountTotal))
+                              : 0;
+                            const netItemRental = Math.max(0, rawItemTotal - itemDiscount);
+
+                            return (
+                              <div className="text-left sm:text-right border-t border-sand/40 pt-2 sm:border-0 sm:pt-0 sm:shrink-0 space-y-1">
+                                <span className="text-[11px] text-stone-400 block font-medium">
+                                  Thành tiền thuê ({booking.days} ngày)
+                                </span>
+
+                                {itemDiscount > 0 ? (
+                                  <div>
+                                    <div className="flex items-baseline sm:justify-end gap-2">
+                                      <span className="text-xs text-stone-400 line-through font-sans tabular-nums">
+                                        {formatVND(rawItemTotal)}
+                                      </span>
+                                      <span className="font-display text-lg sm:text-xl font-bold text-lotus tabular-nums">
+                                        {formatVND(netItemRental)}
+                                      </span>
+                                    </div>
+                                    <span className="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 text-[10px] font-bold text-emerald-700 mt-1">
+                                      <span>Đã giảm -{formatVND(itemDiscount)}</span>
+                                      <span className="text-emerald-600 font-normal">
+                                        ({booking.voucherCode ? `Voucher ${booking.voucherCode}` : "Ưu đãi thành viên"})
+                                      </span>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="font-display text-lg sm:text-xl font-bold text-ink tabular-nums block">
+                                    {formatVND(rawItemTotal)}
+                                  </span>
+                                )}
+
+                                <span className="text-[10px] text-emerald-700 block font-medium">
+                                  Cọc: {formatVND(item.depositAmount)} (hoàn trả 100%)
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -658,11 +693,9 @@ function BookingSuccessInner() {
                       <div className="space-y-2.5 text-xs">
                         {(() => {
                           const discount = Number(booking.discountTotal ?? 0);
-                          const rawSubtotal = Number(
-                            booking.subtotal && booking.subtotal > 0
-                              ? booking.subtotal
-                              : booking.rentalTotal + discount,
-                          );
+                          const rentalNet = Number(booking.rentalTotal ?? 0);
+                          // Chuẩn hóa giá thuê gốc: luôn đảm bảo = tiền thuê thực trả + khoản chiết khấu
+                          const rawSubtotal = rentalNet + discount;
 
                           return (
                             <>
@@ -685,7 +718,7 @@ function BookingSuccessInner() {
                               {discount > 0 && (
                                 <div className="flex justify-between text-stone-500 text-[11px] bg-stone-50/80 px-2 py-1 rounded">
                                   <span>Tiền thuê thực trả:</span>
-                                  <span className="font-medium text-stone-700">{formatVND(booking.rentalTotal)}</span>
+                                  <span className="font-medium text-stone-700">{formatVND(rentalNet)}</span>
                                 </div>
                               )}
                             </>

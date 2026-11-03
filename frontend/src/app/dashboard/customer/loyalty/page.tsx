@@ -481,11 +481,16 @@ export default function CustomerLoyaltyPage() {
                       <Receipt className="h-3.5 w-3.5 text-stone-400" />
                       <span>#{b.bookingId.slice(0, 8).toUpperCase()}</span>
                     </Link>
-                    <span className="rounded-full bg-amber-50 border border-amber-300/80 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
-                      Chờ trả trang phục và kiểm tra
-                    </span>
-                    <span className="text-[11px] text-stone-400 font-medium">
-                      ({STATUS_LABELS[b.status] ?? b.status})
+                    <span
+                      className={`rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
+                        ["renting", "overdue"].includes(b.status)
+                          ? "bg-amber-50 border-amber-300/80 text-amber-800"
+                          : ["returned", "inspection_pending", "refund_pending"].includes(b.status)
+                          ? "bg-blue-50 border-blue-300/80 text-blue-800"
+                          : "bg-stone-100 border-stone-300/60 text-stone-700"
+                      }`}
+                    >
+                      {STATUS_LABELS[b.status] ?? b.status}
                     </span>
                   </div>
 
@@ -567,7 +572,35 @@ export default function CustomerLoyaltyPage() {
                     {/* Voucher Title */}
                     <div>
                       <h4 className="font-display text-lg font-bold text-ink group-hover:text-lotus transition leading-snug">
-                        {rule.voucherName}
+                        {rule.discountType === "fixed" ? (
+                          <>
+                            Giảm{" "}
+                            <span className="font-sans tabular-nums">
+                              {rule.discountValue.toLocaleString("vi-VN")}đ
+                            </span>{" "}
+                            <span className="text-stone-500 font-medium font-sans text-base">
+                              (Đổi{" "}
+                              <span className="tabular-nums">
+                                {rule.pointsRequired.toLocaleString("vi-VN")}
+                              </span>{" "}
+                              điểm)
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            Giảm{" "}
+                            <span className="font-sans tabular-nums">
+                              {rule.discountValue}%
+                            </span>{" "}
+                            <span className="text-stone-500 font-medium font-sans text-base">
+                              (Đổi{" "}
+                              <span className="tabular-nums">
+                                {rule.pointsRequired.toLocaleString("vi-VN")}
+                              </span>{" "}
+                              điểm)
+                            </span>
+                          </>
+                        )}
                       </h4>
 
                       <div className="mt-3 text-xs text-stone-600 space-y-1 bg-mist/80 p-2.5 rounded-xl border border-sand/60">
