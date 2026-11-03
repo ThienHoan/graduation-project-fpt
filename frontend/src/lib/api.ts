@@ -2973,3 +2973,68 @@ export async function syncWishlist(garmentIds: string[]) {
   });
 }
 
+// ── Loyalty / Tích điểm & Hạng thành viên ──────────────────────────────────
+export type LoyaltyTier = "basic" | "plus" | "premium";
+
+export type LoyaltyInfo = {
+  points: number;
+  lifetimePoints: number;
+  tier: LoyaltyTier;
+  nextTier: {
+    tier: LoyaltyTier;
+    pointsNeeded: number;
+    targetPoints: number;
+  } | null;
+  tierBenefits: string[];
+};
+
+export type LoyaltyPointLog = {
+  id: string;
+  delta: number;
+  reason: string;
+  meta: Record<string, unknown>;
+  balanceAfter: number;
+  createdAt: string;
+};
+
+export type LoyaltyRedemptionRule = {
+  id: string;
+  pointsRequired: number;
+  voucherName: string;
+  discountType: "percentage" | "fixed";
+  discountValue: number;
+  maxDiscountAmount: number | null;
+  minOrderValue: number;
+  voucherValidityDays: number;
+};
+
+export type LoyaltyRedeemResult = {
+  voucherCode: string;
+  voucherName: string;
+  discountType: "percentage" | "fixed";
+  discountValue: number;
+  expiresAt: string;
+  balanceAfter: number;
+};
+
+export async function getMyLoyalty() {
+  return apiRequest<LoyaltyInfo>("/loyalty/me", { cache: "no-store" });
+}
+
+export async function getMyLoyaltyHistory(cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiRequest<LoyaltyPointLog[]>(`/loyalty/me/history${query}`, { cache: "no-store" });
+}
+
+export async function getLoyaltyRedemptionRules() {
+  return apiRequest<LoyaltyRedemptionRule[]>("/loyalty/rules", { cache: "no-store" });
+}
+
+export async function redeemLoyaltyPoints(ruleId: string) {
+  return apiRequest<LoyaltyRedeemResult>("/loyalty/redeem", {
+    method: "POST",
+    body: JSON.stringify({ ruleId }),
+  });
+}
+
+

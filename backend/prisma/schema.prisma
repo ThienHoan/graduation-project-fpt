@@ -38,6 +38,10 @@ model UserAccount {
   tryonRequests                                          TryonRequest[]
   voucher_usages                                         voucher_usages[]
   wishlists                                              CustomerWishlist[]
+  pointLogs                                              loyalty_point_logs[]
+  loyaltyTier                                            loyalty_tier            @default(basic) @map("loyalty_tier")
+  loyaltyPoints                                          Int                     @default(0) @map("loyalty_points")
+  loyaltyPointsLifetime                                  Int                     @default(0) @map("loyalty_points_lifetime")
 
   @@map("user_accounts")
 }
@@ -213,6 +217,7 @@ model Booking {
   penalties             Penalty[]
   refunds               Refund[]
   reviews               Review[]               @relation("BookingReviews")
+  pointLogs             loyalty_point_logs[]
 
   @@map("bookings")
 }
@@ -1048,3 +1053,43 @@ model CustomerWishlist {
   @@index([garmentId], map: "idx_customer_wishlists_garment_id")
   @@map("customer_wishlists")
 }
+
+enum loyalty_tier {
+  basic
+  plus
+  premium
+}
+
+model loyalty_point_logs {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId    String       @map("customer_id") @db.Uuid
+  bookingId     String?      @map("booking_id") @db.Uuid
+  delta         Int
+  reason        String
+  meta          Json         @default("{}")
+  balanceAfter  Int          @map("balance_after")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer      UserAccount  @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  booking       Booking?     @relation(fields: [bookingId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([customerId, createdAt(sort: Desc)])
+  @@index([bookingId])
+  @@map("loyalty_point_logs")
+}
+
+model loyalty_redemption_rules {
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pointsRequired      Int                   @map("points_required")
+  voucherName         String                @map("voucher_name")
+  discountType        voucher_discount_type @map("discount_type")
+  discountValue       Decimal               @map("discount_value") @db.Decimal(12, 2)
+  maxDiscountAmount   Decimal?              @map("max_discount_amount") @db.Decimal(12, 2)
+  minOrderValue       Decimal               @default(0) @map("min_order_value") @db.Decimal(12, 2)
+  voucherValidityDays Int                   @default(30) @map("voucher_validity_days")
+  isActive            Boolean               @default(true) @map("is_active")
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("loyalty_redemption_rules")
+}
+

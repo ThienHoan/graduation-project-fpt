@@ -10,6 +10,7 @@ import { wishlistCount, refreshWishlistFromServer } from "@/lib/wishlist";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { playWoodTap, playHoverTick } from "@/lib/sound-fx";
 import { AnimatedShoppingBag, AnimatedSparkles, AnimatedIconWrapper } from "@/components/common/animated-icons";
+import { getMyLoyalty, type LoyaltyTier } from "@/lib/api";
 import {
   ShoppingBag,
   Heart,
@@ -20,6 +21,8 @@ import {
   Menu,
   X,
   ChevronDown,
+  Award,
+  Crown,
 } from "lucide-react";
 
 export interface CustomerNavbarProps {
@@ -42,6 +45,7 @@ export function CustomerNavbar({
   const [wishlistCountVal, setWishlistCountVal] = useState(0);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [loyaltyTier, setLoyaltyTier] = useState<LoyaltyTier | null>(null);
   const accountRef = useRef<HTMLDivElement>(null);
 
   const isDark = variant === "dark";
@@ -86,6 +90,16 @@ export function CustomerNavbar({
     setAccountOpen(false);
   }, [pathname]);
 
+  // Load loyalty tier for authenticated customers
+  useEffect(() => {
+    if (status !== "authenticated" || session?.user.role !== "customer") return;
+    getMyLoyalty()
+      .then((res) => {
+        if (res.success && res.data) setLoyaltyTier(res.data.tier);
+      })
+      .catch(() => {});
+  }, [status, session?.user.role]);
+
   const navItems = [
     { href: "/", label: "Trang chủ", key: "home" },
     { href: "/catalog", label: "Bộ sưu tập", key: "collection" },
@@ -97,6 +111,52 @@ export function CustomerNavbar({
 
   const displayName = session?.user.fullName ?? session?.user.email ?? "";
   const userInitial = displayName ? displayName.charAt(0).toUpperCase() : "";
+
+  // Tier-based avatar button styles
+  const tierConfig = {
+    basic: {
+      button: isDark
+        ? "border border-white/15 bg-white/10 text-stone-100 hover:border-amber-400"
+        : "border border-sand bg-mist text-ink hover:border-lotus",
+      avatar: isDark ? "bg-amber-600" : "bg-lotus",
+      badge: null,
+      label: null,
+    },
+    plus: {
+      button: isDark
+        ? "border-2 border-emerald-400 bg-emerald-950/60 text-emerald-100 hover:border-emerald-300"
+        : "border-2 border-emerald-400 bg-emerald-50 text-ink hover:border-emerald-500",
+      avatar: "bg-emerald-600",
+      badge: (
+        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[9px] font-black text-white leading-none">
+          <Award className="h-2.5 w-2.5" />
+        </span>
+      ),
+      label: (
+        <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-emerald-600 leading-none">
+          Plus
+        </span>
+      ),
+    },
+    premium: {
+      button: isDark
+        ? "border-2 border-amber-400 bg-amber-950/60 text-amber-100 hover:border-amber-300"
+        : "border-2 border-amber-400 bg-amber-50 text-ink hover:border-amber-500",
+      avatar: "bg-amber-600",
+      badge: (
+        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 ring-2 ring-white text-[9px] font-black text-white leading-none">
+          <Crown className="h-2.5 w-2.5" />
+        </span>
+      ),
+      label: (
+        <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-amber-600 leading-none">
+          VIP
+        </span>
+      ),
+    },
+  } as const;
+
+  const activeTier = tierConfig[loyaltyTier ?? "basic"];
 
   function handleSignOut() {
     signOut();
@@ -246,23 +306,21 @@ export function CustomerNavbar({
                 <button
                   type="button"
                   onClick={() => setAccountOpen(!accountOpen)}
-                  className={`flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
-                    isDark
-                      ? "border border-white/15 bg-white/10 text-stone-100 hover:border-amber-400"
-                      : "border border-sand bg-mist text-ink hover:border-lotus"
-                  }`}
+                  className={`flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${activeTier.button}`}
                   aria-label="Tài khoản"
                 >
-                  <span
-                    className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${
-                      isDark ? "bg-amber-600" : "bg-lotus"
-                    }`}
-                  >
-                    {userInitial}
+                  <span className="relative">
+                    <span
+                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${activeTier.avatar}`}
+                    >
+                      {userInitial}
+                    </span>
+                    {activeTier.badge}
                   </span>
-                  <span className="hidden max-w-[90px] truncate sm:inline">
+                  <span className="hidden max-w-[80px] truncate sm:inline">
                     {displayName.split(" ")[0]}
                   </span>
+                  {activeTier.label}
                   <ChevronDown className="h-3 w-3 opacity-60" />
                 </button>
 
@@ -306,6 +364,38 @@ export function CustomerNavbar({
                       >
                         <User className="h-4 w-4 opacity-70" />
                         <span>Hồ sơ cá nhân</span>
+                      </Link>
+                      <Link
+                        href="/dashboard/customer/loyalty"
+                        onClick={() => setAccountOpen(false)}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
+                          loyaltyTier === "premium"
+                            ? "text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                            : loyaltyTier === "plus"
+                            ? "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                            : isDark
+                            ? "hover:bg-white/10 hover:text-amber-300"
+                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                        }`}
+                      >
+                        {loyaltyTier === "premium" ? (
+                          <Crown className="h-4 w-4 opacity-80" />
+                        ) : (
+                          <Award className="h-4 w-4 opacity-70" />
+                        )}
+                        <span>
+                          Điểm thưởng
+                          {loyaltyTier === "plus" && (
+                            <span className="ml-1.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              Plus
+                            </span>
+                          )}
+                          {loyaltyTier === "premium" && (
+                            <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                              VIP
+                            </span>
+                          )}
+                        </span>
                       </Link>
                       <Link
                         href={cartHref}
@@ -493,16 +583,36 @@ export function CustomerNavbar({
                       isDark ? "bg-white/5" : "bg-parchment"
                     }`}
                   >
-                    <div
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${
-                        isDark ? "bg-amber-600" : "bg-lotus"
-                      }`}
-                    >
-                      {userInitial}
+                    <div className="relative shrink-0">
+                      <div
+                        className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white ${activeTier.avatar}`}
+                      >
+                        {userInitial}
+                      </div>
+                      {activeTier.badge && (
+                        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white text-[9px] font-black text-white leading-none bg-current">
+                          {loyaltyTier === "premium" ? (
+                            <Crown className="h-2.5 w-2.5 text-white" />
+                          ) : (
+                            <Award className="h-2.5 w-2.5 text-white" />
+                          )}
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold">{displayName}</p>
                       <p className="truncate text-xs opacity-70">{session.user.email}</p>
+                      {loyaltyTier && loyaltyTier !== "basic" && (
+                        <span
+                          className={`inline-block mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                            loyaltyTier === "premium"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-emerald-100 text-emerald-700"
+                          }`}
+                        >
+                          {loyaltyTier === "premium" ? "👑 Premium" : "✦ Plus"}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <Link
