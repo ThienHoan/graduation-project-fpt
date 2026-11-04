@@ -43,6 +43,20 @@ interface RealtimeTryOnModalProps {
 type ModalStatus = "idle" | "requesting_camera" | "aligning_pose" | "authenticating" | "connecting_webrtc" | "streaming" | "error" | "session_ended";
 type ErrorCode = "UNAUTHORIZED" | "QUOTA_EXCEEDED" | "SESSION_TIMEOUT" | "TAB_BLURRED" | "DECART_ERROR" | null;
 
+const LIVE_MODEL = models.realtime("lucy-vton-latest");
+// Capture at the model's aspect ratio to avoid stretching a small portrait feed
+// into its 720p landscape input. Keep 24 fps to limit upload bandwidth.
+const LIVE_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+  audio: false,
+  video: {
+    facingMode: "user",
+    frameRate: { ideal: 24, max: 24 },
+    width: { ideal: LIVE_MODEL.width },
+    height: { ideal: LIVE_MODEL.height },
+    aspectRatio: { ideal: LIVE_MODEL.width / LIVE_MODEL.height },
+  },
+};
+
 export function RealtimeTryOnModal({
   isOpen,
   onClose,
@@ -175,15 +189,7 @@ export function RealtimeTryOnModal({
       }
 
       // 2. Mở camera local của người dùng
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: "user",
-          frameRate: { ideal: 18, max: 24 },
-          width: { ideal: 480, max: 720 },
-          height: { ideal: 854, max: 960 },
-        },
-      });
+      const stream = await navigator.mediaDevices.getUserMedia(LIVE_CAMERA_CONSTRAINTS);
       localStreamRef.current = stream;
 
       if (alignmentVideoRef.current) {
@@ -272,15 +278,7 @@ export function RealtimeTryOnModal({
       const clientApiKey = tokenData.apiKey;
       let stream = localStreamRef.current;
       if (!stream || !stream.active) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: "user",
-            frameRate: { ideal: 18, max: 24 },
-            width: { ideal: 480, max: 720 },
-            height: { ideal: 854, max: 960 },
-          },
-        });
+        stream = await navigator.mediaDevices.getUserMedia(LIVE_CAMERA_CONSTRAINTS);
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       }
@@ -288,7 +286,6 @@ export function RealtimeTryOnModal({
       setModalStatus("connecting_webrtc");
 
       const client = createDecartClient({ apiKey: clientApiKey });
-      const model = models.realtime("lucy-vton-latest");
       const activeGarment = selectedGarmentRef.current;
       const initialPromptText = buildPromptForGarment(activeGarment);
 
@@ -298,8 +295,9 @@ export function RealtimeTryOnModal({
       }
 
       const rtClient = await client.realtime.connect(stream, {
-        model,
-        mirror: "auto",
+        model: LIVE_MODEL,
+        // Keep the stream unflipped for AI; mirror both previews in the UI.
+        mirror: false,
         initialState: {
           prompt: {
             text: initialPromptText,
@@ -429,6 +427,9 @@ export function RealtimeTryOnModal({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Canvas does not inherit the video's CSS transform, so match the live view.
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL("image/png");
     setSnapshotUrl(dataUrl);
@@ -546,7 +547,7 @@ export function RealtimeTryOnModal({
               ref={remoteVideoRef}
               autoPlay
               playsInline
-              className={`h-full w-full object-contain transition-opacity duration-500 ${
+              className={`h-full w-full object-contain scale-x-[-1] transition-opacity duration-500 ${
                 modalStatus === "streaming" ? "opacity-100 z-0" : "opacity-0 pointer-events-none absolute inset-0 -z-10"
               }`}
             />
