@@ -102,9 +102,19 @@ jobs:
             node_modules/.bin/prisma generate
 
             # Restart bằng ecosystem config (đảm bảo .env được load đúng)
-            pm2 delete be-api || true
-            pm2 start ecosystem.config.js
-            pm2 save
+            # SSH action chạy non-login shell nên pnpm global bin không nằm trong PATH.
+            PM2_BIN="$HOME/.local/share/pnpm/bin/pm2"
+            if [ ! -x "$PM2_BIN" ]; then
+              PM2_BIN="$(command -v pm2 2>/dev/null || true)"
+            fi
+            if [ -z "$PM2_BIN" ] || [ ! -x "$PM2_BIN" ]; then
+              echo "❌ Không tìm thấy pm2 cho user $(id -un), HOME=$HOME."
+              exit 1
+            fi
+            echo "Dùng pm2: $PM2_BIN"
+            "$PM2_BIN" delete be-api || true
+            "$PM2_BIN" start ecosystem.config.js
+            "$PM2_BIN" save
 
             # Fail sớm nếu bundle mới không thực sự được nạp: route mới phải
             # trả 401 do guard auth; 404 nghĩa là vẫn chạy code cũ.
