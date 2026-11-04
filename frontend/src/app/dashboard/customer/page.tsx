@@ -43,6 +43,7 @@ import {
   EyeOff,
   PackageOpen,
   ArrowRight,
+  ArrowDown,
   Truck,
   AlertTriangle,
   ChevronLeft,
@@ -454,6 +455,11 @@ export default function CustomerDashboardPage() {
     return sortedBookings.filter((b) => (b.overdueDays ?? 0) > 0);
   }, [sortedBookings]);
 
+  // Danh sách các đơn đang hoạt động (thuê đồng thời)
+  const activeBookings = useMemo(() => {
+    return sortedBookings.filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status));
+  }, [sortedBookings]);
+
   // Statistics calculation for Quick Metric Cards
   const stats = useMemo(() => {
     const activeCount = sortedBookings.filter((b) => ACTIVE_BOOKING_STATUSES.has(b.status)).length;
@@ -841,62 +847,46 @@ export default function CustomerDashboardPage() {
 
           {/* 3. Hero Active / Selected Booking Section */}
           <section id="booking-spotlight-section" className="space-y-4 scroll-mt-24">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-ink">
                   Chi tiết đơn thuê
                 </h2>
                 {activeBooking && (
-                  <span className="relative flex h-2.5 w-2.5">
+                  <span className="relative flex h-2.5 w-2.5" title="Đang theo dõi đơn">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                   </span>
                 )}
                 {sortedBookings.length > 1 && (
-                  <span className="rounded-full bg-sand/60 px-2.5 py-0.5 text-[11px] font-bold text-stone-700 font-sans">
-                    {sortedBookings.length} đơn
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = document.getElementById("customer-booking-history-section");
+                      el?.scrollIntoView({ behavior: "smooth" });
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full bg-sand/60 hover:bg-sand/90 px-2.5 py-0.5 text-[11px] font-bold text-stone-700 transition font-sans cursor-pointer group"
+                    title="Bấm để cuộn xuống xem toàn bộ lịch sử đơn"
+                  >
+                    <span>{sortedBookings.length} đơn</span>
+                    <ArrowDown className="h-3 w-3 text-stone-500 group-hover:translate-y-0.5 transition-transform" />
+                  </button>
                 )}
               </div>
-
-              {/* Bộ chọn đơn thuê nhanh (Dropdown) */}
-              {sortedBookings.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-stone-500 hidden sm:inline whitespace-nowrap">Đang xem:</span>
-                  <div className="relative">
-                    <select
-                      value={activeBooking?.id ?? ""}
-                      onChange={(e) => setSelectedBookingId(e.target.value)}
-                      className="appearance-none rounded-full border border-sand bg-white py-1.5 pl-3.5 pr-8 text-xs font-semibold text-ink shadow-2xs focus:border-lotus focus:outline-none transition cursor-pointer hover:border-lotus/60 max-w-[280px] sm:max-w-[340px] truncate"
-                    >
-                      {sortedBookings.map((b) => {
-                        const st = statusOf(b.status);
-                        const garmentName = b.items[0]?.garmentName ?? "Trang phục";
-                        return (
-                          <option key={b.id} value={b.id}>
-                            #{b.id.slice(0, 8).toUpperCase()} • {garmentName} ({st.label})
-                          </option>
-                        );
-                      })}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* Thanh Carousel Chips chọn nhanh bất kỳ đơn thuê nào */}
-            {sortedBookings.length > 1 && (
+            {/* Chỉ hiển thị thanh chip chọn nhanh khi khách có TỪ 2 ĐƠN ĐANG HOẠT ĐỘNG TRỞ LÊN (tránh rác giao diện khi khách có nhiều đơn cũ) */}
+            {activeBookings.length > 1 && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-stone-500 px-1">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <Layers className="h-3.5 w-3.5 text-antique" />
-                    <span>Chọn xem đơn bất kỳ của bạn:</span>
+                  <span className="flex items-center gap-1.5 font-medium text-emerald-800">
+                    <Layers className="h-3.5 w-3.5 text-emerald-600" />
+                    <span>Đơn bạn đang thuê đồng thời:</span>
                   </span>
-                  <span className="text-[11px] text-stone-400">Bấm chip để chuyển đổi</span>
+                  <span className="text-[11px] text-stone-400">Bấm để chuyển đổi nhanh</span>
                 </div>
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  {sortedBookings.map((b, idx) => {
+                  {activeBookings.map((b, idx) => {
                     const isSelected = activeBooking?.id === b.id;
                     const st = statusOf(b.status);
                     const name = b.items[0]?.garmentName ?? "Trang phục cổ";
@@ -917,7 +907,7 @@ export default function CustomerDashboardPage() {
                           {idx + 1}
                         </span>
                         <span className="font-mono text-[11px] text-stone-700">#{b.id.slice(0, 8).toUpperCase()}</span>
-                        <span className="max-w-[120px] sm:max-w-[150px] truncate text-stone-900">{name}</span>
+                        <span className="max-w-[140px] sm:max-w-[180px] truncate text-stone-900">{name}</span>
                         <span className={statusBadgeClass(st.color)}>{st.label}</span>
                       </button>
                     );
@@ -1197,7 +1187,7 @@ export default function CustomerDashboardPage() {
           )}
 
           {/* 5. Booking History with Tabs & Search */}
-          <section className="space-y-5">
+          <section id="customer-booking-history-section" className="space-y-5 scroll-mt-24">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-ink">

@@ -105,7 +105,6 @@ export function CustomerNavbar({
     { href: "/catalog", label: "Bộ sưu tập", key: "collection" },
     { href: "/try-on", label: "Thử đồ AI", key: "tryon" },
     { href: "/#bo-suu-tap-3d", label: "Bảo vật 3D", key: "showcase3d" },
-    { href: "/#quy-trinh", label: "Hành trình thuê", key: "journey" },
     { href: "/dashboard", label: "Hệ thống ERP", key: "erp" },
   ];
 
@@ -173,9 +172,9 @@ export function CustomerNavbar({
           : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
           }`}
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8 gap-2">
           {/* Logo & Nhận diện thương hiệu chính thức */}
-          <div className="flex items-center gap-4 lg:gap-5 xl:gap-7 min-w-0 shrink-0">
+          <div className="flex items-center shrink-0">
             <Link
               href="/"
               onClick={(e) => playWoodTap({ event: e })}
@@ -207,34 +206,34 @@ export function CustomerNavbar({
                 </span>
               </div>
             </Link>
-
-            {/* Desktop Navigation Links */}
-            <nav className="hidden items-center gap-2.5 lg:gap-3.5 xl:gap-5 lg:flex text-xs lg:text-[13px] xl:text-sm font-medium shrink-0">
-              {navItems.map((item) => {
-                const isExplicitActive = active === item.key;
-                const isPathActive = pathname === item.href && !active;
-                const isHighlighted = isExplicitActive || isPathActive;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={(e) => playWoodTap({ event: e })}
-                    onMouseEnter={(e) => playHoverTick({ event: e })}
-                    className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${isHighlighted
-                      ? isDark
-                        ? "border-b-2 border-amber-400 font-bold text-amber-300"
-                        : "border-b-2 border-lotus font-bold text-lotus"
-                      : isDark
-                        ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
-                        : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
-                      }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
           </div>
+
+          {/* Desktop Navigation Links — Căn giữa cân đối hoàn hảo trong không gian navbar */}
+          <nav className="hidden lg:flex flex-1 items-center justify-center gap-3 lg:gap-4 xl:gap-6 text-xs lg:text-[13px] xl:text-sm font-medium px-2 min-w-0">
+            {navItems.map((item) => {
+              const isExplicitActive = active === item.key;
+              const isPathActive = pathname === item.href && !active;
+              const isHighlighted = isExplicitActive || isPathActive;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={(e) => playWoodTap({ event: e })}
+                  onMouseEnter={(e) => playHoverTick({ event: e })}
+                  className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${isHighlighted
+                    ? isDark
+                      ? "border-b-2 border-amber-400 font-bold text-amber-300"
+                      : "border-b-2 border-lotus font-bold text-lotus"
+                    : isDark
+                      ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
+                      : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
+                    }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
@@ -320,7 +319,7 @@ export function CustomerNavbar({
                           <Crown className="h-2.5 w-2.5" />
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
                       <span className="hidden sm:inline-flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-2xs">
@@ -353,7 +352,7 @@ export function CustomerNavbar({
                           <Award className="h-2.5 w-2.5" />
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
                       <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-emerald-600 leading-none">
@@ -383,10 +382,10 @@ export function CustomerNavbar({
                           {userInitial}
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
-                      <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-amber-700 leading-none">
+                      <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wider text-amber-700 leading-none">
                         Basic
                       </span>
                       <ChevronDown className="h-3 w-3 opacity-60" />
