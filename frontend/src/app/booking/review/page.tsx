@@ -145,7 +145,7 @@ function BookingReviewInner() {
           validIds,
         ),
       );
-    }).catch(() => {});
+    }).catch(() => { });
     return () => {
       cancelled = true;
     };
@@ -217,7 +217,7 @@ function BookingReviewInner() {
       .then((res) => {
         if (res.success && res.data) setLoyalty(res.data);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const garmentRentalSubtotal = cartItems.reduce((sum, item) => sum + lineTotal(item), 0);
@@ -226,7 +226,7 @@ function BookingReviewInner() {
   // Ưu đãi thành viên: Plus 5%, Premium 10% trên tiền thuê trang phục
   const memberDiscountRate =
     loyalty?.tier === "premium" ? 0.10 :
-    loyalty?.tier === "plus" ? 0.05 : 0;
+      loyalty?.tier === "plus" ? 0.05 : 0;
   const memberDiscountAmount = Math.round(garmentRentalSubtotal * memberDiscountRate);
 
   // So sánh ưu đãi: Chọn mức giảm tối ưu nhất (Voucher vs Hạng thành viên)
@@ -238,8 +238,8 @@ function BookingReviewInner() {
   const effectiveDiscount = isUsingVoucher
     ? voucherDiscount
     : isUsingMemberDiscount
-    ? memberDiscountAmount
-    : 0;
+      ? memberDiscountAmount
+      : 0;
 
   const depositTotal = cartItems.reduce((sum, item) => sum + item.depositAmount, 0);
   const grandTotal = Math.max(0, rentalTotal - effectiveDiscount) + depositTotal + shippingFee;
@@ -382,34 +382,34 @@ function BookingReviewInner() {
                       </div>
                     )}
                     <div className="flex-1">
-                    <h3 className="font-medium text-ink">{item.name}</h3>
-                    <p className="text-xs text-stone-500">
-                      {item.sizeLabel ? `Size ${item.sizeLabel} · ` : ""}
-                      {(() => {
-                        const q = quotes.get(item.garmentSizeId);
-                        if (!q || q.discountPrice === q.basePrice) return `${formatVND(q?.basePrice ?? item.dailyPrice)}/ngày`;
-                        return (
-                          <>
-                            <span className="line-through">{formatVND(q.basePrice)}</span>{" "}
-                            <span className="font-medium text-lotus">{formatVND(q.discountPrice)}/ngày (TB)</span>
-                          </>
-                        );
-                      })()}
-                    </p>
-                    {(quotes.get(item.garmentSizeId)?.appliedRules ?? []).length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {quotes.get(item.garmentSizeId)!.appliedRules.map((r) => (
-                          <span key={r.id} className="rounded-full bg-lotus/10 px-2 py-0.5 text-[11px] font-semibold text-lotus">
-                            {r.name}
-                            {r.percentage ? ` ${r.percentage > 0 ? "+" : ""}${r.percentage}%` : ""} · {r.days} ngày
-                          </span>
-                        ))}
+                      <h3 className="font-medium text-ink">{item.name}</h3>
+                      <p className="text-xs text-stone-500">
+                        {item.sizeLabel ? `Size ${item.sizeLabel} · ` : ""}
+                        {(() => {
+                          const q = quotes.get(item.garmentSizeId);
+                          if (!q || q.discountPrice === q.basePrice) return `${formatVND(q?.basePrice ?? item.dailyPrice)}/ngày`;
+                          return (
+                            <>
+                              <span className="line-through">{formatVND(q.basePrice)}</span>{" "}
+                              <span className="font-medium text-lotus">{formatVND(q.discountPrice)}/ngày (TB)</span>
+                            </>
+                          );
+                        })()}
+                      </p>
+                      {(quotes.get(item.garmentSizeId)?.appliedRules ?? []).length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {quotes.get(item.garmentSizeId)!.appliedRules.map((r) => (
+                            <span key={r.id} className="rounded-full bg-lotus/10 px-2 py-0.5 text-[11px] font-semibold text-lotus">
+                              {r.name}
+                              {r.percentage ? ` ${r.percentage > 0 ? "+" : ""}${r.percentage}%` : ""} · {r.days} ngày
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-1 flex gap-4 text-xs">
+                        <span className="text-stone-500">Thuê {days} ngày: <span className="font-medium text-ink">{formatVND(lineTotal(item))}</span></span>
+                        <span className="text-stone-500">Cọc: <span className="font-medium text-ink">{formatVND(item.depositAmount)}</span></span>
                       </div>
-                    )}
-                    <div className="mt-1 flex gap-4 text-xs">
-                      <span className="text-stone-500">Thuê {days} ngày: <span className="font-medium text-ink">{formatVND(lineTotal(item))}</span></span>
-                      <span className="text-stone-500">Cọc: <span className="font-medium text-ink">{formatVND(item.depositAmount)}</span></span>
-                    </div>
                     </div>
                   </div>
                   {(() => {
@@ -510,11 +510,10 @@ function BookingReviewInner() {
             {/* Banner Hạng Thành Viên */}
             {loyalty && loyalty.tier !== "basic" && (
               <div
-                className={`mt-4 rounded-xl border p-3.5 text-xs ${
-                  loyalty.tier === "premium"
+                className={`mt-4 rounded-xl border p-3.5 text-xs ${loyalty.tier === "premium"
                     ? "border-amber-300 bg-amber-50/90 text-amber-950"
                     : "border-emerald-300 bg-emerald-50/90 text-emerald-950"
-                }`}
+                  }`}
               >
                 <div className="flex items-center justify-between font-bold">
                   <div className="flex items-center gap-1.5">
@@ -671,11 +670,10 @@ function BookingReviewInner() {
               {voucherError && <p className="mt-2 text-xs text-red-500">{voucherError}</p>}
               {voucherResult && (
                 <div
-                  className={`mt-2.5 rounded-xl border p-2.5 text-xs ${
-                    isUsingVoucher
+                  className={`mt-2.5 rounded-xl border p-2.5 text-xs ${isUsingVoucher
                       ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
                       : "border-amber-200 bg-amber-50/80 text-amber-900"
-                  }`}
+                    }`}
                 >
                   {isUsingVoucher ? (
                     <p className="font-medium text-emerald-800">

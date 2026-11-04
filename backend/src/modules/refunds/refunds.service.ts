@@ -26,7 +26,7 @@ export class RefundsService {
     private readonly notificationsService: NotificationsService,
     private readonly realtime: RealtimeService,
     private readonly loyaltyService: LoyaltyService,
-  ) {}
+  ) { }
 
   async calculate(bookingId: string) {
     const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
@@ -193,7 +193,7 @@ export class RefundsService {
       userId: result.customerId,
       templateKey: "refund.closed_no_refund",
       data: { bookingId, bookingCode: bookingId.slice(0, 8).toUpperCase() },
-    }).catch(() => {});
+    }).catch(() => { });
 
     this.realtime.bookingChanged({
       id: bookingId,
@@ -278,7 +278,7 @@ export class RefundsService {
       // on the deposit-minus-penalty formula used after a completed rental.
       const liveRefundAmount = isCancellationRefund
         ? Number((await tx.payment.aggregate({ where: { bookingId: refund.bookingId, status: PaymentStatus.paid }, _sum: { amount: true } }))._sum.amount ?? 0) -
-          Number((await tx.refund.aggregate({ where: { bookingId: refund.bookingId, id: { not: id }, status: { in: [PaymentStatus.pending, PaymentStatus.refunding, PaymentStatus.refunded, PaymentStatus.partially_refunded] } }, _sum: { amount: true } }))._sum.amount ?? 0)
+        Number((await tx.refund.aggregate({ where: { bookingId: refund.bookingId, id: { not: id }, status: { in: [PaymentStatus.pending, PaymentStatus.refunding, PaymentStatus.refunded, PaymentStatus.partially_refunded] } }, _sum: { amount: true } }))._sum.amount ?? 0)
         : Math.max(0, Number(refund.booking.depositTotal) - Number(refund.booking.penaltyTotal));
       const frozenAmount = Number(refund.amount);
 
@@ -379,7 +379,7 @@ export class RefundsService {
           amount: notifyData.amount.toLocaleString("vi-VN") + "đ",
           refundMethodLabel: notifyData.isBankTransfer ? "chuyển khoản" : "tiền mặt",
         },
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     this.realtime.refundChanged({

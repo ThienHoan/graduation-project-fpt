@@ -97,7 +97,7 @@ export function CustomerNavbar({
       .then((res) => {
         if (res.success && res.data) setLoyaltyTier(res.data.tier);
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [status, session?.user.role]);
 
   const navItems = [
@@ -105,7 +105,6 @@ export function CustomerNavbar({
     { href: "/catalog", label: "Bộ sưu tập", key: "collection" },
     { href: "/try-on", label: "Thử đồ AI", key: "tryon" },
     { href: "/#bo-suu-tap-3d", label: "Bảo vật 3D", key: "showcase3d" },
-    { href: "/#quy-trinh", label: "Hành trình thuê", key: "journey" },
     { href: "/dashboard", label: "Hệ thống ERP", key: "erp" },
   ];
 
@@ -168,15 +167,14 @@ export function CustomerNavbar({
   return (
     <>
       <header
-        className={`sticky top-0 z-40 transition-all duration-300 ${
-          isDark
-            ? "border-b border-white/10 bg-[#09090c]/90 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
-            : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
-        }`}
+        className={`sticky top-0 z-40 transition-all duration-300 ${isDark
+          ? "border-b border-white/10 bg-[#09090c]/90 backdrop-blur-xl shadow-[0_4px_24px_rgba(0,0,0,0.4)]"
+          : "border-b border-sand/80 bg-white/95 backdrop-blur-xl shadow-xs"
+          }`}
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8 gap-2">
           {/* Logo & Nhận diện thương hiệu chính thức */}
-          <div className="flex items-center gap-4 lg:gap-5 xl:gap-7 min-w-0 shrink-0">
+          <div className="flex items-center shrink-0">
             <Link
               href="/"
               onClick={(e) => playWoodTap({ event: e })}
@@ -193,52 +191,49 @@ export function CustomerNavbar({
               />
               <div className="flex flex-col shrink-0 whitespace-nowrap">
                 <span
-                  className={`font-display text-xl sm:text-2xl font-bold tracking-wide leading-none whitespace-nowrap ${
-                    isDark
-                      ? "text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-300 bg-clip-text drop-shadow-[0_2px_10px_rgba(251,191,36,0.3)]"
-                      : "text-lotus"
-                  }`}
+                  className={`font-display text-xl sm:text-2xl font-bold tracking-wide leading-none whitespace-nowrap ${isDark
+                    ? "text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-rose-300 bg-clip-text drop-shadow-[0_2px_10px_rgba(251,191,36,0.3)]"
+                    : "text-lotus"
+                    }`}
                 >
                   Cổ Phục
                 </span>
                 <span
-                  className={`text-[9px] sm:text-[10px] tracking-[0.22em] font-medium uppercase mt-0.5 whitespace-nowrap ${
-                    isDark ? "text-stone-400" : "text-stone-500"
-                  }`}
+                  className={`text-[9px] sm:text-[10px] tracking-[0.22em] font-medium uppercase mt-0.5 whitespace-nowrap ${isDark ? "text-stone-400" : "text-stone-500"
+                    }`}
                 >
                   Hoàng Thành • AI
                 </span>
               </div>
             </Link>
-
-            {/* Desktop Navigation Links */}
-            <nav className="hidden items-center gap-2.5 lg:gap-3.5 xl:gap-5 lg:flex text-xs lg:text-[13px] xl:text-sm font-medium shrink-0">
-              {navItems.map((item) => {
-                const isExplicitActive = active === item.key;
-                const isPathActive = pathname === item.href && !active;
-                const isHighlighted = isExplicitActive || isPathActive;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={(e) => playWoodTap({ event: e })}
-                    onMouseEnter={(e) => playHoverTick({ event: e })}
-                    className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${
-                      isHighlighted
-                        ? isDark
-                          ? "border-b-2 border-amber-400 font-bold text-amber-300"
-                          : "border-b-2 border-lotus font-bold text-lotus"
-                        : isDark
-                        ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
-                        : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
           </div>
+
+          {/* Desktop Navigation Links — Căn giữa cân đối hoàn hảo trong không gian navbar */}
+          <nav className="hidden lg:flex flex-1 items-center justify-center gap-3 lg:gap-4 xl:gap-6 text-xs lg:text-[13px] xl:text-sm font-medium px-2 min-w-0">
+            {navItems.map((item) => {
+              const isExplicitActive = active === item.key;
+              const isPathActive = pathname === item.href && !active;
+              const isHighlighted = isExplicitActive || isPathActive;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={(e) => playWoodTap({ event: e })}
+                  onMouseEnter={(e) => playHoverTick({ event: e })}
+                  className={`whitespace-nowrap shrink-0 py-2 transition duration-200 ${isHighlighted
+                    ? isDark
+                      ? "border-b-2 border-amber-400 font-bold text-amber-300"
+                      : "border-b-2 border-lotus font-bold text-lotus"
+                    : isDark
+                      ? "border-b-2 border-transparent text-stone-300 hover:text-amber-300"
+                      : "border-b-2 border-transparent text-stone-600 hover:text-lotus"
+                    }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
@@ -247,11 +242,10 @@ export function CustomerNavbar({
               href="/catalog"
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
-              className={`hidden xl:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition active:scale-[0.98] ${
-                isDark
-                  ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 shadow-md hover:opacity-90"
-                  : "bg-lotus text-white hover:bg-oxblood shadow-xs"
-              }`}
+              className={`hidden xl:inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition active:scale-[0.98] ${isDark
+                ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 shadow-md hover:opacity-90"
+                : "bg-lotus text-white hover:bg-oxblood shadow-xs"
+                }`}
             >
               <AnimatedSparkles size={15} />
               <span>Thuê Ngay</span>
@@ -268,11 +262,10 @@ export function CustomerNavbar({
               href="/wishlist"
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
-              className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${
-                isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-lotus hover:text-lotus"
-                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
-              }`}
+              className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-lotus hover:text-lotus"
+                : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                }`}
               aria-label="Danh sách cổ phục yêu thích"
               title="Danh sách yêu thích"
             >
@@ -290,11 +283,10 @@ export function CustomerNavbar({
               href={cartHref}
               onClick={(e) => playWoodTap({ event: e })}
               onMouseEnter={(e) => playHoverTick({ event: e })}
-              className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${
-                isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
-                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
-              }`}
+              className={`relative flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
+                : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                }`}
               aria-label="Giỏ thuê đồ"
             >
               <AnimatedShoppingBag size={18} count={cartCountVal} />
@@ -313,11 +305,10 @@ export function CustomerNavbar({
                     <button
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
-                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
-                        isDark
-                          ? "bg-[#180a0a] text-amber-100 hover:bg-[#240e0e]"
-                          : "bg-white text-ink hover:bg-stone-50"
-                      }`}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
+                        ? "bg-[#180a0a] text-amber-100 hover:bg-[#240e0e]"
+                        : "bg-white text-ink hover:bg-stone-50"
+                        }`}
                       aria-label="Tài khoản VIP"
                     >
                       <span className="relative">
@@ -328,7 +319,7 @@ export function CustomerNavbar({
                           <Crown className="h-2.5 w-2.5" />
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
                       <span className="hidden sm:inline-flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-2xs">
@@ -347,11 +338,10 @@ export function CustomerNavbar({
                     <button
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
-                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
-                        isDark
-                          ? "bg-[#081a17] text-emerald-100 hover:bg-[#0c2622]"
-                          : "bg-white text-ink hover:bg-stone-50"
-                      }`}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
+                        ? "bg-[#081a17] text-emerald-100 hover:bg-[#0c2622]"
+                        : "bg-white text-ink hover:bg-stone-50"
+                        }`}
                       aria-label="Tài khoản Plus"
                     >
                       <span className="relative">
@@ -362,7 +352,7 @@ export function CustomerNavbar({
                           <Award className="h-2.5 w-2.5" />
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
                       <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-emerald-600 leading-none">
@@ -381,11 +371,10 @@ export function CustomerNavbar({
                     <button
                       type="button"
                       onClick={() => setAccountOpen(!accountOpen)}
-                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${
-                        isDark
-                          ? "bg-[#1a1510] text-amber-100 hover:bg-[#221c12]"
-                          : "bg-white text-ink hover:bg-stone-50"
-                      }`}
+                      className={`relative z-10 flex h-9 sm:h-10 items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold transition ${isDark
+                        ? "bg-[#1a1510] text-amber-100 hover:bg-[#221c12]"
+                        : "bg-white text-ink hover:bg-stone-50"
+                        }`}
                       aria-label="Tài khoản"
                     >
                       <span className="relative">
@@ -393,10 +382,10 @@ export function CustomerNavbar({
                           {userInitial}
                         </span>
                       </span>
-                      <span className="hidden max-w-[80px] truncate sm:inline">
+                      <span className="hidden max-w-[70px] sm:max-w-[85px] xl:max-w-[100px] truncate sm:inline">
                         {displayName.split(" ")[0]}
                       </span>
-                      <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-amber-700 leading-none">
+                      <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wider text-amber-700 leading-none">
                         Basic
                       </span>
                       <ChevronDown className="h-3 w-3 opacity-60" />
@@ -406,16 +395,14 @@ export function CustomerNavbar({
 
                 {accountOpen && (
                   <div
-                    className={`absolute right-0 top-12 z-50 w-60 rounded-xl p-2 shadow-2xl ${
-                      isDark
-                        ? "border border-white/15 bg-[#141419] text-stone-200"
-                        : "border border-sand bg-white text-ink shadow-xl"
-                    }`}
+                    className={`absolute right-0 top-12 z-50 w-60 rounded-xl p-2 shadow-2xl ${isDark
+                      ? "border border-white/15 bg-[#141419] text-stone-200"
+                      : "border border-sand bg-white text-ink shadow-xl"
+                      }`}
                   >
                     <div
-                      className={`border-b px-3 py-2.5 ${
-                        isDark ? "border-white/10" : "border-sand/60"
-                      }`}
+                      className={`border-b px-3 py-2.5 ${isDark ? "border-white/10" : "border-sand/60"
+                        }`}
                     >
                       <p className="truncate text-sm font-bold">{displayName}</p>
                       <p className="truncate text-xs opacity-70">{session.user.email}</p>
@@ -424,11 +411,10 @@ export function CustomerNavbar({
                       <Link
                         href="/dashboard/customer"
                         onClick={() => setAccountOpen(false)}
-                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                          isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
-                        }`}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          }`}
                       >
                         <LayoutDashboard className="h-4 w-4 opacity-70" />
                         <span>Bảng điều khiển</span>
@@ -436,11 +422,10 @@ export function CustomerNavbar({
                       <Link
                         href="/dashboard/customer/profile"
                         onClick={() => setAccountOpen(false)}
-                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                          isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
-                        }`}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          }`}
                       >
                         <User className="h-4 w-4 opacity-70" />
                         <span>Hồ sơ cá nhân</span>
@@ -448,15 +433,14 @@ export function CustomerNavbar({
                       <Link
                         href="/dashboard/customer/loyalty"
                         onClick={() => setAccountOpen(false)}
-                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                          loyaltyTier === "premium"
-                            ? "text-amber-700 hover:bg-amber-50 hover:text-amber-800"
-                            : loyaltyTier === "plus"
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${loyaltyTier === "premium"
+                          ? "text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                          : loyaltyTier === "plus"
                             ? "text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                             : isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
-                        }`}
+                              ? "hover:bg-white/10 hover:text-amber-300"
+                              : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          }`}
                       >
                         {loyaltyTier === "premium" ? (
                           <Crown className="h-4 w-4 opacity-80" />
@@ -480,11 +464,10 @@ export function CustomerNavbar({
                       <Link
                         href={cartHref}
                         onClick={() => setAccountOpen(false)}
-                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                          isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
-                        }`}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          }`}
                       >
                         <ShoppingBag className="h-4 w-4 opacity-70" />
                         <span>Giỏ thuê ({cartCountVal})</span>
@@ -492,11 +475,10 @@ export function CustomerNavbar({
                       <Link
                         href="/wishlist"
                         onClick={() => setAccountOpen(false)}
-                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                          isDark
-                            ? "hover:bg-white/10 hover:text-amber-300"
-                            : "text-stone-700 hover:bg-parchment hover:text-lotus"
-                        }`}
+                        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition ${isDark
+                          ? "hover:bg-white/10 hover:text-amber-300"
+                          : "text-stone-700 hover:bg-parchment hover:text-lotus"
+                          }`}
                       >
                         <Heart className="h-4 w-4 opacity-70" />
                         <span>Yêu thích ({wishlistCountVal})</span>
@@ -518,11 +500,10 @@ export function CustomerNavbar({
                 href="/login"
                 onClick={(e) => playWoodTap({ event: e })}
                 onMouseEnter={(e) => playHoverTick({ event: e })}
-                className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${
-                  isDark
-                    ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
-                    : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
-                }`}
+                className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition ${isDark
+                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400 hover:text-amber-300"
+                  : "border border-sand bg-white text-ink hover:border-lotus hover:text-lotus"
+                  }`}
                 aria-label="Đăng nhập"
               >
                 <User className="h-4 w-4" />
@@ -533,11 +514,10 @@ export function CustomerNavbar({
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition lg:hidden ${
-                isDark
-                  ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400"
-                  : "border border-sand bg-white text-ink hover:border-lotus"
-              }`}
+              className={`flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full transition lg:hidden ${isDark
+                ? "border border-white/15 bg-white/5 text-stone-200 hover:border-amber-400"
+                : "border border-sand bg-white text-ink hover:border-lotus"
+                }`}
               aria-label="Mở menu"
             >
               <Menu className="h-5 w-5" />
@@ -554,23 +534,20 @@ export function CustomerNavbar({
             onClick={() => setMobileOpen(false)}
           />
           <aside
-            className={`absolute right-0 top-0 flex h-full w-80 max-w-[85vw] flex-col shadow-2xl ${
-              isDark ? "bg-[#101015] text-stone-200 border-l border-white/10" : "bg-white text-ink"
-            }`}
+            className={`absolute right-0 top-0 flex h-full w-80 max-w-[85vw] flex-col shadow-2xl ${isDark ? "bg-[#101015] text-stone-200 border-l border-white/10" : "bg-white text-ink"
+              }`}
           >
             <div
-              className={`flex h-16 items-center justify-between px-5 border-b ${
-                isDark ? "border-white/10" : "border-sand"
-              }`}
+              className={`flex h-16 items-center justify-between px-5 border-b ${isDark ? "border-white/10" : "border-sand"
+                }`}
             >
               <div className="flex items-center gap-2.5">
                 <Image src="/brand/logo-mark.svg" alt="Logo" width={28} height={28} className="h-7 w-7 shrink-0" />
                 <span
-                  className={`font-display text-xl font-bold ${
-                    isDark
-                      ? "text-transparent bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text"
-                      : "text-lotus"
-                  }`}
+                  className={`font-display text-xl font-bold ${isDark
+                    ? "text-transparent bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text"
+                    : "text-lotus"
+                    }`}
                 >
                   Cổ Phục
                 </span>
@@ -595,15 +572,14 @@ export function CustomerNavbar({
                     key={item.href}
                     href={item.href}
                     onClick={() => setMobileOpen(false)}
-                    className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${
-                      isHighlighted
-                        ? isDark
-                          ? "bg-amber-500/20 text-amber-300 font-semibold border-l-4 border-amber-400"
-                          : "bg-lotus text-white font-semibold"
-                        : isDark
+                    className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${isHighlighted
+                      ? isDark
+                        ? "bg-amber-500/20 text-amber-300 font-semibold border-l-4 border-amber-400"
+                        : "bg-lotus text-white font-semibold"
+                      : isDark
                         ? "text-stone-300 hover:bg-white/5"
                         : "text-stone-700 hover:bg-parchment"
-                    }`}
+                      }`}
                   >
                     <span>{item.label}</span>
                   </Link>
@@ -613,11 +589,10 @@ export function CustomerNavbar({
               <Link
                 href="/wishlist"
                 onClick={() => setMobileOpen(false)}
-                className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${
-                  isDark
-                    ? "border-white/10 bg-white/5 text-stone-200 hover:border-lotus"
-                    : "border-sand bg-mist text-stone-800 hover:border-lotus"
-                }`}
+                className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${isDark
+                  ? "border-white/10 bg-white/5 text-stone-200 hover:border-lotus"
+                  : "border-sand bg-mist text-stone-800 hover:border-lotus"
+                  }`}
               >
                 <span className="flex items-center gap-3">
                   <Heart className="h-4 w-4 text-lotus" />
@@ -631,20 +606,18 @@ export function CustomerNavbar({
               <Link
                 href={cartHref}
                 onClick={() => setMobileOpen(false)}
-                className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${
-                  isDark
-                    ? "border-white/10 bg-white/5 text-stone-200 hover:border-amber-400"
-                    : "border-sand bg-mist text-stone-800 hover:border-lotus"
-                }`}
+                className={`mt-2 flex items-center justify-between rounded-lg px-4 py-3 text-sm font-medium border transition ${isDark
+                  ? "border-white/10 bg-white/5 text-stone-200 hover:border-amber-400"
+                  : "border-sand bg-mist text-stone-800 hover:border-lotus"
+                  }`}
               >
                 <span className="flex items-center gap-3">
                   <ShoppingBag className={`h-4 w-4 ${isDark ? "text-amber-400" : "text-lotus"}`} />
                   <span>Giỏ thuê đồ</span>
                 </span>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-bold text-white ${
-                    isDark ? "bg-rose-600" : "bg-lotus"
-                  }`}
+                  className={`rounded-full px-2 py-0.5 text-xs font-bold text-white ${isDark ? "bg-rose-600" : "bg-lotus"
+                    }`}
                 >
                   {cartCountVal}
                 </span>
@@ -652,16 +625,14 @@ export function CustomerNavbar({
             </nav>
 
             <div
-              className={`mt-auto p-5 border-t ${
-                isDark ? "border-white/10 bg-black/20" : "border-sand bg-mist/50"
-              }`}
+              className={`mt-auto p-5 border-t ${isDark ? "border-white/10 bg-black/20" : "border-sand bg-mist/50"
+                }`}
             >
               {status === "authenticated" && session ? (
                 <div className="space-y-3">
                   <div
-                    className={`flex items-center gap-3 rounded-xl p-3 ${
-                      isDark ? "bg-white/5" : "bg-parchment"
-                    }`}
+                    className={`flex items-center gap-3 rounded-xl p-3 ${isDark ? "bg-white/5" : "bg-parchment"
+                      }`}
                   >
                     <div className="relative shrink-0">
                       <div
@@ -684,11 +655,10 @@ export function CustomerNavbar({
                       <p className="truncate text-xs opacity-70">{session.user.email}</p>
                       {loyaltyTier && loyaltyTier !== "basic" && (
                         <span
-                          className={`inline-block mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                            loyaltyTier === "premium"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}
+                          className={`inline-block mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${loyaltyTier === "premium"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-emerald-100 text-emerald-700"
+                            }`}
                         >
                           {loyaltyTier === "premium" ? "👑 Premium" : "✦ Plus"}
                         </span>
@@ -698,11 +668,10 @@ export function CustomerNavbar({
                   <Link
                     href="/dashboard/customer"
                     onClick={() => setMobileOpen(false)}
-                    className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold uppercase tracking-wider ${
-                      isDark
-                        ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950"
-                        : "bg-lotus text-white"
-                    }`}
+                    className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold uppercase tracking-wider ${isDark
+                      ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950"
+                      : "bg-lotus text-white"
+                      }`}
                   >
                     <LayoutDashboard className="h-4 w-4" />
                     <span>Bảng điều khiển</span>
@@ -720,11 +689,10 @@ export function CustomerNavbar({
                 <Link
                   href="/login"
                   onClick={() => setMobileOpen(false)}
-                  className={`flex w-full items-center justify-center gap-2 rounded-lg py-3 text-xs font-semibold uppercase tracking-wider transition ${
-                    isDark
-                      ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 font-bold"
-                      : "bg-lotus text-white hover:bg-oxblood"
-                  }`}
+                  className={`flex w-full items-center justify-center gap-2 rounded-lg py-3 text-xs font-semibold uppercase tracking-wider transition ${isDark
+                    ? "bg-gradient-to-r from-amber-500 to-rose-600 text-stone-950 font-bold"
+                    : "bg-lotus text-white hover:bg-oxblood"
+                    }`}
                 >
                   <User className="h-4 w-4" />
                   <span>Đăng nhập / Đăng ký</span>
