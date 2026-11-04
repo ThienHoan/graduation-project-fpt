@@ -1043,8 +1043,6 @@ export class BookingsService {
 
     // Format schedule items
     const todaySchedule = scheduleBookings.map((b) => {
-      const isStartInPeriod = b.rentalStartDate >= scheduleStart && b.rentalStartDate < scheduleEnd;
-      const isEndInPeriod = b.rentalEndDate >= scheduleStart && b.rentalEndDate < scheduleEnd;
       const isPickup = b.pickupMethod === "store_pickup";
 
       // Kiểm tra đơn đã từng bàn giao cho khách hay chưa

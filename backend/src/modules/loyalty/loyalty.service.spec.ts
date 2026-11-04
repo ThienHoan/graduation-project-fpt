@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { LoyaltyService, TIER_THRESHOLDS } from "./loyalty.service";
+import { LoyaltyService } from "./loyalty.service";
 
 describe("LoyaltyService", () => {
   let service: LoyaltyService;

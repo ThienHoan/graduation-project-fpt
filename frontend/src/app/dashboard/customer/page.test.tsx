@@ -86,7 +86,7 @@ describe("CustomerDashboardPage", () => {
     render(<CustomerDashboardPage />);
 
     expect(await screen.findByText("Xin chào, Nguyễn Văn A")).toBeInTheDocument();
-    expect(screen.getByText("Không có đơn thuê đang hoạt động")).toBeInTheDocument();
+    expect(screen.getByText("Bạn chưa có đơn thuê nào")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /khám phá bộ sưu tập/i })).toHaveAttribute("href", "/catalog");
   });
 

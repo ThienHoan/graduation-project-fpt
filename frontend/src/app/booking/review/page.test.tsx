@@ -36,6 +36,7 @@ vi.mock("@/lib/api", () => ({
   getAvailableVouchers: vi.fn().mockResolvedValue({ success: true, data: [] }),
   getGarmentAccessories: vi.fn().mockResolvedValue({ success: true, data: [] }),
   getMyAddresses: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  getMyLoyalty: vi.fn().mockResolvedValue({ success: true, data: null }),
   getRentalQuote: vi.fn().mockResolvedValue({
     success: true,
     data: [{ sizeId: "s-1", subtotal: 400000, breakdown: [] }],
