@@ -11,6 +11,7 @@ import { CompleteInspectionDto } from "./dto/complete-inspection.dto";
 import { CompleteLaundryDto } from "./dto/laundry.dto";
 import { CompleteMaintenanceDto } from "./dto/maintenance.dto";
 import { OverridePenaltyDto } from "./dto/override-penalty.dto";
+import { UpdateDamageFeeTableDto } from "./dto/update-damage-fee-table.dto";
 import { InspectionsService } from "./inspections.service";
 
 @Controller("inspections")
@@ -41,6 +42,20 @@ export class InspectionsController {
   @Get("assets/needing-processing")
   findAssetsNeedingProcessing() {
     return this.inspectionsService.findAssetsNeedingProcessing();
+  }
+
+  @Get("damage-fee-table")
+  getDamageFeeTable() {
+    return this.inspectionsService.getDamageFeeTable();
+  }
+
+  @Patch("damage-fee-table")
+  @Roles("manager_owner", "admin")
+  updateDamageFeeTable(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: UpdateDamageFeeTableDto,
+  ) {
+    return this.inspectionsService.updateDamageFeeTable(user.id, body.entries);
   }
 
   @Get("log")

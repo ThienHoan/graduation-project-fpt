@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 
 import { InspectionDetailModal } from "@/components/bookings/inspection-detail-modal";
+import { DamageFeeTableEditor } from "@/components/inspection/damage-fee-table-editor";
 import { useAuth } from "@/components/auth/auth-provider";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
@@ -275,6 +276,7 @@ type Tab =
   | "inventory"
   | "inspection-log"
   | "penalty-review"
+  | "damage-fee-policy"
   | "laundry"
   | "damaged"
   | "finance"
@@ -287,6 +289,7 @@ const VALID_TABS: Tab[] = [
   "inventory",
   "inspection-log",
   "penalty-review",
+  "damage-fee-policy",
   "laundry",
   "damaged",
   "finance",
@@ -320,6 +323,10 @@ const TAB_META: Record<Tab, { title: string; subtitle: string }> = {
   "penalty-review": {
     title: "Duyệt Phạt Hư Hại",
     subtitle: "Phê duyệt biên bản kiểm tra có tiền phạt vượt 30% tiền cọc.",
+  },
+  "damage-fee-policy": {
+    title: "Định Mức Bồi Thường & Tiền Phạt",
+    subtitle: "Cấu hình danh mục lỗi và mức tiền phạt quy định khi kiểm tra trang phục hoàn trả.",
   },
   laundry: {
     title: "Giặt Sấy",
@@ -1526,6 +1533,20 @@ export default function ManagerDashboardPage() {
             setInspectingSessionId(sId ?? null);
           }}
         />
+      ) : tab === "damage-fee-policy" ? (
+        <section className="rounded-2xl border border-sand bg-white p-6 shadow-sm">
+          <header className="mb-6 border-b border-sand pb-4">
+            <h3 className="text-lg font-bold text-ink">Bảng định mức bồi thường & phạt hư hại</h3>
+            <p className="mt-1 text-xs text-stone-500">
+              Quản lý và Chủ cửa hàng trực tiếp điều chỉnh chính sách lỗi và mức tiền phạt. Nhân viên hậu kiểm sẽ tự động nạp bảng này để tính tiền phạt minh bạch cho khách hàng.
+            </p>
+          </header>
+          <DamageFeeTableEditor
+            standalone={true}
+            onSuccessNotice={(msg) => showToast("success", msg)}
+            onErrorNotice={(msg) => showToast("error", msg)}
+          />
+        </section>
       ) : tab === "laundry" ? (
         <LaundryTab
           tickets={laundryTickets}

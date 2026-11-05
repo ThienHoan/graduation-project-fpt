@@ -15,6 +15,7 @@ import {
   DollarSign,
   RefreshCw,
   ShieldCheck,
+  SlidersHorizontal,
   Tag,
   Ticket,
   TrendingUp,
@@ -79,6 +80,7 @@ export const MANAGER_NAV_GROUPS: NavGroupConfig[] = [
       { key: "finance", label: "Đối soát tài chính", icon: DollarSign, href: "/dashboard/manager#finance" },
       { key: "refunds", label: "Duyệt hoàn cọc", icon: RefreshCw, href: "/dashboard/manager#refunds" },
       { key: "penalty-review", label: "Duyệt phạt hư hại", icon: ShieldCheck, href: "/dashboard/manager#penalty-review" },
+      { key: "damage-fee-policy", label: "Định mức bồi thường", icon: SlidersHorizontal, href: "/dashboard/manager#damage-fee-policy" },
     ],
   },
   {
