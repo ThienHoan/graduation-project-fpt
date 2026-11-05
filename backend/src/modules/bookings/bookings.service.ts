@@ -250,8 +250,9 @@ export class BookingsService {
     garmentSizeId: string,
     startDay: Date,
     endDay: Date,
+    options: { excludeBookingId?: string; laundryBufferDays?: number } = {},
   ) {
-    return sizeAvailability(await loadSizeInventory(client, garmentSizeId, startDay, endDay));
+    return sizeAvailability(await loadSizeInventory(client, garmentSizeId, startDay, endDay, options));
   }
 
   async checkAvailability(dto: CheckAvailabilityDto) {
@@ -261,12 +262,14 @@ export class BookingsService {
     if (!size) throw new NotFoundException("Garment size not found.");
 
     const { startDay, endDay } = parseRentalDateRange(dto.startDate, dto.endDate);
+    const bufferDays = await this.laundryBufferDays();
 
     const { capacity, available } = await this.computeSizeAvailability(
       this.prisma,
       dto.garmentSizeId,
       startDay,
       endDay,
+      { laundryBufferDays: bufferDays },
     );
 
     return ok({
@@ -290,9 +293,10 @@ export class BookingsService {
 
     const { startDay, endDay } = parseRentalDateRange(dto.startDate, dto.endDate);
     const needed = dto.quantity ?? 1;
+    const bufferDays = await this.laundryBufferDays();
 
     const { capacity, available } = accessoryAvailability(
-      await loadAccessoryInventory(this.prisma, dto.accessoryId, startDay, endDay),
+      await loadAccessoryInventory(this.prisma, dto.accessoryId, startDay, endDay, { laundryBufferDays: bufferDays }),
     );
 
     return ok({
@@ -323,7 +327,8 @@ export class BookingsService {
       );
     }
 
-    const snapshot = await loadSizeInventory(this.prisma, dto.garmentSizeId, startDay, endDay);
+    const bufferDays = await this.laundryBufferDays();
+    const snapshot = await loadSizeInventory(this.prisma, dto.garmentSizeId, startDay, endDay, { laundryBufferDays: bufferDays });
     const { capacity } = sizeAvailability(snapshot);
     return ok({ garmentSizeId: dto.garmentSizeId, capacity, days: sizeAvailabilityCalendar(snapshot) });
   }
@@ -510,6 +515,7 @@ export class BookingsService {
 
     // Kiểm tra tồn kho + tạo đơn trong cùng một transaction Serializable để tránh
     // oversell khi hai khách đặt đồng thời cho size gần hết hàng.
+    const bufferDays = await this.laundryBufferDays();
     const booking = await this.prisma.runSerializable(async (tx) => {
       for (const [sizeId, requestedQty] of requestedQtyBySize) {
         const activeSize = await tx.garment_sizes.findFirst({
@@ -522,6 +528,7 @@ export class BookingsService {
           sizeId,
           startDay,
           endDay,
+          { laundryBufferDays: bufferDays },
         );
 
         if (committed + requestedQty > capacity) {
@@ -543,7 +550,7 @@ export class BookingsService {
         );
         for (const [accessoryId, requestedQty] of requestedQtyByAccessory) {
           const { capacity, committed } = accessoryAvailability(
-            await loadAccessoryInventory(tx, accessoryId, startDay, endDay),
+            await loadAccessoryInventory(tx, accessoryId, startDay, endDay, { laundryBufferDays: bufferDays }),
           );
           if (committed + requestedQty > capacity) {
             throw new BadRequestException(
@@ -708,6 +715,7 @@ export class BookingsService {
 
   /** Đọc giá trị cài đặt hệ thống (lưu dạng `{ value: X }` hoặc giá trị thô). */
   private async settingValue(key: string): Promise<unknown> {
+    if (!this.prisma?.systemSetting?.findUnique) return undefined;
     const setting = await this.prisma.systemSetting.findUnique({ where: { key } });
     if (!setting) return undefined;
     const raw = setting.value as unknown;
@@ -719,6 +727,10 @@ export class BookingsService {
   private async settingNumber(key: string, fallback: number): Promise<number> {
     const value = Number(await this.settingValue(key));
     return Number.isFinite(value) && value >= 0 ? value : fallback;
+  }
+
+  private async laundryBufferDays(): Promise<number> {
+    return this.settingNumber("laundry_buffer_days", 1);
   }
 
   /**

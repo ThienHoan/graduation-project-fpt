@@ -979,6 +979,9 @@ describe("BookingsService.checkAccessoryAvailability", () => {
           })),
         ),
       },
+      systemSetting: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
     };
     const service = new BookingsService(
       prisma as never,
