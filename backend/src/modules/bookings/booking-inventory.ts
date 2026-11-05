@@ -13,7 +13,9 @@ export const PHYSICAL_HOLD_STATUSES: BookingStatus[] = [
   BookingStatus.renting, BookingStatus.overdue,
 ];
 const UNRETURNED_STATUSES: BookingStatus[] = [BookingStatus.renting, BookingStatus.overdue];
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
+/** Khoá cứng số ngày đệm giặt tối thiểu sau ngày trả đồ (mặc định 1 ngày). */
+export const DEFAULT_LAUNDRY_BUFFER_DAYS = 1;
 
 export function vietnamToday(now = new Date()): Date {
   return new Date(new Date(now.getTime() + 7 * 3_600_000).toISOString().slice(0, 10));
@@ -101,7 +103,7 @@ export async function loadAccessoryInventory(
   options: { now?: Date; laundryBufferDays?: number } = {},
 ): Promise<AccessoryInventorySnapshot> {
   const range = parseRentalDateRange(startDay, endDay);
-  const buffer = options.laundryBufferDays ?? 0;
+  const buffer = options.laundryBufferDays !== undefined ? options.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   const queryStartDay = buffer > 0 ? new Date(+range.startDay - buffer * DAY_MS) : range.startDay;
   const [assets, rows] = await Promise.all([
     client.accessory_assets.findMany({
@@ -122,7 +124,7 @@ export async function loadAccessoryInventory(
       },
     }),
   ]);
-  return { ...range, assets, rows, today: vietnamToday(options.now), laundryBufferDays: options.laundryBufferDays };
+  return { ...range, assets, rows, today: vietnamToday(options.now), laundryBufferDays: buffer };
 }
 
 /** committed là PEAK nhu cầu đồng thời, không phải tổng mọi booking giao nhau. */
@@ -136,10 +138,11 @@ export function accessoryAvailability(snapshot: AccessoryInventorySnapshot) {
     events.set(from, (events.get(from) ?? 0) + 1);
     events.set(to + DAY_MS, (events.get(to + DAY_MS) ?? 0) - 1);
   };
+  const buffer = snapshot.laundryBufferDays ?? 0;
   for (const row of snapshot.rows) {
     const booking = row.booking;
     if (INVENTORY_RELEASED_STATUSES.includes(booking.status)) continue;
-    let to = +booking.rentalEndDate + (snapshot.laundryBufferDays ?? 0) * DAY_MS;
+    let to = +booking.rentalEndDate + buffer * DAY_MS;
     // Đơn quá hạn chưa trả: nhu cầu kéo dài đến hết cửa sổ tra cứu.
     if (isUnreturnedOverdue(booking, snapshot.today)) to = Math.max(to, +snapshot.endDay);
     addSpan(+booking.rentalStartDate, to);
@@ -186,13 +189,14 @@ export async function loadSizeInventory(
       },
     }),
   ]);
+  const buffer = options.laundryBufferDays !== undefined ? options.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   return {
     ...range,
     assets,
     items,
     today: vietnamToday(options.now),
     excludeBookingId: options.excludeBookingId,
-    laundryBufferDays: options.laundryBufferDays,
+    laundryBufferDays: buffer,
   };
 }
 

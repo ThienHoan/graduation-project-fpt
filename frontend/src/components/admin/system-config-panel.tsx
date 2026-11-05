@@ -9,18 +9,23 @@ import {
   updateAdminSetting,
   type AdminIntegrationEntry,
   type AdminSettingEntry,
+  type DamageFeeEntry,
 } from "@/lib/api";
+import {
+  DamageFeeTableEditor,
+  DEFAULT_DAMAGE_FEE_ENTRIES,
+} from "@/components/inspection/damage-fee-table-editor";
 
 type BusinessHours = { open: string; close: string; days: string[] };
-type DraftValue = string | boolean | BusinessHours;
+type DraftValue = string | boolean | BusinessHours | DamageFeeEntry[];
 
 const GROUPS: { id: string; title: string; hint: string; icon: typeof SlidersHorizontal; keys: string[] }[] = [
   {
     id: "rental",
     title: "Quy định thuê & hoàn cọc",
-    hint: "Giới hạn áp dụng khi tạo đơn và xử lý hoàn cọc.",
+    hint: "Giới hạn áp dụng khi tạo đơn, ngày đệm giặt hấp, định mức phạt lỗi và xử lý hoàn cọc.",
     icon: SlidersHorizontal,
-    keys: ["max_rental_days", "deposit_refund_window_h", "late_penalty_per_day"],
+    keys: ["max_rental_days", "laundry_buffer_days", "deposit_refund_window_h", "late_penalty_per_day", "damage_fee_table"],
   },
   {
     id: "store",
@@ -85,6 +90,12 @@ function toDraft(setting: AdminSettingEntry): DraftValue {
       days: Array.isArray(raw.days) ? raw.days : [],
     };
   }
+  if (setting.key === "damage_fee_table") {
+    if (Array.isArray(setting.value)) return setting.value as DamageFeeEntry[];
+    const unwrapped = unwrap(setting.value);
+    if (Array.isArray(unwrapped)) return unwrapped as DamageFeeEntry[];
+    return DEFAULT_DAMAGE_FEE_ENTRIES;
+  }
   const raw = unwrap(setting.value);
   if (typeof raw === "boolean") return raw;
   return raw == null ? "" : String(raw);
@@ -92,6 +103,7 @@ function toDraft(setting: AdminSettingEntry): DraftValue {
 
 function toPayload(setting: AdminSettingEntry, draft: DraftValue): unknown {
   if (setting.key === "business_hours") return draft;
+  if (setting.key === "damage_fee_table") return draft;
   if (typeof draft === "boolean") return { value: draft };
   if (setting.kind === "number") return { value: Number(draft) };
   return { value: String(draft).trim() };
@@ -159,6 +171,19 @@ export function SystemConfigPanel({ onSuccess, onError }: Props) {
         if (typeof draft !== "string" || draft.trim() === "" || !Number.isFinite(num) || num < 0) {
           onError(`"${item.label}" cần là một số không âm.`);
           return;
+        }
+      }
+      if (item.key === "damage_fee_table") {
+        const list = Array.isArray(draft) ? draft : [];
+        if (list.length === 0) {
+          onError("Cần giữ ít nhất một định mức lỗi.");
+          return;
+        }
+        for (const entry of list) {
+          if (!entry.label || !entry.label.trim()) {
+            onError("Mỗi định mức lỗi cần có tên loại lỗi.");
+            return;
+          }
         }
       }
     }
@@ -311,6 +336,18 @@ function SettingField({
       <span className="mb-1.5 mt-0.5 block text-[11px] text-stone-500">{setting.description}</span>
     </>
   );
+
+  if (setting.key === "damage_fee_table") {
+    const list = Array.isArray(draft) ? draft : DEFAULT_DAMAGE_FEE_ENTRIES;
+    return (
+      <div className="md:col-span-2">
+        <DamageFeeTableEditor
+          value={list}
+          onChange={(next) => onChange(next)}
+        />
+      </div>
+    );
+  }
 
   if (setting.key === "business_hours" && draft && typeof draft === "object") {
     const hours = draft as BusinessHours;

@@ -60,7 +60,12 @@ export interface RankedAssetCandidate extends AssetCandidate {
  *  4. Mã tài sản (ổn định, dễ đoán).
  * Hàm chỉ sắp xếp; kiểm tra trùng lịch chính thức vẫn nằm trong transaction gán.
  */
-export function rankAssetCandidates(candidates: AssetCandidate[], startDay: Date): RankedAssetCandidate[] {
+export function rankAssetCandidates(
+  candidates: AssetCandidate[],
+  startDay: Date,
+  options: { minTurnaroundDays?: number } = {},
+): RankedAssetCandidate[] {
+  const minTurnaround = options.minTurnaroundDays ?? MIN_TURNAROUND_DAYS;
   return candidates
     .filter((candidate) => STATUS_RANK[candidate.status] !== undefined)
     .map((candidate) => {
@@ -69,7 +74,7 @@ export function rankAssetCandidates(candidates: AssetCandidate[], startDay: Date
         if (!UNSETTLED_STATUSES.includes(b.status)) return false;
         if (b.rentalEndDate >= startDay) return false;
         const gapDays = Math.round((startDay.getTime() - b.rentalEndDate.getTime()) / DAY_MS);
-        return gapDays < MIN_TURNAROUND_DAYS;
+        return gapDays < minTurnaround;
       });
       return { ...candidate, usageCount, tightTurnaround };
     })

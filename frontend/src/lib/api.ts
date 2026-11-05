@@ -867,6 +867,25 @@ export async function createInspectionSession(payload: {
   });
 }
 
+export interface DamageFeeEntry {
+  label: string;
+  amount?: number | null;
+  pct?: number | null;
+  tiers?: number[] | null;
+  severity: "low" | "medium" | "high" | "severe";
+}
+
+export async function getDamageFeeTable() {
+  return apiRequest<DamageFeeEntry[]>("/inspections/damage-fee-table");
+}
+
+export async function updateDamageFeeTable(entries: DamageFeeEntry[]) {
+  return apiRequest<DamageFeeEntry[]>("/inspections/damage-fee-table", {
+    method: "PATCH",
+    body: JSON.stringify({ entries }),
+  });
+}
+
 export async function addInspectionFinding(
   sessionId: string,
   payload: {

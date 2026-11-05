@@ -1955,10 +1955,12 @@ export class BookingsService {
       if (!asset) throw new NotFoundException("Garment asset not found.");
       this.assertAssetRentable(asset.status);
 
+      const bufferDays = await this.laundryBufferDays();
       await assertAssetScheduleAvailable(tx, {
         assetId: asset.id, bookingId, itemId,
         startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
         garmentId: item.garmentId, garmentSizeId: item.garment_size_id,
+        laundryBufferDays: bufferDays,
       });
 
       await tx.bookingItem.update({
@@ -2052,10 +2054,12 @@ export class BookingsService {
       if (!asset) throw new NotFoundException("Accessory asset not found.");
       this.assertAssetRentable(asset.status);
 
+      const bufferDays = await this.laundryBufferDays();
       await assertAccessoryAssetScheduleAvailable(tx, {
         assetId: asset.id, bookingId, accessoryItemId,
         startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
         accessoryId: accessoryItem.accessoryId,
+        laundryBufferDays: bufferDays,
       });
 
       // Dòng legacy có quantity > 1 (tạo trước khi tách theo đơn vị):
@@ -2152,6 +2156,8 @@ export class BookingsService {
       booking.items.map((item) => item.garmentAssetId).filter((id): id is string => Boolean(id)),
     );
     let missingItems = 0;
+    const bufferDays = await this.laundryBufferDays();
+    const minTurnaroundDays = Math.max(2, bufferDays + 1);
 
     for (const item of booking.items) {
       if (item.garmentAssetId) continue;
@@ -2173,6 +2179,7 @@ export class BookingsService {
           .filter((row) => !usedGarmentAssets.has(row.id))
           .map((row) => ({ id: row.id, code: row.assetCode, status: row.status, bookings: row.bookingItems.map((b) => b.booking) })),
         booking.rentalStartDate,
+        { minTurnaroundDays },
       );
       const chosen = await this.tryCandidates(ranked, (assetId) =>
         this.assignAsset(bookingId, item.id, { garmentAssetId: assetId }, undefined, { auto: true }),
@@ -2212,6 +2219,7 @@ export class BookingsService {
             .filter((asset) => !usedAccessoryAssets.has(asset.id))
             .map((asset) => ({ id: asset.id, code: asset.asset_code, status: asset.status, bookings: asset.booking_accessory_items.map((b) => b.booking) })),
           booking.rentalStartDate,
+          { minTurnaroundDays },
         );
         const chosen = await this.tryCandidates(ranked, (assetId) =>
           this.assignAccessoryAsset(bookingId, row.id, { accessoryAssetId: assetId }, undefined, { auto: true }),
@@ -2713,12 +2721,14 @@ export class BookingsService {
           replacements.some((row) => booking.items.some((item) => item.garmentAssetId === row.garmentAssetId))) {
           throw new BadRequestException("Cần chọn asset thay thế riêng biệt cho tất cả sản phẩm.");
         }
+        const bufferDays = await this.laundryBufferDays();
         for (const row of replacements) {
           const item = booking.items.find((candidate) => candidate.id === row.itemId)!;
           await assertAssetScheduleAvailable(tx, {
             assetId: row.garmentAssetId, bookingId: id, itemId: item.id,
             garmentId: item.garmentId, garmentSizeId: item.garment_size_id ?? undefined,
             startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
+            laundryBufferDays: bufferDays,
           });
         }
       }

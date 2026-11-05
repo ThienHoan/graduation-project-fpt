@@ -90,4 +90,25 @@ describe("rankAssetCandidates", () => {
 
     expect(ranked.map((a) => a.code)).toEqual(["CP-003"]);
   });
+
+  it("respects custom minTurnaroundDays when evaluating tightTurnaround", () => {
+    // START là 2026-10-10. Chiếc CP-001 trả ngày 2026-10-07 (cách 3 ngày).
+    // Với default minTurnaroundDays = 2: gapDays = 3 >= 2 → không bị tight.
+    // Với custom minTurnaroundDays = 4: gapDays = 3 < 4 → bị coi là tight turnaround.
+    const candidates = [
+      asset("CP-001", AssetStatus.available, [
+        { status: BookingStatus.renting, rentalStartDate: day("2026-10-01"), rentalEndDate: day("2026-10-07") },
+      ]),
+      asset("CP-002", AssetStatus.available, []),
+    ];
+
+    const rankedDefault = rankAssetCandidates(candidates, START);
+    expect(rankedDefault[0].tightTurnaround).toBe(false);
+
+    const rankedCustom = rankAssetCandidates(candidates, START, { minTurnaroundDays: 4 });
+    const cp001 = rankedCustom.find((a) => a.code === "CP-001")!;
+    expect(cp001.tightTurnaround).toBe(true);
+    // CP-002 không bị tight nên được xếp trước CP-001
+    expect(rankedCustom[0].code).toBe("CP-002");
+  });
 });
