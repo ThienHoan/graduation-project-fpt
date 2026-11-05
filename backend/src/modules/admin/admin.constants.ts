@@ -158,6 +158,13 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
     kind: "json",
     defaultValue: { value: false },
   },
+  {
+    key: "laundry_buffer_days",
+    label: "Ngày đệm giặt sau trả đồ",
+    description: "Số ngày khoá lịch sau ngày trả để có thời gian giặt hấp trước khi cho thuê tiếp. Mặc định 1.",
+    kind: "number",
+    defaultValue: { value: 1 },
+  },
 ];
 
 export const ADMIN_ROLE_OPTIONS: AppRole[] = ["customer", "staff", "manager_owner", "admin"];
