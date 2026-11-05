@@ -1,9 +1,12 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { ok } from "../../common/api-response";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import type { AuthenticatedUser } from "../auth/auth-user";
+import { BookingAutomationService } from "./booking-automation.service";
+import { BookingExtensionsService } from "./booking-extensions.service";
 import { BookingsService } from "./bookings.service";
 import { AssignAssetDto } from "./dto/assign-asset.dto";
 import { AssignAccessoryAssetDto } from "./dto/assign-accessory-asset.dto";
@@ -20,7 +23,11 @@ import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
 
 @Controller("bookings")
 export class BookingsController {
-  constructor(private readonly bookingsService: BookingsService) {}
+  constructor(
+    private readonly bookingsService: BookingsService,
+    private readonly automation: BookingAutomationService,
+    private readonly extensions: BookingExtensionsService,
+  ) {}
 
   @Post("check-availability")
   checkAvailability(@Body() body: CheckAvailabilityDto) {
@@ -65,6 +72,29 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard)
   cancel(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string) {
     return this.bookingsService.cancel(user.id, id);
+  }
+
+  /** Khách xem báo giá gia hạn N ngày (không giữ lịch). Tạo yêu cầu + thanh toán: POST /payments/extension-link. */
+  @Get(":id/extension-quote")
+  @UseGuards(JwtAuthGuard)
+  quoteExtension(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("days", ParseIntPipe) days: number,
+  ) {
+    return this.extensions.quote(user.id, id, days);
+  }
+
+  @Get(":id/extensions")
+  @UseGuards(JwtAuthGuard)
+  listExtensions(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string) {
+    return this.extensions.listForCustomer(user.id, id);
+  }
+
+  @Patch(":id/extensions/cancel")
+  @UseGuards(JwtAuthGuard)
+  cancelPendingExtension(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string) {
+    return this.extensions.cancelPending(user.id, id);
   }
 
   @Get("staff/overview")
@@ -122,6 +152,14 @@ export class BookingsController {
   @Roles("manager_owner", "admin")
   assignAsset(@CurrentUser() user: AuthenticatedUser, @Param("bookingId", ParseUUIDPipe) bookingId: string, @Param("itemId", ParseUUIDPipe) itemId: string, @Body() dto: AssignAssetDto) {
     return this.bookingsService.assignAsset(bookingId, itemId, dto, user.id);
+  }
+
+  /** Hệ thống tự chọn và gán áo/phụ kiện thật còn thiếu cho đơn này. */
+  @Post(":id/auto-assign")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  autoAssignAssets(@Param("id", ParseUUIDPipe) id: string) {
+    return this.bookingsService.autoAssignAssets(id);
   }
 
   /**
@@ -205,6 +243,31 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("manager_owner", "admin")
   cancelExpiredAwaitingPayments() { return this.bookingsService.cancelExpiredAwaitingPayments(); }
+
+  @Post("run-fulfillment-automation")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  async runFulfillmentAutomation() {
+    const reassign = await this.automation.reassignUnavailableAssets();
+    const assign = await this.bookingsService.autoAssignUpcomingBookings();
+    const prepare = await this.bookingsService.autoPrepareUpcomingBookings();
+    return ok({ reassign: reassign.data, assign: assign.data, prepare: prepare.data });
+  }
+
+  @Post("run-staff-digest")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  runStaffDigest() { return this.automation.sendStaffDailyDigest(); }
+
+  @Post("run-review-invitations")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  runReviewInvitations() { return this.automation.sendReviewInvitations(); }
+
+  @Post("run-pickup-reminders")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  runPickupReminders() { return this.bookingsService.sendPickupReminders(); }
 
   @Post("run-return-reminders")
   @UseGuards(JwtAuthGuard, RolesGuard)

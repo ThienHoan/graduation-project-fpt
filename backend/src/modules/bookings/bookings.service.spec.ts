@@ -103,6 +103,9 @@ function createService(options?: {
     garment_sizes: {
       findMany: vi.fn().mockResolvedValue([size]),
     },
+    // Quy tắc tự duyệt: khách mới (0 đơn hoàn tất) → không tự duyệt.
+    systemSetting: { findUnique: vi.fn().mockResolvedValue(null) },
+    booking: { count: vi.fn().mockResolvedValue(0) },
     $transaction: vi.fn().mockImplementation(async (callback: (client: typeof tx) => Promise<unknown>) => {
       const run = async () => callback(tx);
       if (!options?.serializeTransactions) return run();
@@ -1288,3 +1291,483 @@ describe("BookingsService getStaffOverview", () => {
   });
 });
 
+
+describe("BookingsService payment hold expiry", () => {
+  const NOW = new Date("2026-10-01T05:00:00.000Z");
+  const HOLD_MS = 30 * 60 * 1000;
+  const STORE_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("gives QR bookings a temporary hold deadline at creation", async () => {
+    const { service, tx } = createService();
+
+    await service.create(CUSTOMER_ID, { ...dto("2026-10-10", "2026-10-12"), paymentMethod: "qr_code" });
+
+    const data = tx.booking.create.mock.calls[0][0].data;
+    expect(data.paymentMethod).toBe("qr_code");
+    expect(data.paymentDueAt).toEqual(new Date(NOW.getTime() + HOLD_MS));
+  });
+
+  it("gives delivery bookings (always QR) a temporary hold deadline", async () => {
+    const { service, tx } = createService();
+    const internals = service as unknown as { locations: unknown; prisma: Record<string, unknown> };
+    internals.locations = { estimateShippingFee: vi.fn().mockResolvedValue({ estimatedFee: 30000 }) };
+    internals.prisma.address = { findFirst: vi.fn().mockResolvedValue({ id: "addr-1", customerId: CUSTOMER_ID }) };
+
+    await service.create(CUSTOMER_ID, {
+      ...dto("2026-10-10", "2026-10-12"),
+      pickupMethod: "delivery",
+      paymentMethod: undefined,
+      deliveryAddressId: "addr-1",
+    } as never);
+
+    const data = tx.booking.create.mock.calls[0][0].data;
+    expect(data.paymentMethod).toBe("qr_code");
+    expect(data.paymentDueAt).toEqual(new Date(NOW.getTime() + HOLD_MS));
+  });
+
+  it("does not put a hold deadline on cash bookings waiting for staff", async () => {
+    const { service, tx } = createService();
+
+    await service.create(CUSTOMER_ID, dto("2026-10-10", "2026-10-12"));
+
+    expect(tx.booking.create.mock.calls[0][0].data.paymentDueAt).toBeNull();
+  });
+
+  function createTransitionService(pickupMethod: "store_pickup" | "delivery") {
+    const booking = {
+      ...makeBooking("2026-10-10", "2026-10-12", { status: "pending_confirmation" }),
+      pickupMethod,
+      paymentMethod: "qr_code",
+      paymentDueAt: new Date(NOW.getTime() - 60_000),
+      handoverStatus: null,
+      payments: [],
+      penalties: [],
+    };
+    const tx = {
+      booking: {
+        findUnique: vi.fn()
+          .mockResolvedValueOnce(booking)
+          .mockResolvedValueOnce({ ...booking, deliveryRecords: [], accessoryItems: [] }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+    };
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+      userAccount: { findUnique: vi.fn().mockResolvedValue(null) },
+    };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() } as never,
+    );
+    return { service, tx };
+  }
+
+  it("clears the creation hold when staff confirms a pending booking", async () => {
+    const { service, tx } = createTransitionService("delivery");
+
+    await service.advanceStatus(BOOKING_ID, { status: "confirmed" } as never);
+
+    expect(tx.booking.updateMany.mock.calls[0][0].data).toMatchObject({ status: "confirmed", paymentDueAt: null });
+  });
+
+  it("starts a fresh 2-hour window when a store pickup moves to awaiting payment", async () => {
+    const { service, tx } = createTransitionService("store_pickup");
+
+    await service.advanceStatus(BOOKING_ID, { status: "awaiting_payment" } as never);
+
+    expect(tx.booking.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: "awaiting_payment",
+      paymentDueAt: new Date(NOW.getTime() + STORE_WINDOW_MS),
+    });
+  });
+
+  function createExpiryService(bookings: Array<{ status: string; paymentDueAt: Date | null; paid?: boolean; claimCount?: number }>) {
+    const rows = bookings.map((b, index) => ({
+      ...makeBooking("2026-10-10", "2026-10-12", { status: b.status }),
+      id: `00000000-0000-4000-8000-00000000010${index}`,
+      paymentDueAt: b.paymentDueAt,
+      items: [],
+      payments: b.paid ? [{ id: `pay-${index}`, status: "paid", amount: 150, paymentMethod: "qr_code" }] : [],
+      refunds: [],
+      claimCount: b.claimCount ?? 1,
+    }));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const tx = {
+      booking: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) => byId.get(where.id) ?? null),
+        updateMany: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) => ({ count: byId.get(where.id)?.claimCount ?? 0 })),
+      },
+      bookingItem: { findMany: vi.fn().mockResolvedValue([]) },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+    };
+    const prisma = {
+      booking: { findMany: vi.fn().mockResolvedValue(rows) },
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const realtime = { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() };
+    const service = new BookingsService(
+      prisma as never,
+      notifications as never,
+      {} as never,
+      {} as never,
+      realtime as never,
+    );
+    return { service, prisma, tx, notifications, realtime, rows };
+  }
+
+  it("scans both pending-confirmation and awaiting-payment bookings", async () => {
+    const { service, prisma } = createExpiryService([]);
+
+    await service.cancelExpiredAwaitingPayments();
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where).toEqual({
+      status: { in: ["pending_confirmation", "awaiting_payment"] },
+      paymentDueAt: { lt: NOW },
+    });
+  });
+
+  it("auto-cancels an abandoned QR booking still pending confirmation", async () => {
+    const { service, tx, notifications, realtime, rows } = createExpiryService([
+      { status: "pending_confirmation", paymentDueAt: new Date(NOW.getTime() - 60_000) },
+    ]);
+
+    const result = await service.cancelExpiredAwaitingPayments();
+
+    expect(result.data?.expiredCount).toBe(1);
+    expect(tx.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: rows[0].id, status: "pending_confirmation", paymentDueAt: { lt: NOW } },
+      data: { status: "cancelled", paymentDueAt: null },
+    });
+    expect(tx.bookingStatusHistory.create.mock.calls[0][0].data).toMatchObject({
+      fromStatus: "pending_confirmation",
+      toStatus: "cancelled",
+    });
+    expect(notifications.sendBookingNotification).toHaveBeenCalledWith(expect.objectContaining({ templateKey: "booking.cancelled" }));
+    expect(realtime.bookingChangedForCustomer).toHaveBeenCalledWith(CUSTOMER_ID, expect.objectContaining({ status: "cancelled" }));
+  });
+
+  it("never cancels a booking that already has a paid payment", async () => {
+    const { service, tx } = createExpiryService([
+      { status: "pending_confirmation", paymentDueAt: new Date(NOW.getTime() - 60_000), paid: true },
+    ]);
+
+    const result = await service.cancelExpiredAwaitingPayments();
+
+    expect(result.data?.expiredCount).toBe(0);
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("skips a booking staff changed concurrently and keeps processing the rest", async () => {
+    const { service, rows } = createExpiryService([
+      { status: "pending_confirmation", paymentDueAt: new Date(NOW.getTime() - 60_000), claimCount: 0 },
+      { status: "awaiting_payment", paymentDueAt: new Date(NOW.getTime() - 60_000) },
+    ]);
+
+    const result = await service.cancelExpiredAwaitingPayments();
+
+    expect(result.data?.expiredCount).toBe(1);
+    expect(result.data?.bookings).toEqual([rows[1].id]);
+  });
+});
+
+describe("BookingsService fulfillment automation", () => {
+  const NOW = new Date("2026-10-08T03:00:00.000Z"); // 10h00 giờ VN ngày 08/10
+  const ASSET_A = "00000000-0000-4000-8000-0000000000a1";
+  const ASSET_B = "00000000-0000-4000-8000-0000000000b2";
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function realtimeMock() {
+    return { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() };
+  }
+
+  function createAutoAssignService(options?: { status?: string; rejectFirst?: boolean }) {
+    const booking = {
+      ...makeBooking("2026-10-10", "2026-10-12", { status: options?.status ?? "paid" }),
+      accessoryItems: [],
+    };
+    const prisma = {
+      booking: { findUnique: vi.fn().mockResolvedValue(booking) },
+      garmentAsset: {
+        findMany: vi.fn().mockResolvedValue([
+          // CP-A đã thuê 2 lần, CP-B mới thuê 1 lần → CP-B được ưu tiên.
+          {
+            id: ASSET_A, assetCode: "CP-A", status: "available",
+            bookingItems: [
+              { booking: { status: "completed", rentalStartDate: new Date("2026-08-01"), rentalEndDate: new Date("2026-08-02") } },
+              { booking: { status: "completed", rentalStartDate: new Date("2026-09-01"), rentalEndDate: new Date("2026-09-02") } },
+            ],
+          },
+          {
+            id: ASSET_B, assetCode: "CP-B", status: "available",
+            bookingItems: [
+              { booking: { status: "completed", rentalStartDate: new Date("2026-07-01"), rentalEndDate: new Date("2026-07-02") } },
+            ],
+          },
+        ]),
+      },
+      bookingAccessoryItem: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+      accessory_assets: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const realtime = realtimeMock();
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtime as never);
+    const assignAsset = vi.spyOn(service, "assignAsset").mockImplementation(async (_bookingId, _itemId, dto) => {
+      if (options?.rejectFirst && dto.garmentAssetId === ASSET_B) {
+        const { ConflictException } = await import("@nestjs/common");
+        throw new ConflictException("Asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày.");
+      }
+      return { success: true } as never;
+    });
+    return { service, prisma, notifications, realtime, assignAsset };
+  }
+
+  it("auto-assigns the least-worn matching asset through the normal assignment flow", async () => {
+    const { service, prisma, notifications, assignAsset } = createAutoAssignService();
+
+    const result = await service.autoAssignAssets(BOOKING_ID);
+
+    expect(prisma.garmentAsset.findMany.mock.calls[0][0].where).toMatchObject({ garmentId: GARMENT_ID, garment_size_id: SIZE_ID });
+    expect(assignAsset).toHaveBeenCalledWith(BOOKING_ID, ITEM_ID, { garmentAssetId: ASSET_B }, undefined, { auto: true });
+    expect(result.data).toMatchObject({ assigned: ["CP-B"], missingItems: 0, complete: true });
+    expect(notifications.notifyStaffBooking).toHaveBeenCalledWith(expect.objectContaining({
+      templateKey: "booking.staff.asset_assigned",
+      assetCode: "CP-B (tự động)",
+    }));
+  });
+
+  it("falls back to the next candidate when the best one is rejected by the schedule check", async () => {
+    const { service, assignAsset } = createAutoAssignService({ rejectFirst: true });
+
+    const result = await service.autoAssignAssets(BOOKING_ID);
+
+    expect(assignAsset).toHaveBeenCalledTimes(2);
+    expect(assignAsset.mock.calls[1][2]).toEqual({ garmentAssetId: ASSET_A });
+    expect(result.data?.assigned).toEqual(["CP-A"]);
+  });
+
+  it("refuses to auto-assign a booking that is not confirmed yet", async () => {
+    const { service, assignAsset } = createAutoAssignService({ status: "pending_confirmation" });
+
+    await expect(service.autoAssignAssets(BOOKING_ID)).rejects.toThrow("Không thể tự gán");
+    expect(assignAsset).not.toHaveBeenCalled();
+  });
+
+  it("only scans bookings starting within the auto-assign window", async () => {
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([]) } };
+    const service = new BookingsService(prisma as never, {} as never, {} as never, {} as never, realtimeMock() as never);
+
+    await service.autoAssignUpcomingBookings();
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: ["confirmed", "awaiting_payment", "paid", "preparing"] });
+    expect(where.rentalStartDate).toEqual({ lte: new Date("2026-10-11T00:00:00.000Z") });
+  });
+
+  it("moves fully assigned paid bookings to preparing and keeps waiting ones for the next run", async () => {
+    const READY = "00000000-0000-4000-8000-0000000000c1";
+    const WAITING = "00000000-0000-4000-8000-0000000000c2";
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([{ id: READY }, { id: WAITING }]) } };
+    const service = new BookingsService(prisma as never, {} as never, {} as never, {} as never, realtimeMock() as never);
+    const { ConflictException } = await import("@nestjs/common");
+    const advance = vi.spyOn(service, "advanceStatus").mockImplementation(async (id) => {
+      if (id === WAITING) throw new ConflictException("Asset không còn khả dụng để giữ.");
+      return { success: true } as never;
+    });
+
+    const result = await service.autoPrepareUpcomingBookings();
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ status: "paid", rentalStartDate: { lte: new Date("2026-10-09T00:00:00.000Z") } });
+    expect(advance).toHaveBeenCalledWith(READY, { status: "preparing" }, undefined, expect.objectContaining({ historyNote: expect.stringContaining("Hệ thống tự chuyển") }));
+    expect(result.data).toEqual({ scanned: 2, prepared: [READY], waiting: [WAITING] });
+  });
+
+  it("reminds customers the day before pickup with a note matching the pickup method", async () => {
+    const storeBooking = { ...makeBooking("2026-10-09", "2026-10-11", { status: "paid" }), id: "00000000-0000-4000-8000-0000000000d1" };
+    const deliveryUnpaid = {
+      ...makeBooking("2026-10-09", "2026-10-11", { status: "awaiting_payment" }),
+      id: "00000000-0000-4000-8000-0000000000d2",
+      pickupMethod: "delivery",
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([storeBooking, deliveryUnpaid]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtimeMock() as never);
+
+    const result = await service.sendPickupReminders();
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where.rentalStartDate).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+    expect(result.data?.remindedCount).toBe(2);
+    const [storeCall, deliveryCall] = notifications.sendBookingNotification.mock.calls.map((call) => call[0]);
+    expect(storeCall).toMatchObject({ templateKey: "booking.pickup_reminder", note: "Vui lòng đến cửa hàng để nhận trang phục." });
+    expect(deliveryCall.note).toContain("giao đến địa chỉ");
+    expect(deliveryCall.note).toContain("chưa thanh toán");
+  });
+});
+
+describe("BookingsService.assignAsset auto mode", () => {
+  it("records the system as the assigner and skips the per-item staff notification", async () => {
+    const booking = { ...makeBooking("2026-10-10", "2026-10-12", { status: "paid" }) };
+    const asset = { id: ASSET_ID, assetCode: "CP-001", status: "available", garmentId: GARMENT_ID, garment_size_id: SIZE_ID };
+    const tx = {
+      booking: { findUnique: vi.fn().mockResolvedValue(booking) },
+      garmentAsset: { findUnique: vi.fn().mockResolvedValue(asset) },
+      bookingItem: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn().mockResolvedValue({}) },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+    };
+    const prisma = {
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+      booking: { findUnique: vi.fn().mockResolvedValue({ ...booking, accessoryItems: [], deliveryRecords: [] }) },
+    };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, {} as never);
+
+    await service.assignAsset(BOOKING_ID, ITEM_ID, { garmentAssetId: ASSET_ID }, undefined, { auto: true });
+
+    expect(tx.bookingItem.update).toHaveBeenCalledWith({ where: { id: ITEM_ID }, data: { garmentAssetId: ASSET_ID } });
+    expect(tx.bookingStatusHistory.create.mock.calls[0][0].data).toMatchObject({
+      changedBy: null,
+      note: "Hệ thống tự động gán asset CP-001",
+    });
+    expect(notifications.notifyStaffBooking).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService auto-confirm rules", () => {
+  function createRuleService(options: {
+    settings?: Record<string, unknown>;
+    completedCount?: number;
+    penalisedCount?: number;
+  }) {
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) =>
+          options.settings && where.key in options.settings ? { key: where.key, value: { value: options.settings[where.key] } } : null),
+      },
+      booking: {
+        count: vi.fn().mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+          "penaltyTotal" in where ? options.penalisedCount ?? 0 : options.completedCount ?? 0),
+      },
+    };
+    const service = new BookingsService(prisma as never, {} as never, {} as never, {} as never, {} as never);
+    return { service, prisma };
+  }
+
+  const cashBooking = {
+    customerId: CUSTOMER_ID,
+    status: "pending_confirmation" as never,
+    paymentMethod: "cash",
+    rentalTotal: 500_000,
+    depositTotal: 300_000,
+    shippingFee: 0,
+  };
+
+  it("auto-confirms a returning customer with a clean history", async () => {
+    const { service } = createRuleService({ completedCount: 2 });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toEqual({
+      eligible: true,
+      reason: "trusted_customer",
+      completedCount: 2,
+    });
+  });
+
+  it("sends first-time customers to staff", async () => {
+    const { service } = createRuleService({ completedCount: 0 });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toMatchObject({ eligible: false, reason: "new_customer" });
+  });
+
+  it("sends customers who were ever charged a late or damage penalty to staff", async () => {
+    const { service } = createRuleService({ completedCount: 5, penalisedCount: 1 });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toMatchObject({ eligible: false, reason: "penalty_history" });
+  });
+
+  it("sends orders above the configured limit to staff", async () => {
+    const { service } = createRuleService({ completedCount: 5, settings: { booking_auto_confirm_max_total: 700_000 } });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toMatchObject({ eligible: false, reason: "over_limit" });
+  });
+
+  it("respects the admin switch", async () => {
+    const { service, prisma } = createRuleService({ completedCount: 5, settings: { booking_auto_confirm_enabled: false } });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toMatchObject({ eligible: false, reason: "disabled" });
+    expect(prisma.booking.count).not.toHaveBeenCalled();
+  });
+
+  it("lets admins require more completed bookings", async () => {
+    const { service } = createRuleService({ completedCount: 2, settings: { booking_auto_confirm_min_completed: 3 } });
+
+    await expect(service.evaluateAutoConfirm(cashBooking)).resolves.toMatchObject({ eligible: false, reason: "new_customer" });
+  });
+
+  it("never auto-confirms QR bookings (payment already moves them forward)", async () => {
+    const { service } = createRuleService({ completedCount: 5 });
+
+    await expect(service.evaluateAutoConfirm({ ...cashBooking, paymentMethod: "qr_code" }))
+      .resolves.toMatchObject({ eligible: false, reason: "online_payment" });
+  });
+});
+
+describe("BookingsService.create auto-confirm", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T05:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("confirms a trusted customer's booking immediately and skips the staff approval request", async () => {
+    const { service, prisma } = createService();
+    prisma.booking.count.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      "penaltyTotal" in where ? 0 : 3);
+    const advance = vi.spyOn(service, "advanceStatus").mockResolvedValue({ success: true } as never);
+    const notifications = (service as unknown as { notificationsService: { notifyStaffBooking: ReturnType<typeof vi.fn> } })
+      .notificationsService;
+
+    const result = await service.create(CUSTOMER_ID, dto("2026-10-10", "2026-10-12"));
+
+    expect(advance).toHaveBeenCalledWith(BOOKING_ID, { status: "confirmed" }, undefined, expect.objectContaining({
+      historyNote: expect.stringContaining("Hệ thống tự duyệt"),
+    }));
+    expect(result.data?.status).toBe("confirmed");
+    expect(notifications.notifyStaffBooking).not.toHaveBeenCalled();
+  });
+
+  it("falls back to staff approval when auto-confirm fails", async () => {
+    const { service, prisma } = createService();
+    prisma.booking.count.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      "penaltyTotal" in where ? 0 : 3);
+    const advance = vi.spyOn(service, "advanceStatus").mockRejectedValue(new Error("db hiccup"));
+    const notifications = (service as unknown as { notificationsService: { notifyStaffBooking: ReturnType<typeof vi.fn> } })
+      .notificationsService;
+
+    const result = await service.create(CUSTOMER_ID, dto("2026-10-10", "2026-10-12"));
+
+    expect(advance).toHaveBeenCalledTimes(1);
+    expect(result.data?.status).toBe("pending_confirmation");
+    expect(notifications.notifyStaffBooking).toHaveBeenCalledWith(expect.objectContaining({ templateKey: "booking.staff.created" }));
+  });
+});

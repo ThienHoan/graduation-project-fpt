@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { AppRole, AssetStatus, BookingStatus, InspectionStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -21,7 +21,8 @@ import type { MarkPaidDto } from "./dto/mark-paid.dto";
 import type { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import type { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import type { AuthenticatedUser } from "../auth/auth-user";
-import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday, loadAccessoryInventory, accessoryAvailability } from "./booking-inventory";
+import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday, loadAccessoryInventory, accessoryAvailability, RENTABLE_ASSET_STATUSES } from "./booking-inventory";
+import { AUTO_ASSIGN_LEAD_DAYS, AUTO_ASSIGNABLE_STATUSES, rankAssetCandidates } from "./booking-auto-assign";
 import { assertAccessoryAssetScheduleAvailable, assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
 import { readBookingDeliverySnapshot, serializeAddressSnapshot } from "./booking-delivery";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
@@ -50,6 +51,27 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const VN_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const OVERDUE_FEE_PER_DAY = 10_000;
 const OVERDUE_PENALTY_REASON = "Phí quá hạn trả đồ (10.000đ/ngày)";
+// Đơn thanh toán QR chỉ giữ size trong khoảng này nếu khách chưa trả tiền; quá hạn
+// thì cron tự huỷ để nhả tồn kho. Đơn tiền mặt chờ nhân viên duyệt nên không có hạn này.
+const ONLINE_PAYMENT_HOLD_MS = 30 * 60 * 1000;
+// Đơn nhận tại cửa hàng có 2 giờ để thanh toán sau khi chuyển sang chờ thanh toán.
+const STORE_PICKUP_PAYMENT_WINDOW_MS = 2 * 60 * 60 * 1000;
+// Mặc định cho quy tắc tự duyệt đơn (admin chỉnh trong Cấu hình hệ thống).
+const DEFAULT_AUTO_CONFIRM_MAX_TOTAL = 3_000_000;
+const DEFAULT_AUTO_CONFIRM_MIN_COMPLETED = 1;
+// Đơn còn hiệu lực sắp đến ngày nhận đồ → được nhắc trước 1 ngày.
+const PICKUP_REMINDER_STATUSES: BookingStatus[] = [
+  BookingStatus.confirmed,
+  BookingStatus.awaiting_payment,
+  BookingStatus.paid,
+  BookingStatus.preparing,
+  BookingStatus.ready_for_pickup,
+];
+// Các trạng thái chưa thanh toán mà cron được phép tự huỷ khi paymentDueAt đã qua.
+const PAYMENT_EXPIRABLE_STATUSES: BookingStatus[] = [
+  BookingStatus.pending_confirmation,
+  BookingStatus.awaiting_payment,
+];
 // Trạng thái mà đơn vẫn còn giữ đồ → ngày trễ vẫn có nghĩa và phí vẫn còn chạy.
 // Đã trả / đã hủy / đã hoàn tất thì ngày trễ không còn ý nghĩa nữa.
 const OVERDUE_ELIGIBLE_STATUSES: BookingStatus[] = [BookingStatus.renting, BookingStatus.overdue];
@@ -151,6 +173,8 @@ const STAFF_ALLOWED_TRANSITIONS: Partial<Record<BookingStatus, BookingStatus[]>>
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
@@ -553,6 +577,7 @@ export class BookingsService {
       }
 
       const rentalTotal = Math.max(0, subtotal - discountTotal);
+      const paymentMethod = dto.pickupMethod === "delivery" ? "qr_code" : (dto.paymentMethod ?? "cash");
 
       const created = await tx.booking.create({
         data: {
@@ -580,7 +605,9 @@ export class BookingsService {
           deliveryRecords: dto.pickupMethod === "delivery" && deliveryAddressForRecord
             ? { create: { method: "delivery", addressSnapshot: serializeAddressSnapshot(deliveryAddressForRecord) } }
             : undefined,
-          paymentMethod: dto.pickupMethod === "delivery" ? "qr_code" : (dto.paymentMethod ?? "cash"),
+          paymentMethod,
+          // Đơn QR chỉ giữ chỗ tạm: khách bỏ dở trang thanh toán thì cron tự huỷ để nhả size.
+          paymentDueAt: paymentMethod === "qr_code" ? new Date(Date.now() + ONLINE_PAYMENT_HOLD_MS) : null,
         },
         include: {
           items: {
@@ -647,17 +674,87 @@ export class BookingsService {
       endDate: booking.rentalEndDate.toISOString().slice(0, 10),
     });
 
-    await this.notificationsService.notifyStaffBooking({
-      templateKey: "booking.staff.created",
-      bookingId: booking.id,
-      customerName: await this.resolveCustomerName(booking.customerId),
-      garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
-      startDate: booking.rentalStartDate.toISOString().slice(0, 10),
-      endDate: booking.rentalEndDate.toISOString().slice(0, 10),
-      roles: [AppRole.staff],
-    });
+    // Khách quen, đơn tiền mặt trong hạn mức → hệ thống xác nhận ngay thay nhân viên.
+    // Tự động hoá không được làm hỏng việc tạo đơn: lỗi thì để nhân viên duyệt như cũ.
+    let autoConfirmed = false;
+    try {
+      const decision = await this.evaluateAutoConfirm(booking);
+      if (decision.eligible) {
+        await this.advanceStatus(booking.id, { status: BookingStatus.confirmed }, undefined, {
+          historyNote: `Hệ thống tự duyệt — khách đã hoàn tất ${decision.completedCount} đơn, chưa từng bị phạt trễ hạn/hư hỏng`,
+        });
+        autoConfirmed = true;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Không tự duyệt được đơn ${booking.id}, chuyển nhân viên duyệt: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
 
-    return ok(this.serializeBooking(booking, days));
+    if (!autoConfirmed) {
+      await this.notificationsService.notifyStaffBooking({
+        templateKey: "booking.staff.created",
+        bookingId: booking.id,
+        customerName: await this.resolveCustomerName(booking.customerId),
+        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+        startDate: booking.rentalStartDate.toISOString().slice(0, 10),
+        endDate: booking.rentalEndDate.toISOString().slice(0, 10),
+        roles: [AppRole.staff],
+      });
+    }
+
+    return ok(this.serializeBooking(autoConfirmed ? { ...booking, status: BookingStatus.confirmed } : booking, days));
+  }
+
+  /** Đọc giá trị cài đặt hệ thống (lưu dạng `{ value: X }` hoặc giá trị thô). */
+  private async settingValue(key: string): Promise<unknown> {
+    const setting = await this.prisma.systemSetting.findUnique({ where: { key } });
+    if (!setting) return undefined;
+    const raw = setting.value as unknown;
+    return raw && typeof raw === "object" && !Array.isArray(raw) && "value" in raw
+      ? (raw as { value: unknown }).value
+      : raw;
+  }
+
+  private async settingNumber(key: string, fallback: number): Promise<number> {
+    const value = Number(await this.settingValue(key));
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  }
+
+  /**
+   * Quy tắc tự duyệt đơn (đơn QR không cần — thanh toán xong là tự sang "Đã thanh toán"):
+   *  - Admin đang bật tính năng.
+   *  - Đơn trả tiền mặt, tổng tiền (thuê + cọc + ship) không vượt hạn mức.
+   *  - Khách đã hoàn tất đủ số đơn tối thiểu và chưa từng bị phạt trễ hạn/hư hỏng.
+   */
+  async evaluateAutoConfirm(booking: {
+    customerId: string;
+    status: BookingStatus;
+    paymentMethod: string | null;
+    rentalTotal: Prisma.Decimal | number;
+    depositTotal: Prisma.Decimal | number;
+    shippingFee: Prisma.Decimal | number | null;
+  }): Promise<{ eligible: boolean; reason: string; completedCount?: number }> {
+    if (booking.status !== BookingStatus.pending_confirmation) return { eligible: false, reason: "not_pending" };
+    if (booking.paymentMethod !== "cash") return { eligible: false, reason: "online_payment" };
+    if ((await this.settingValue("booking_auto_confirm_enabled")) === false) return { eligible: false, reason: "disabled" };
+
+    const maxTotal = await this.settingNumber("booking_auto_confirm_max_total", DEFAULT_AUTO_CONFIRM_MAX_TOTAL);
+    const total = Number(booking.rentalTotal) + Number(booking.depositTotal) + Number(booking.shippingFee ?? 0);
+    if (total > maxTotal) return { eligible: false, reason: "over_limit" };
+
+    const minCompleted = await this.settingNumber("booking_auto_confirm_min_completed", DEFAULT_AUTO_CONFIRM_MIN_COMPLETED);
+    const completedCount = await this.prisma.booking.count({
+      where: { customerId: booking.customerId, status: BookingStatus.completed },
+    });
+    if (completedCount < minCompleted) return { eligible: false, reason: "new_customer", completedCount };
+
+    const penalisedCount = await this.prisma.booking.count({
+      where: { customerId: booking.customerId, penaltyTotal: { gt: 0 } },
+    });
+    if (penalisedCount > 0) return { eligible: false, reason: "penalty_history", completedCount };
+
+    return { eligible: true, reason: "trusted_customer", completedCount };
   }
 
   // ── Customer endpoints ─────────────────────────────────────────────────────
@@ -1611,7 +1708,12 @@ export class BookingsService {
     });
   }
 
-  async advanceStatus(id: string, dto: UpdateBookingStatusDto, changedBy?: string) {
+  async advanceStatus(
+    id: string,
+    dto: UpdateBookingStatusDto,
+    changedBy?: string,
+    options?: { historyNote?: string },
+  ) {
     let notificationCustomerId: string | null = null;
     let notificationTargetStatus: BookingStatus | null = null;
     let notifyManagerConfirmed = false;
@@ -1683,14 +1785,20 @@ export class BookingsService {
         await releaseBookingAssets(tx, id);
         await ensureCancellationRefunds(tx, id, changedBy, dto.note);
       }
+      // Nhân viên đã xử lý đơn chờ xác nhận → bỏ hạn giữ chỗ tạm lúc tạo đơn, để
+      // cron không huỷ ngay đơn vừa được duyệt. Đơn nhận tại cửa hàng chuyển sang chờ
+      // thanh toán thì có hạn 2 giờ mới.
+      const paymentDueAtUpdate =
+        targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup"
+          ? { paymentDueAt: new Date(Date.now() + STORE_PICKUP_PAYMENT_WINDOW_MS) }
+          : targetStatus === BookingStatus.paid || booking.status === BookingStatus.pending_confirmation
+            ? { paymentDueAt: null }
+            : {};
       const claimedBooking = await tx.booking.updateMany({
         where: { id, status: booking.status },
         data: {
           status: targetStatus,
-          ...(targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup"
-            ? { paymentDueAt: new Date(Date.now() + 2 * 60 * 60 * 1000) }
-            : {}),
-          ...(targetStatus === BookingStatus.paid ? { paymentDueAt: null } : {}),
+          ...paymentDueAtUpdate,
           ...(dto.note ? { note: dto.note } : {}),
         },
       });
@@ -1722,7 +1830,8 @@ export class BookingsService {
           fromStatus: booking.status,
           toStatus: targetStatus,
           changedBy: changedBy ?? null,
-          note: dto.note ?? (skipAwaitingPayment ? "Đã thanh toán online trước — bỏ qua bước chờ thanh toán" : null),
+          note: dto.note ?? options?.historyNote ??
+            (skipAwaitingPayment ? "Đã thanh toán online trước — bỏ qua bước chờ thanh toán" : null),
         },
       });
 
@@ -1794,7 +1903,13 @@ export class BookingsService {
     return ok(this.serializeBooking(updated));
   }
 
-  async assignAsset(bookingId: string, itemId: string, dto: AssignAssetDto, staffId?: string) {
+  async assignAsset(
+    bookingId: string,
+    itemId: string,
+    dto: AssignAssetDto,
+    staffId?: string,
+    options?: { auto?: boolean },
+  ) {
     const assignableStatuses: BookingStatus[] = [
       BookingStatus.confirmed,
       BookingStatus.awaiting_payment,
@@ -1844,7 +1959,7 @@ export class BookingsService {
           fromStatus: booking.status,
           toStatus: booking.status,
           changedBy: staffId ?? null,
-          note: `Gán asset ${asset.assetCode}`,
+          note: options?.auto ? `Hệ thống tự động gán asset ${asset.assetCode}` : `Gán asset ${asset.assetCode}`,
         },
       });
       assignedAssetCode = asset.assetCode;
@@ -1871,12 +1986,15 @@ export class BookingsService {
     });
     if (!updated) throw new NotFoundException("Booking not found.");
 
-    await this.notificationsService.notifyStaffBooking({
-      templateKey: "booking.staff.asset_assigned",
-      bookingId,
-      garmentName: updated.items.find((i) => i.id === itemId)?.garment_sizes?.garments?.name ?? null,
-      assetCode: assignedAssetCode,
-    });
+    // Tự động gán gửi một thông báo tổng hợp cho cả đơn (xem autoAssignAssets).
+    if (!options?.auto) {
+      await this.notificationsService.notifyStaffBooking({
+        templateKey: "booking.staff.asset_assigned",
+        bookingId,
+        garmentName: updated.items.find((i) => i.id === itemId)?.garment_sizes?.garments?.name ?? null,
+        assetCode: assignedAssetCode,
+      });
+    }
 
     return ok(this.serializeBooking(updated));
   }
@@ -1885,7 +2003,13 @@ export class BookingsService {
    * Gán tài sản phụ kiện cụ thể cho 1 dòng phụ kiện trong booking.
    * Mirror của assignAsset nhưng cho accessory_assets (qua booking_accessory_items).
    */
-  async assignAccessoryAsset(bookingId: string, accessoryItemId: string, dto: AssignAccessoryAssetDto, staffId?: string) {
+  async assignAccessoryAsset(
+    bookingId: string,
+    accessoryItemId: string,
+    dto: AssignAccessoryAssetDto,
+    staffId?: string,
+    options?: { auto?: boolean },
+  ) {
     const assignableStatuses: BookingStatus[] = [
       BookingStatus.confirmed,
       BookingStatus.awaiting_payment,
@@ -1950,7 +2074,7 @@ export class BookingsService {
           fromStatus: booking.status,
           toStatus: booking.status,
           changedBy: staffId ?? null,
-          note: `Gán accessory asset ${asset.asset_code}`,
+          note: options?.auto ? `Hệ thống tự động gán accessory asset ${asset.asset_code}` : `Gán accessory asset ${asset.asset_code}`,
         },
       });
       assignedAssetCode = asset.asset_code;
@@ -1977,14 +2101,228 @@ export class BookingsService {
     });
     if (!updated) throw new NotFoundException("Booking not found.");
 
-    await this.notificationsService.notifyStaffBooking({
-      templateKey: "booking.staff.asset_assigned",
-      bookingId,
-      garmentName: null,
-      assetCode: assignedAssetCode,
-    });
+    if (!options?.auto) {
+      await this.notificationsService.notifyStaffBooking({
+        templateKey: "booking.staff.asset_assigned",
+        bookingId,
+        garmentName: null,
+        assetCode: assignedAssetCode,
+      });
+    }
 
     return ok(this.serializeBooking(updated));
+  }
+
+  // ── Tự động hoá vận hành: gán áo thật & chuyển sang chuẩn bị ──────────────
+
+  /**
+   * Tự gán áo/phụ kiện thật còn thiếu cho một đơn. Mỗi món thử lần lượt các
+   * ứng viên đã xếp hạng (rankAssetCandidates) qua đúng luồng gán tay
+   * (assignAsset/assignAccessoryAsset), nên mọi kiểm tra trùng lịch, đúng size,
+   * đúng mẫu vẫn chạy trong transaction Serializable. Món nào không còn ứng viên
+   * hợp lệ thì để lại cho manager xử lý.
+   */
+  async autoAssignAssets(bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        items: { include: { garment_sizes: { include: { garments: true } } } },
+        accessoryItems: true,
+      },
+    });
+    if (!booking) throw new NotFoundException("Booking not found.");
+    if (!AUTO_ASSIGNABLE_STATUSES.includes(booking.status)) {
+      throw new BadRequestException(`Không thể tự gán khi booking đang ở trạng thái '${booking.status}'.`);
+    }
+
+    const assignedCodes: string[] = [];
+    const usedGarmentAssets = new Set(
+      booking.items.map((item) => item.garmentAssetId).filter((id): id is string => Boolean(id)),
+    );
+    let missingItems = 0;
+
+    for (const item of booking.items) {
+      if (item.garmentAssetId) continue;
+      if (!item.garment_size_id) {
+        missingItems += 1;
+        continue;
+      }
+      const rows = await this.prisma.garmentAsset.findMany({
+        where: { garmentId: item.garmentId, garment_size_id: item.garment_size_id, status: { in: RENTABLE_ASSET_STATUSES } },
+        select: {
+          id: true,
+          assetCode: true,
+          status: true,
+          bookingItems: { select: { booking: { select: { status: true, rentalStartDate: true, rentalEndDate: true } } } },
+        },
+      });
+      const ranked = rankAssetCandidates(
+        rows
+          .filter((row) => !usedGarmentAssets.has(row.id))
+          .map((row) => ({ id: row.id, code: row.assetCode, status: row.status, bookings: row.bookingItems.map((b) => b.booking) })),
+        booking.rentalStartDate,
+      );
+      const chosen = await this.tryCandidates(ranked, (assetId) =>
+        this.assignAsset(bookingId, item.id, { garmentAssetId: assetId }, undefined, { auto: true }),
+      );
+      if (chosen) {
+        usedGarmentAssets.add(chosen.id);
+        assignedCodes.push(chosen.code);
+      } else {
+        missingItems += 1;
+      }
+    }
+
+    const usedAccessoryAssets = new Set(
+      booking.accessoryItems.map((row) => row.accessoryAssetId).filter((id): id is string => Boolean(id)),
+    );
+    // Dòng phụ kiện legacy có quantity > 1 được tách khi gán → quét lại vài lượt.
+    const skippedAccessoryRows = new Set<string>();
+    for (let pass = 0; pass < 5; pass += 1) {
+      const pending = await this.prisma.bookingAccessoryItem.findMany({
+        where: { bookingId, accessoryAssetId: null },
+        select: { id: true, accessoryId: true },
+      });
+      const todo = pending.filter((row) => !skippedAccessoryRows.has(row.id));
+      if (todo.length === 0) break;
+      for (const row of todo) {
+        const rows = await this.prisma.accessory_assets.findMany({
+          where: { accessory_id: row.accessoryId, status: { in: RENTABLE_ASSET_STATUSES } },
+          select: {
+            id: true,
+            asset_code: true,
+            status: true,
+            booking_accessory_items: { select: { booking: { select: { status: true, rentalStartDate: true, rentalEndDate: true } } } },
+          },
+        });
+        const ranked = rankAssetCandidates(
+          rows
+            .filter((asset) => !usedAccessoryAssets.has(asset.id))
+            .map((asset) => ({ id: asset.id, code: asset.asset_code, status: asset.status, bookings: asset.booking_accessory_items.map((b) => b.booking) })),
+          booking.rentalStartDate,
+        );
+        const chosen = await this.tryCandidates(ranked, (assetId) =>
+          this.assignAccessoryAsset(bookingId, row.id, { accessoryAssetId: assetId }, undefined, { auto: true }),
+        );
+        if (chosen) {
+          usedAccessoryAssets.add(chosen.id);
+          assignedCodes.push(chosen.code);
+        } else {
+          skippedAccessoryRows.add(row.id);
+        }
+      }
+    }
+    const missingAccessories = await this.prisma.bookingAccessoryItem.count({
+      where: { bookingId, accessoryAssetId: null },
+    });
+
+    if (assignedCodes.length > 0) {
+      await this.notificationsService.notifyStaffBooking({
+        templateKey: "booking.staff.asset_assigned",
+        bookingId,
+        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+        assetCode: `${assignedCodes.join(", ")} (tự động)`,
+        roles: [AppRole.manager_owner],
+      });
+      this.realtime.bookingChanged({ id: bookingId, bookingId, status: booking.status });
+      this.realtime.assetChanged({ bookingId });
+    }
+
+    return ok({
+      bookingId,
+      assigned: assignedCodes,
+      missingItems,
+      missingAccessories,
+      complete: missingItems === 0 && missingAccessories === 0,
+    });
+  }
+
+  /** Thử gán từng ứng viên theo thứ tự; bỏ qua ứng viên bị luồng gán từ chối. */
+  private async tryCandidates<T extends { id: string; code: string }>(
+    candidates: T[],
+    assign: (assetId: string) => Promise<unknown>,
+  ): Promise<T | null> {
+    for (const candidate of candidates) {
+      try {
+        await assign(candidate.id);
+        return candidate;
+      } catch (error) {
+        if (error instanceof ConflictException || error instanceof BadRequestException || error instanceof NotFoundException) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    return null;
+  }
+
+  /** Cron: tự gán áo cho các đơn sắp đến ngày thuê (trong AUTO_ASSIGN_LEAD_DAYS ngày). */
+  async autoAssignUpcomingBookings() {
+    const horizon = new Date(new Date(this.vnTodayStr()).getTime() + AUTO_ASSIGN_LEAD_DAYS * MS_PER_DAY);
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        status: { in: AUTO_ASSIGNABLE_STATUSES },
+        rentalStartDate: { lte: horizon },
+        OR: [
+          { items: { some: { garmentAssetId: null } } },
+          { accessoryItems: { some: { accessoryAssetId: null } } },
+        ],
+      },
+      select: { id: true },
+      orderBy: { rentalStartDate: "asc" },
+    });
+
+    let assignedAssets = 0;
+    const incomplete: string[] = [];
+    for (const { id } of bookings) {
+      try {
+        const result = await this.autoAssignAssets(id);
+        assignedAssets += result.data?.assigned.length ?? 0;
+        if (!result.data?.complete) incomplete.push(id);
+      } catch (error) {
+        // Đơn vừa đổi trạng thái/bị huỷ giữa chừng → bỏ qua, lượt sau quét lại.
+        if (error instanceof BadRequestException || error instanceof NotFoundException) continue;
+        throw error;
+      }
+    }
+    return ok({ scanned: bookings.length, assignedAssets, incompleteBookings: incomplete });
+  }
+
+  /**
+   * Cron: đơn đã thanh toán, đủ áo/phụ kiện và còn ≤ 1 ngày tới ngày thuê thì tự
+   * chuyển sang "Đang chuẩn bị" (giữ áo trong kho + báo khách). Đơn có áo chưa về
+   * kho (đang thuê/giặt) sẽ bị từ chối an toàn và được thử lại ở lượt sau.
+   */
+  async autoPrepareUpcomingBookings() {
+    const tomorrow = new Date(new Date(this.vnTodayStr()).getTime() + MS_PER_DAY);
+    const bookings = await this.prisma.booking.findMany({
+      where: {
+        status: BookingStatus.paid,
+        rentalStartDate: { lte: tomorrow },
+        items: { some: {}, every: { garmentAssetId: { not: null } } },
+        accessoryItems: { every: { accessoryAssetId: { not: null } } },
+      },
+      select: { id: true },
+      orderBy: { rentalStartDate: "asc" },
+    });
+
+    const prepared: string[] = [];
+    const waiting: string[] = [];
+    for (const { id } of bookings) {
+      try {
+        await this.advanceStatus(id, { status: BookingStatus.preparing }, undefined, {
+          historyNote: "Hệ thống tự chuyển sang Đang chuẩn bị — đơn đã thanh toán, đủ đồ và sắp đến ngày thuê",
+        });
+        prepared.push(id);
+      } catch (error) {
+        if (error instanceof ConflictException || error instanceof BadRequestException || error instanceof NotFoundException) {
+          waiting.push(id);
+          continue;
+        }
+        throw error;
+      }
+    }
+    return ok({ scanned: bookings.length, prepared, waiting });
   }
 
   /** Include đầy đủ để serialize booking kèm phụ kiện sau các thao tác accessory. */
@@ -2524,37 +2862,46 @@ export class BookingsService {
     return ok(this.serializeBooking(updated!));
   }
 
+  // Tự huỷ đơn chưa thanh toán đã quá paymentDueAt: đơn QR chờ xác nhận mà khách
+  // bỏ dở thanh toán, và đơn chờ thanh toán quá hạn. Chạy bởi cron mỗi 5 phút.
   async cancelExpiredAwaitingPayments() {
     const now = new Date();
     const expiredBookings = await this.prisma.booking.findMany({
-      where: { status: BookingStatus.awaiting_payment, paymentDueAt: { lt: now } },
+      where: { status: { in: PAYMENT_EXPIRABLE_STATUSES }, paymentDueAt: { lt: now } },
       include: { items: true },
     });
     const results: { bookingId: string; released: number }[] = [];
     for (const booking of expiredBookings) {
-      const cancelled = await this.prisma.runSerializable(async (tx) => {
-        const current = await tx.booking.findUnique({
-          where: { id: booking.id },
-          include: { items: true, payments: true },
-        });
-        if (!current || current.status !== BookingStatus.awaiting_payment ||
-          !current.paymentDueAt || current.paymentDueAt >= now ||
-          current.payments.some((payment) => payment.status === PaymentStatus.paid)) return false;
-        await releaseBookingAssets(tx, booking.id);
-        // Ghi nhận yêu cầu hoàn tiền nếu đơn đã thu tiền trước khi hủy tự động.
-        await ensureCancellationRefunds(tx, booking.id, undefined, "Tự động hủy đơn — quá hạn thanh toán");
-        const claimed = await tx.booking.updateMany({
-          where: { id: booking.id, status: BookingStatus.awaiting_payment, paymentDueAt: { lt: now } },
-          data: { status: BookingStatus.cancelled, paymentDueAt: null },
-        });
-        if (claimed.count !== 1) throw new ConflictException("Booking vừa được xử lý bởi yêu cầu khác.");
+      let cancelled = false;
+      try {
+        cancelled = await this.prisma.runSerializable(async (tx) => {
+          const current = await tx.booking.findUnique({
+            where: { id: booking.id },
+            include: { items: true, payments: true },
+          });
+          if (!current || !PAYMENT_EXPIRABLE_STATUSES.includes(current.status) ||
+            !current.paymentDueAt || current.paymentDueAt >= now ||
+            current.payments.some((payment) => payment.status === PaymentStatus.paid)) return false;
+          await releaseBookingAssets(tx, booking.id);
+          // Ghi nhận yêu cầu hoàn tiền nếu đơn đã thu tiền trước khi hủy tự động.
+          await ensureCancellationRefunds(tx, booking.id, undefined, "Tự động hủy đơn — quá hạn thanh toán");
+          const claimed = await tx.booking.updateMany({
+            where: { id: booking.id, status: current.status, paymentDueAt: { lt: now } },
+            data: { status: BookingStatus.cancelled, paymentDueAt: null },
+          });
+          if (claimed.count !== 1) throw new ConflictException("Booking vừa được xử lý bởi yêu cầu khác.");
 
-        await tx.bookingStatusHistory.create({
-          data: { bookingId: booking.id, fromStatus: BookingStatus.awaiting_payment, toStatus: BookingStatus.cancelled, note: "Tự động hủy — quá hạn thanh toán" },
+          await tx.bookingStatusHistory.create({
+            data: { bookingId: booking.id, fromStatus: current.status, toStatus: BookingStatus.cancelled, note: "Tự động hủy — quá hạn thanh toán" },
+          });
+          await this.vouchers?.releaseForBooking(tx, booking.id);
+          return true;
         });
-        await this.vouchers?.releaseForBooking(tx, booking.id);
-        return true;
-      });
+      } catch (error) {
+        // Nhân viên/khách vừa xử lý đơn này cùng lúc → bỏ qua, xử lý tiếp các đơn khác.
+        if (error instanceof ConflictException) continue;
+        throw error;
+      }
       if (!cancelled) continue;
 
       await this.notificationsService.sendBookingNotification({
@@ -2569,6 +2916,11 @@ export class BookingsService {
       results.push({ bookingId: booking.id, released: booking.items.filter((i) => i.garmentAssetId).length });
 
       this.realtime.bookingChanged({
+        id: booking.id,
+        bookingId: booking.id,
+        status: BookingStatus.cancelled,
+      });
+      this.realtime.bookingChangedForCustomer(booking.customerId, {
         id: booking.id,
         bookingId: booking.id,
         status: BookingStatus.cancelled,
@@ -2613,6 +2965,36 @@ export class BookingsService {
 
   async applyOverdueFee(bookingId: string) {
     return this.prisma.runSerializable((tx) => this.applyOverdueFeeTx(tx, bookingId));
+  }
+
+  // Chạy 09h00 mỗi ngày: nhắc khách có đơn bắt đầu thuê vào ngày mai.
+  async sendPickupReminders() {
+    const tomorrow = new Date(new Date(this.vnTodayStr()).getTime() + MS_PER_DAY);
+    const bookings = await this.prisma.booking.findMany({
+      where: { status: { in: PICKUP_REMINDER_STATUSES }, rentalStartDate: tomorrow },
+      include: { items: { include: { garment_sizes: { include: { garments: true } } } } },
+    });
+
+    for (const booking of bookings) {
+      const unpaid = booking.status === BookingStatus.confirmed || booking.status === BookingStatus.awaiting_payment;
+      const note = [
+        booking.pickupMethod === "delivery"
+          ? "Trang phục sẽ được giao đến địa chỉ của bạn, vui lòng để ý điện thoại."
+          : "Vui lòng đến cửa hàng để nhận trang phục.",
+        unpaid ? "Đơn chưa thanh toán — vui lòng thanh toán khi nhận đồ." : null,
+      ].filter(Boolean).join(" ");
+      await this.notificationsService.sendBookingNotification({
+        userId: booking.customerId,
+        templateKey: "booking.pickup_reminder",
+        bookingId: booking.id,
+        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+        startDate: booking.rentalStartDate.toISOString().slice(0, 10),
+        endDate: booking.rentalEndDate.toISOString().slice(0, 10),
+        note,
+      });
+    }
+
+    return ok({ remindedCount: bookings.length, bookings: bookings.map((b) => b.id) });
   }
 
   // Chạy lúc 12h00 ngày cuối của kỳ thuê: nhắc khách trả đồ trước 00h00 hôm sau.

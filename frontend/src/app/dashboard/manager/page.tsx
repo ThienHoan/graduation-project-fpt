@@ -55,6 +55,7 @@ import {
   getStaffCompletedRefundBookings,
   getAvailableAssets,
   assignAssetToBookingItem,
+  autoAssignBookingAssets,
   getAccessoryAssets,
   assignAccessoryAssetToBookingItem,
   getPendingManagerRefunds,
@@ -428,6 +429,7 @@ export default function ManagerDashboardPage() {
   // Dòng nào đang gán (theo itemKey) — để chỉ dòng được nhấn mới hiện "...",
   // các dòng khác trong cùng đơn không bị ảnh hưởng.
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
+  const [autoAssigningId, setAutoAssigningId] = useState<string | null>(null);
   // Lỗi gán theo từng dòng (vd. asset đã bị gán trùng) — hiện ngay dưới dòng đó.
   const [assignError, setAssignError] = useState<Record<string, string>>({});
 
@@ -962,6 +964,66 @@ export default function ManagerDashboardPage() {
     }
   }
 
+  // ── Tự gán tài sản (hệ thống chọn chiếc ít hao mòn, không nối đuôi sát lịch) ──
+  async function refreshAfterAutoAssign() {
+    await Promise.all([
+      getBookingsNeedingAssets().then((res) => {
+        if (res.success && res.data) setBookingsNeedingAssets(res.data);
+      }),
+      getStaffAllBookings().then((res) => {
+        if (res.success && res.data) setBookings(res.data);
+      }),
+      refreshAllAssets(),
+    ]);
+  }
+
+  async function handleAutoAssign(bookingId: string) {
+    const bookingCode = bookingId.slice(0, 8).toUpperCase();
+    setAutoAssigningId(bookingId);
+    setErrorMsg(null);
+    const res = await autoAssignBookingAssets(bookingId);
+    if (!res.success || !res.data) {
+      setAutoAssigningId(null);
+      showToast("error", res.message ?? `Không thể tự gán cho đơn #${bookingCode}.`);
+      return;
+    }
+    await refreshAfterAutoAssign();
+    setAutoAssigningId(null);
+    const { assigned, missingItems, missingAccessories } = res.data;
+    const missing = missingItems + missingAccessories;
+    if (assigned.length === 0) {
+      showToast("error", `Đơn #${bookingCode}: không còn tài sản phù hợp để tự gán, vui lòng chọn tay.`);
+    } else if (missing > 0) {
+      showToast("success", `Đơn #${bookingCode}: đã tự gán ${assigned.join(", ")}. Còn ${missing} món cần chọn tay.`);
+    } else {
+      showToast("success", `Đơn #${bookingCode}: đã tự gán ${assigned.join(", ")}.`);
+    }
+  }
+
+  async function handleAutoAssignAll(bookingIds: string[]) {
+    if (bookingIds.length === 0) return;
+    setAutoAssigningId("all");
+    setErrorMsg(null);
+    let assignedCount = 0;
+    let incomplete = 0;
+    let failed = 0;
+    for (const bookingId of bookingIds) {
+      const res = await autoAssignBookingAssets(bookingId);
+      if (!res.success || !res.data) {
+        failed += 1;
+        continue;
+      }
+      assignedCount += res.data.assigned.length;
+      if (!res.data.complete) incomplete += 1;
+    }
+    await refreshAfterAutoAssign();
+    setAutoAssigningId(null);
+    const parts = [`Đã tự gán ${assignedCount} tài sản cho ${bookingIds.length} đơn`];
+    if (incomplete > 0) parts.push(`${incomplete} đơn còn thiếu cần chọn tay`);
+    if (failed > 0) parts.push(`${failed} đơn không tự gán được`);
+    showToast(assignedCount > 0 ? "success" : "error", `${parts.join(" · ")}.`);
+  }
+
   function closeAssetPicker(itemKey: string) {
     clearAssignError(itemKey);
     setAssetAssignState((prev) => {
@@ -1395,6 +1457,9 @@ export default function ManagerDashboardPage() {
           }}
           onOpenAccessoryPicker={openAccessoryPicker}
           onAssignAccessory={handleAssignAccessoryAsset}
+          autoAssigningId={autoAssigningId}
+          onAutoAssign={handleAutoAssign}
+          onAutoAssignAll={handleAutoAssignAll}
         />
       ) : tab === "inventory" ? (
         <InventoryTab
@@ -1809,6 +1874,9 @@ function AssetsAssignTab({
   onSelectChange,
   onOpenAccessoryPicker,
   onAssignAccessory,
+  autoAssigningId,
+  onAutoAssign,
+  onAutoAssignAll,
 }: {
   bookingsNeedingAssets: StaffBookingResponse[];
   assetAssignState: Record<string, AssignPickerState>;
@@ -1836,6 +1904,10 @@ function AssetsAssignTab({
     accessoryItemId: string,
     itemKey: string,
   ) => void;
+  /** Id đơn đang được hệ thống tự gán, hoặc "all" khi tự gán hàng loạt. */
+  autoAssigningId: string | null;
+  onAutoAssign: (bookingId: string) => void;
+  onAutoAssignAll: (bookingIds: string[]) => void;
 }) {
   // Sắp xếp đơn mới nhất lên đầu tiên theo createdAt
   const sortedBookings = useMemo(() => {
@@ -1897,6 +1969,16 @@ function AssetsAssignTab({
               <span className="font-semibold text-ink text-sm">
                 {filteredBookings.length} đơn cần gán tài sản
               </span>
+              <button
+                type="button"
+                onClick={() => onAutoAssignAll(filteredBookings.map((b) => b.id))}
+                disabled={autoAssigningId !== null || filteredBookings.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-full bg-lotus px-3 py-1 text-xs font-bold text-white shadow-2xs transition hover:bg-oxblood disabled:cursor-not-allowed disabled:opacity-60"
+                title="Hệ thống tự chọn chiếc ít hao mòn nhất, không nối đuôi sát lịch thuê khác"
+              >
+                <Sparkles className={`h-3.5 w-3.5 ${autoAssigningId === "all" ? "animate-spin" : ""}`} />
+                {autoAssigningId === "all" ? "Đang tự gán..." : "Tự gán tất cả"}
+              </button>
               {newOrdersCount > 0 && (
                 <button
                   type="button"
@@ -2049,16 +2131,27 @@ function AssetsAssignTab({
                         </div>
                       </div>
                       <div className="space-y-3 px-6 py-4">
-                        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
-                          <AlertTriangle className="h-4 w-4 text-amber-600" />
-                          {totalUnassigned} món chưa gán tài sản
-                          {unassignedAccessories.length > 0 && (
-                            <span className="normal-case tracking-normal">
-                              ({unassignedItems.length} trang phục ·{" "}
-                              {unassignedAccessories.length} phụ kiện)
-                            </span>
-                          )}
-                        </p>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                            <AlertTriangle className="h-4 w-4 text-amber-600" />
+                            {totalUnassigned} món chưa gán tài sản
+                            {unassignedAccessories.length > 0 && (
+                              <span className="normal-case tracking-normal">
+                                ({unassignedItems.length} trang phục ·{" "}
+                                {unassignedAccessories.length} phụ kiện)
+                              </span>
+                            )}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => onAutoAssign(booking.id)}
+                            disabled={autoAssigningId !== null}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-lotus/40 bg-white px-3 py-1.5 text-xs font-semibold text-lotus transition hover:bg-[#fff0ee] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Sparkles className={`h-3.5 w-3.5 ${autoAssigningId === booking.id ? "animate-spin" : ""}`} />
+                            {autoAssigningId === booking.id ? "Đang tự gán..." : "Tự gán"}
+                          </button>
+                        </div>
                         {unassignedItems.map((item) => {
                           const itemKey = `${booking.id}-${item.id}`;
                           const state = assetAssignState[itemKey];

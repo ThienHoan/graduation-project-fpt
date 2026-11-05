@@ -97,6 +97,69 @@ const DEFAULT_TEMPLATES: NotificationTemplateMap = {
     channels: ["inApp", "email"],
     enabled: true,
   },
+  "booking.pickup_reminder": {
+    subject: "Ngày mai là ngày nhận trang phục",
+    title: "Nhắc lịch nhận đồ",
+    body: "Đơn #{{bookingCode}} ({{garmentName}}) bắt đầu thuê vào ngày mai {{startDate}}. {{note}}",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.return_reminder": {
+    subject: "Hôm nay là hạn trả trang phục",
+    title: "Nhắc trả đồ",
+    body: "Đơn #{{bookingCode}} ({{garmentName}}) hết hạn thuê hôm nay {{endDate}}. Vui lòng trả đồ trước 00h00 để tránh phí quá hạn 10.000đ/ngày.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.review_invite": {
+    subject: "Bạn thấy bộ trang phục thế nào?",
+    title: "Mời đánh giá đơn thuê",
+    body: "Cảm ơn bạn đã thuê {{garmentName}} (đơn #{{bookingCode}}). Dành 1 phút đánh giá để cửa hàng phục vụ bạn tốt hơn nhé!",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.staff.asset_unavailable": {
+    subject: "Cần đổi trang phục cho đơn thuê",
+    title: "Không còn áo thay thế",
+    body: "Đơn #{{bookingCode}} ({{garmentName}}) ngày {{startDate}}: {{assetCode}} không cho thuê được và không còn chiếc cùng size thay thế. Vui lòng liên hệ khách để đổi mẫu. {{note}}",
+    channels: ["inApp"],
+    enabled: true,
+  },
+  "booking.asset_issue": {
+    subject: "Trang phục trong đơn thuê của bạn gặp sự cố",
+    title: "Cần đổi trang phục",
+    body: "Rất tiếc, {{garmentName}} trong đơn #{{bookingCode}} (nhận ngày {{startDate}}) vừa gặp sự cố và không còn chiếc cùng size thay thế. Cửa hàng sẽ liên hệ để đổi sang mẫu khác hoặc hoàn tiền cho bạn. {{note}}",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.extension_applied": {
+    subject: "Gia hạn thuê thành công",
+    title: "Đã gia hạn đơn thuê",
+    body: "Đơn #{{bookingCode}} đã được gia hạn, ngày trả mới là {{endDate}}. Phí gia hạn {{amount}}đ đã được thanh toán.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.extension_expired": {
+    subject: "Yêu cầu gia hạn đã hết hạn",
+    title: "Gia hạn chưa thành công",
+    body: "Yêu cầu gia hạn đơn #{{bookingCode}} đã hết thời gian giữ lịch vì chưa thanh toán. Ngày trả vẫn là {{endDate}}.",
+    channels: ["inApp"],
+    enabled: true,
+  },
+  "booking.staff.extension_refund": {
+    subject: "Cần hoàn phí gia hạn thủ công",
+    title: "Hoàn phí gia hạn",
+    body: "Đơn #{{bookingCode}}: khách đã trả {{amount}}đ phí gia hạn nhưng không gia hạn được ({{note}}). Vui lòng liên hệ khách và hoàn tiền thủ công.",
+    channels: ["inApp"],
+    enabled: true,
+  },
+  "staff.daily_digest": {
+    subject: "Bản tin vận hành {{date}}",
+    title: "Việc cần xử lý hôm nay",
+    body: "{{missingAssets}} đơn sắp thuê chưa đủ áo · {{notReady}} đơn nhận hôm nay chưa sẵn sàng · {{pendingConfirm}} đơn tiền mặt chờ duyệt · {{overdue}} đơn quá hạn chưa trả.",
+    channels: ["inApp"],
+    enabled: true,
+  },
   "booking.overdue": {
     subject: "Đơn thuê đã quá hạn",
     title: "Đơn thuê quá hạn {{overdueDays}} ngày",
@@ -400,7 +463,7 @@ export class NotificationsService {
 
   async sendBookingNotification(input: {
     userId: string;
-    templateKey: "booking.created" | "booking.status_changed" | "booking.payment_received" | "booking.cancelled" | "booking.return_reminder" | "booking.overdue";
+    templateKey: "booking.created" | "booking.status_changed" | "booking.payment_received" | "booking.cancelled" | "booking.pickup_reminder" | "booking.return_reminder" | "booking.review_invite" | "booking.asset_issue" | "booking.extension_applied" | "booking.extension_expired" | "booking.overdue";
     bookingId: string;
     garmentName?: string | null;
     startDate?: string;
@@ -454,7 +517,7 @@ export class NotificationsService {
   }
 
   async notifyStaffBooking(input: {
-    templateKey: "booking.staff.created" | "booking.staff.cancelled" | "booking.staff.paid" | "booking.staff.confirmed" | "booking.staff.asset_assigned";
+    templateKey: "booking.staff.created" | "booking.staff.cancelled" | "booking.staff.paid" | "booking.staff.confirmed" | "booking.staff.asset_assigned" | "booking.staff.asset_unavailable" | "booking.staff.extension_refund";
     bookingId: string;
     customerName?: string | null;
     garmentName?: string | null;
