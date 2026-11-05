@@ -68,6 +68,8 @@ export interface SizeInventorySnapshot {
   assets: InventoryAsset[];
   items: InventoryItem[];
   excludeBookingId?: string;
+  /** Số ngày khoá lịch sau ngày trả để giặt hấp. 0 = không khoá. */
+  laundryBufferDays?: number;
 }
 
 export interface AccessoryInventorySnapshot {
@@ -84,6 +86,8 @@ export interface AccessoryInventorySnapshot {
       rentalEndDate: Date;
     };
   }>;
+  /** Số ngày khoá lịch sau ngày trả để giặt hấp. 0 = không khoá. */
+  laundryBufferDays?: number;
 }
 
 /** Tồn kho phụ kiện theo khoảng ngày: nhu cầu (dòng booking_accessory_items của
@@ -94,9 +98,11 @@ export async function loadAccessoryInventory(
   accessoryId: string,
   startDay: Date,
   endDay: Date,
-  options: { now?: Date } = {},
+  options: { now?: Date; laundryBufferDays?: number } = {},
 ): Promise<AccessoryInventorySnapshot> {
   const range = parseRentalDateRange(startDay, endDay);
+  const buffer = options.laundryBufferDays ?? 0;
+  const queryStartDay = buffer > 0 ? new Date(+range.startDay - buffer * DAY_MS) : range.startDay;
   const [assets, rows] = await Promise.all([
     client.accessory_assets.findMany({
       where: { accessory_id: accessoryId },
@@ -108,7 +114,7 @@ export async function loadAccessoryInventory(
         booking: {
           status: { notIn: INVENTORY_RELEASED_STATUSES },
           rentalStartDate: { lte: range.endDay },
-          rentalEndDate: { gte: range.startDay },
+          rentalEndDate: { gte: queryStartDay },
         },
       },
       select: {
@@ -116,7 +122,7 @@ export async function loadAccessoryInventory(
       },
     }),
   ]);
-  return { ...range, assets, rows, today: vietnamToday(options.now) };
+  return { ...range, assets, rows, today: vietnamToday(options.now), laundryBufferDays: options.laundryBufferDays };
 }
 
 /** committed là PEAK nhu cầu đồng thời, không phải tổng mọi booking giao nhau. */
@@ -133,7 +139,7 @@ export function accessoryAvailability(snapshot: AccessoryInventorySnapshot) {
   for (const row of snapshot.rows) {
     const booking = row.booking;
     if (INVENTORY_RELEASED_STATUSES.includes(booking.status)) continue;
-    let to = +booking.rentalEndDate;
+    let to = +booking.rentalEndDate + (snapshot.laundryBufferDays ?? 0) * DAY_MS;
     // Đơn quá hạn chưa trả: nhu cầu kéo dài đến hết cửa sổ tra cứu.
     if (isUnreturnedOverdue(booking, snapshot.today)) to = Math.max(to, +snapshot.endDay);
     addSpan(+booking.rentalStartDate, to);
@@ -158,7 +164,7 @@ export async function loadSizeInventory(
   garmentSizeId: string,
   startDay: Date,
   endDay: Date,
-  options: { now?: Date; excludeBookingId?: string } = {},
+  options: { now?: Date; excludeBookingId?: string; laundryBufferDays?: number } = {},
 ): Promise<SizeInventorySnapshot> {
   const range = parseRentalDateRange(startDay, endDay);
   const [assets, items] = await Promise.all([
@@ -180,7 +186,14 @@ export async function loadSizeInventory(
       },
     }),
   ]);
-  return { ...range, assets, items, today: vietnamToday(options.now), excludeBookingId: options.excludeBookingId };
+  return {
+    ...range,
+    assets,
+    items,
+    today: vietnamToday(options.now),
+    excludeBookingId: options.excludeBookingId,
+    laundryBufferDays: options.laundryBufferDays,
+  };
 }
 
 /** One event stream drives range and calendar availability. An overdue asset is
@@ -188,7 +201,8 @@ export async function loadSizeInventory(
  * reserved/rented assets remain unavailable until an operator resolves ownership.
  */
 function inventoryEvents(snapshot: SizeInventorySnapshot) {
-  const { startDay, endDay, today, assets, excludeBookingId } = snapshot;
+  const { startDay, endDay, today, assets, excludeBookingId, laundryBufferDays } = snapshot;
+  const buffer = laundryBufferDays ?? 0;
   const activeItems = snapshot.items.filter((item) => !INVENTORY_RELEASED_STATUSES.includes(item.booking.status));
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   const capacity = assets.filter((asset) => RENTABLE_ASSET_STATUSES.includes(asset.status)).length;
@@ -205,7 +219,7 @@ function inventoryEvents(snapshot: SizeInventorySnapshot) {
     const booking = item.booking;
     if (booking.id === excludeBookingId) continue;
     let from = +booking.rentalStartDate;
-    let to = +booking.rentalEndDate;
+    let to = +booking.rentalEndDate + buffer * DAY_MS;
     if (isUnreturnedOverdue(booking, today)) {
       // The same physically held asset can appear in bad legacy rows. Count that
       // unreturned hold only once; normal future reservations still count separately.
