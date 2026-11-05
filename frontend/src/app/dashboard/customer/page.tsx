@@ -30,6 +30,7 @@ import {
   CANCELLABLE_STATUSES,
 } from "@/lib/status-labels";
 import { ReviewModal } from "@/components/customer/review-modal";
+import { ExtendRentalModal } from "@/components/customer/extend-rental-modal";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { HandoverSummary } from "@/components/customer/handover-summary";
@@ -66,9 +67,12 @@ import {
   Store,
   PhoneCall,
   RotateCcw,
+  CalendarPlus,
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 5;
+// Đơn đã thanh toán, chưa trả đồ → khách tự gia hạn được (backend kiểm tra lại lịch trống).
+const EXTENDABLE_STATUSES = new Set(["paid", "preparing", "ready_for_pickup", "delivering", "renting"]);
 const TEST_ORDER_STATUSES = new Set(["pending_confirmation"]);
 
 function formatVND(n: number) {
@@ -244,6 +248,7 @@ export default function CustomerDashboardPage() {
 
   // Review modal & confirm modal & toast
   const [reviewingItem, setReviewingItem] = useState<{ bookingId: string; garmentId: string; garmentName: string } | null>(null);
+  const [extendingBooking, setExtendingBooking] = useState<{ id: string; rentalEndDate: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; danger?: boolean; onConfirm: () => void } | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1088,6 +1093,17 @@ export default function CustomerDashboardPage() {
                         </button>
                       )}
 
+                      {EXTENDABLE_STATUSES.has(activeBooking.status) && (
+                        <button
+                          type="button"
+                          onClick={() => setExtendingBooking({ id: activeBooking.id, rentalEndDate: activeBooking.rentalEndDate })}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-lotus/40 bg-white px-4 py-2 text-xs font-semibold text-lotus shadow-2xs transition hover:bg-[#fff0ee] active:scale-[0.98]"
+                        >
+                          <CalendarPlus className="h-3.5 w-3.5" />
+                          <span>Gia hạn thuê</span>
+                        </button>
+                      )}
+
                       {CANCELLABLE_STATUSES.has(activeBooking.status) && (
                         <button
                           type="button"
@@ -1640,6 +1656,18 @@ export default function CustomerDashboardPage() {
           onClose={() => setReviewingItem(null)}
           onSuccess={() => {
             showToast("success", "Cảm ơn bạn đã gửi đánh giá trải nghiệm!");
+            refreshBookings();
+          }}
+        />
+      )}
+
+      {extendingBooking && (
+        <ExtendRentalModal
+          bookingId={extendingBooking.id}
+          rentalEndDate={extendingBooking.rentalEndDate}
+          onClose={() => setExtendingBooking(null)}
+          onChanged={(message) => {
+            showToast("success", message);
             refreshBookings();
           }}
         />

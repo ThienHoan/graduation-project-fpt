@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from "@nestjs/common";
+import { CreateExtensionLinkDto } from "./dto/create-extension-link.dto";
 import { CreatePaymentLinkDto } from "./dto/create-payment-link.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -16,6 +17,25 @@ export class PaymentsController {
     @Body() body: CreatePaymentLinkDto,
   ) {
     return this.paymentsService.createPaymentLink(body.bookingId, user.id);
+  }
+
+  /** Khách gia hạn đơn thuê: giữ lịch + tạo link PayOS cho phí gia hạn. */
+  @Post("extension-link")
+  @UseGuards(JwtAuthGuard)
+  createExtensionLink(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: CreateExtensionLinkDto,
+  ) {
+    return this.paymentsService.createExtensionPaymentLink(body.bookingId, user.id, body.days);
+  }
+
+  @Get("extensions/:extensionId/status")
+  @UseGuards(JwtAuthGuard)
+  getExtensionStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("extensionId", ParseUUIDPipe) extensionId: string,
+  ) {
+    return this.paymentsService.getExtensionStatus(extensionId, user);
   }
 
   @Post("webhook")

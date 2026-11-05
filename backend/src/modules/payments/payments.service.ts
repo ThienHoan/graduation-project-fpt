@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PayOS } from "@payos/node";
@@ -6,6 +6,7 @@ import { ok } from "../../common/api-response";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth-user";
+import { BookingExtensionsService } from "../bookings/booking-extensions.service";
 
 const PAYMENTABLE_STATUSES: BookingStatus[] = [
   BookingStatus.pending_confirmation,
@@ -21,6 +22,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly extensions?: BookingExtensionsService,
   ) {
     this.payos = new PayOS({
       clientId: this.config.get<string>("PAYOS_CLIENT_ID") ?? "",
@@ -162,23 +164,119 @@ export class PaymentsService {
     return ok({ message: "Payment processed successfully." });
   }
 
+  // ── Gia hạn thuê ───────────────────────────────────────────────────────────
+
+  /**
+   * Khách gia hạn N ngày: giữ lịch (dời ngày trả) rồi tạo link PayOS cho phí gia hạn.
+   * Link hết hạn cùng lúc với thời gian giữ lịch để khách không trả tiền muộn.
+   */
+  async createExtensionPaymentLink(bookingId: string, customerId: string, days: number) {
+    if (!this.extensions) throw new BadRequestException("Tính năng gia hạn chưa sẵn sàng.");
+    const extension = await this.extensions.requestExtension(customerId, bookingId, days);
+    const amount = Math.round(Number(extension.amount));
+    const summary = {
+      extensionId: extension.id,
+      amount,
+      previousEndDate: extension.previousEndDate.toISOString().slice(0, 10),
+      newEndDate: extension.newEndDate.toISOString().slice(0, 10),
+      expiresAt: extension.expiresAt.toISOString(),
+    };
+
+    // Phí bằng 0 (vd. toàn món miễn phí ngày thêm) → áp dụng ngay, không cần thanh toán.
+    if (amount <= 0) {
+      await this.extensions.applyPendingExtension(extension.id);
+      return ok({ ...summary, checkoutUrl: null, applied: true });
+    }
+
+    const intent = await this.prisma.runSerializable(async (tx) => {
+      if (typeof (tx as any).$executeRawUnsafe === "function") {
+        await (tx as any).$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('payments:payos-order-code'))");
+      }
+      const existing = await tx.payment.findMany({ where: { bookingId }, select: { providerTransactionId: true } });
+      let orderCode = this.allocateOrderCode(bookingId, existing.map((p) => p.providerTransactionId));
+      while (await tx.payment.findFirst({ where: { provider: "payos", providerTransactionId: String(orderCode) }, select: { id: true } })) {
+        orderCode += 1;
+      }
+      const payment = await tx.payment.create({
+        data: {
+          bookingId,
+          provider: "payos",
+          providerTransactionId: String(orderCode),
+          paymentMethod: "qr_code",
+          amount,
+          depositAmount: 0,
+          status: PaymentStatus.pending,
+        },
+      });
+      return { paymentId: payment.id, orderCode };
+    });
+
+    const frontendUrl = this.config.get<string>("FRONTEND_URL") ?? "http://localhost:3000";
+    try {
+      const link = await this.payos.paymentRequests.create({
+        orderCode: intent.orderCode,
+        amount,
+        description: `Gia han #${bookingId.slice(0, 8)}`,
+        items: [{ name: `Gia hạn thuê ${extension.extraDays} ngày`, quantity: 1, price: amount }],
+        cancelUrl: `${frontendUrl}/booking/extension?extensionId=${extension.id}&cancelled=1`,
+        returnUrl: `${frontendUrl}/booking/extension?extensionId=${extension.id}`,
+        expiredAt: Math.floor(extension.expiresAt.getTime() / 1000),
+      });
+      await this.extensions.attachPayment(extension.id, intent.paymentId, link.checkoutUrl);
+      return ok({ ...summary, checkoutUrl: link.checkoutUrl, applied: false });
+    } catch (error) {
+      this.logger.warn(`PayOS create failed for extension ${extension.id}: ${this.errorMessage(error)}`);
+      await this.prisma.payment.updateMany({
+        where: { id: intent.paymentId, status: PaymentStatus.pending },
+        data: { status: PaymentStatus.cancelled },
+      });
+      await this.extensions.abortPending(extension.id, "Không tạo được link thanh toán gia hạn");
+      throw new BadRequestException("Không thể tạo liên kết thanh toán gia hạn. Vui lòng thử lại.");
+    }
+  }
+
+  /** Trạng thái yêu cầu gia hạn; đối soát trực tiếp với PayOS nếu webhook chưa về. */
+  async getExtensionStatus(extensionId: string, user: AuthenticatedUser) {
+    if (!this.extensions) throw new BadRequestException("Tính năng gia hạn chưa sẵn sàng.");
+    let extension = await this.extensions.findForCustomer(user.id, extensionId);
+    if (extension.payment?.status === PaymentStatus.pending && extension.payment.providerTransactionId) {
+      await this.reconcileWithPayos(extension.payment);
+      extension = await this.extensions.findForCustomer(user.id, extensionId);
+    }
+    return ok({
+      ...this.extensions.serialize(extension),
+      paid: extension.payment?.status === PaymentStatus.paid,
+    });
+  }
+
   async getPaymentStatus(bookingId: string, user: AuthenticatedUser) {
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId }, select: { customerId: true } });
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { customerId: true, status: true, paymentDueAt: true },
+    });
     if (!booking) throw new NotFoundException("Booking not found.");
     if (booking.customerId !== user.id && !["staff", "manager_owner", "admin"].includes(user.role)) {
       throw new ForbiddenException("You cannot view this payment.");
     }
+    // Hạn giữ chỗ giúp trang thanh toán hiển thị đếm ngược trước khi cron tự huỷ đơn.
+    const hold = { bookingStatus: booking.status, paymentDueAt: booking.paymentDueAt };
     let payment = await this.prisma.payment.findFirst({
       where: { bookingId, provider: "payos" },
       orderBy: { createdAt: "desc" },
       include: { booking: true },
     });
-    if (!payment) return ok({ status: "none", paid: false });
+    if (!payment) return ok({ status: "none", paid: false, ...hold });
     if (payment.status === PaymentStatus.pending && payment.providerTransactionId) {
       payment = await this.reconcileWithPayos(payment);
     }
-    if (!payment) return ok({ status: "none", paid: false });
-    return ok({ status: payment.status, paid: payment.status === PaymentStatus.paid, paidAt: payment.paidAt, orderCode: payment.providerTransactionId });
+    if (!payment) return ok({ status: "none", paid: false, ...hold });
+    return ok({
+      status: payment.status,
+      paid: payment.status === PaymentStatus.paid,
+      paidAt: payment.paidAt,
+      orderCode: payment.providerTransactionId,
+      ...hold,
+    });
   }
 
   private async reconcileWithPayos(payment: any): Promise<any> {
@@ -202,6 +300,25 @@ export class PaymentsService {
   }
 
   private async markAsPaid(paymentId: string, bookingId: string, note: string) {
+    const payment = await this.markAsPaidTx(paymentId, bookingId, note);
+    if (payment?.status === PaymentStatus.paid) await this.afterPaymentPaid(paymentId);
+    return payment;
+  }
+
+  /**
+   * Sau khi tiền về: nếu là phí gia hạn thì áp dụng gia hạn. Lỗi ở đây không được
+   * làm hỏng webhook — cron gia hạn sẽ áp dụng lại cho yêu cầu đã trả tiền.
+   */
+  private async afterPaymentPaid(paymentId: string) {
+    if (!this.extensions) return;
+    try {
+      await this.extensions.handlePaymentPaid(paymentId);
+    } catch (error) {
+      this.logger.error(`Không áp dụng được gia hạn cho payment ${paymentId}: ${this.errorMessage(error)}`);
+    }
+  }
+
+  private async markAsPaidTx(paymentId: string, bookingId: string, note: string) {
     return this.prisma.runSerializable(async (tx) => {
       // Lock the booking before reading its status. A callback racing a
       // cancellation must observe the final state and never reopen the order.

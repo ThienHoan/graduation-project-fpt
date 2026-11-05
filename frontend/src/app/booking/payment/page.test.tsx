@@ -103,4 +103,54 @@ describe("BookingPaymentPage", () => {
       configurable: true,
     });
   });
+
+  it("shows the hold countdown so the customer knows when the booking will be released", async () => {
+    mockSearchParams = new URLSearchParams("bookingId=book-12345678&cancelled=1");
+    mockedGetPaymentStatus.mockResolvedValue({
+      success: true,
+      data: {
+        status: "cancelled",
+        paid: false,
+        bookingStatus: "pending_confirmation",
+        paymentDueAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      },
+    });
+
+    render(<BookingPaymentPage />);
+
+    expect(await screen.findByText(/Đơn được giữ chỗ đến/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Thanh toán lại/i })).toBeInTheDocument();
+  });
+
+  it("shows the expired screen without retry once the system cancelled the booking", async () => {
+    mockSearchParams = new URLSearchParams("bookingId=book-12345678&cancelled=1");
+    mockedGetPaymentStatus.mockResolvedValue({
+      success: true,
+      data: { status: "cancelled", paid: false, bookingStatus: "cancelled", paymentDueAt: null },
+    });
+
+    render(<BookingPaymentPage />);
+
+    expect(await screen.findByText("Đơn đã hết thời gian giữ chỗ")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Thanh toán lại/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Đặt lại trang phục/i })).toHaveAttribute("href", "/catalog");
+  });
+
+  it("does not offer a retry after the hold deadline has passed", async () => {
+    mockSearchParams = new URLSearchParams("bookingId=book-12345678&cancelled=1");
+    mockedGetPaymentStatus.mockResolvedValue({
+      success: true,
+      data: {
+        status: "cancelled",
+        paid: false,
+        bookingStatus: "pending_confirmation",
+        paymentDueAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      },
+    });
+
+    render(<BookingPaymentPage />);
+
+    expect(await screen.findByText("Đơn đã hết thời gian giữ chỗ")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Thanh toán lại/i })).not.toBeInTheDocument();
+  });
 });

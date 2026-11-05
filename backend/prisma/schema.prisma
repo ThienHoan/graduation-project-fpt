@@ -214,6 +214,7 @@ model Booking {
   inspections           InspectionSession[]
   laundryTickets        LaundryTicket[]
   payments              Payment[]
+  extensions            BookingExtension[]
   penalties             Penalty[]
   refunds               Refund[]
   reviews               Review[]               @relation("BookingReviews")
@@ -285,8 +286,37 @@ model Payment {
   financialTransactions FinancialTransaction[]
   booking               Booking                @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   refunds               Refund[]
+  extension             BookingExtension?
 
   @@map("payments")
+}
+
+/// Yêu cầu gia hạn ngày thuê do khách tự tạo, thanh toán qua PayOS.
+/// Lịch được giữ ngay khi tạo (dời rentalEndDate); quá hạn chưa trả thì trả lại ngày cũ.
+/// Mỗi đơn chỉ có 1 yêu cầu `pending` (partial unique index trong migration SQL).
+model BookingExtension {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId       String    @map("booking_id") @db.Uuid
+  requestedBy     String?   @map("requested_by") @db.Uuid
+  previousEndDate DateTime  @map("previous_end_date") @db.Date
+  newEndDate      DateTime  @map("new_end_date") @db.Date
+  extraDays       Int       @map("extra_days")
+  amount          Decimal   @default(0) @db.Decimal(12, 2)
+  /// pending | applied | expired | cancelled | failed
+  status          String    @default("pending")
+  paymentId       String?   @unique @map("payment_id") @db.Uuid
+  checkoutUrl     String?   @map("checkout_url")
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  appliedAt       DateTime? @map("applied_at") @db.Timestamptz(6)
+  note            String?
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  booking         Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment         Payment?  @relation(fields: [paymentId], references: [id])
+
+  @@index([status, expiresAt], map: "booking_extensions_status_expires_idx")
+  @@index([bookingId, createdAt(sort: Desc)], map: "booking_extensions_booking_id_idx")
+  @@map("booking_extensions")
 }
 
 model Penalty {

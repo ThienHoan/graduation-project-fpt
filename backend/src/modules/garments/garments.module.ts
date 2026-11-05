@@ -7,5 +7,6 @@ import { GarmentsService } from "./garments.service";
   imports: [AuthModule],
   controllers: [GarmentsController],
   providers: [GarmentsService],
+  exports: [GarmentsService],
 })
 export class GarmentsModule {}

@@ -482,6 +482,10 @@ export type PaymentStatusResponse = {
   paid: boolean;
   paidAt?: string;
   orderCode?: string;
+  /** Trạng thái hiện tại của đơn (vd. "cancelled" khi hệ thống đã tự huỷ vì quá hạn). */
+  bookingStatus?: string;
+  /** Hạn giữ chỗ/thanh toán (ISO). Quá hạn mà chưa trả tiền thì đơn tự huỷ. */
+  paymentDueAt?: string | null;
 };
 
 export async function createPaymentLink(bookingId: string) {
@@ -489,6 +493,68 @@ export async function createPaymentLink(bookingId: string) {
     method: "POST",
     body: JSON.stringify({ bookingId }),
   });
+}
+
+// ── Gia hạn thuê (khách tự gia hạn, trả phí qua PayOS) ─────────────────────
+
+export type ExtensionQuoteResponse = {
+  previousEndDate: string;
+  newEndDate: string;
+  extraDays: number;
+  amount: number;
+  memberDiscount: number;
+  lines: Array<{ label: string; amount: number }>;
+};
+
+export type BookingExtensionResponse = {
+  id: string;
+  bookingId: string;
+  previousEndDate: string;
+  newEndDate: string;
+  extraDays: number;
+  amount: number;
+  /** pending | applied | expired | cancelled | failed */
+  status: "pending" | "applied" | "expired" | "cancelled" | "failed";
+  checkoutUrl: string | null;
+  expiresAt: string;
+  appliedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  paid?: boolean;
+};
+
+export type ExtensionLinkResponse = {
+  extensionId: string;
+  amount: number;
+  previousEndDate: string;
+  newEndDate: string;
+  expiresAt: string;
+  checkoutUrl: string | null;
+  /** true khi phí = 0 và đã gia hạn ngay. */
+  applied: boolean;
+};
+
+export async function getExtensionQuote(bookingId: string, days: number) {
+  return apiRequest<ExtensionQuoteResponse>(`/bookings/${bookingId}/extension-quote?days=${days}`, { cache: "no-store" });
+}
+
+export async function getBookingExtensions(bookingId: string) {
+  return apiRequest<BookingExtensionResponse[]>(`/bookings/${bookingId}/extensions`, { cache: "no-store" });
+}
+
+export async function createExtensionPayment(bookingId: string, days: number) {
+  return apiRequest<ExtensionLinkResponse>("/payments/extension-link", {
+    method: "POST",
+    body: JSON.stringify({ bookingId, days }),
+  });
+}
+
+export async function getExtensionStatus(extensionId: string) {
+  return apiRequest<BookingExtensionResponse>(`/payments/extensions/${extensionId}/status`, { cache: "no-store" });
+}
+
+export async function cancelPendingExtension(bookingId: string) {
+  return apiRequest<{ extensionId: string; cancelled: boolean }>(`/bookings/${bookingId}/extensions/cancel`, { method: "PATCH" });
 }
 
 export async function getPaymentStatus(bookingId: string) {
@@ -973,6 +1039,20 @@ export async function assignAssetToBookingItem(
     method: "PATCH",
     body: JSON.stringify({ garmentAssetId }),
   });
+}
+
+export type AutoAssignResult = {
+  bookingId: string;
+  /** Mã tài sản hệ thống vừa gán (trang phục + phụ kiện). */
+  assigned: string[];
+  missingItems: number;
+  missingAccessories: number;
+  complete: boolean;
+};
+
+/** Hệ thống tự chọn áo/phụ kiện thật phù hợp nhất (ít hao mòn, không nối đuôi sát lịch) và gán cho đơn. */
+export async function autoAssignBookingAssets(bookingId: string) {
+  return apiRequest<AutoAssignResult>(`/bookings/${bookingId}/auto-assign`, { method: "POST" });
 }
 
 export async function assignAccessoryAssetToBookingItem(

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, MapPin, Plug, Save, SlidersHorizontal, Truck, XCircle, Tag } from "lucide-react";
+import { CheckCircle2, MapPin, Plug, Save, SlidersHorizontal, Sparkles, Truck, XCircle, Tag } from "lucide-react";
 import { MapPreview } from "@/components/location/map-preview";
 import {
   getAdminIntegrations,
@@ -36,6 +36,19 @@ const GROUPS: { id: string; title: string; hint: string; icon: typeof SlidersHor
       "shipping_fee_intra",
       "shipping_fee_adjacent",
       "shipping_fee_inter",
+    ],
+  },
+  {
+    id: "automation",
+    title: "Tự động hoá đơn thuê",
+    hint: "Quy tắc để hệ thống tự xác nhận đơn thay nhân viên. Đơn không đạt điều kiện vẫn vào hàng chờ duyệt tay.",
+    icon: Sparkles,
+    keys: [
+      "booking_auto_confirm_enabled",
+      "booking_auto_confirm_min_completed",
+      "booking_auto_confirm_max_total",
+      "asset_issue_voucher_percent",
+      "asset_issue_voucher_max_amount",
     ],
   },
   {

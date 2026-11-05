@@ -355,3 +355,143 @@ describe("PaymentsService.handleWebhook", () => {
     expect(prisma.runSerializable).not.toHaveBeenCalled();
   });
 });
+
+describe("PaymentsService.getPaymentStatus hold deadline", () => {
+  it("returns the booking status and hold deadline so the payment page can count down", async () => {
+    const dueAt = new Date("2026-10-01T05:30:00.000Z");
+    const prisma = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({ customerId: CUSTOMER_ID, status: BookingStatus.pending_confirmation, paymentDueAt: dueAt }),
+      },
+      payment: { findFirst: vi.fn().mockResolvedValue(null) },
+    };
+    const service = new PaymentsService(prisma as never, config() as never);
+
+    const result = await service.getPaymentStatus(BOOKING_ID, { id: CUSTOMER_ID, role: "customer" } as never);
+
+    expect(result.data).toEqual({
+      status: "none",
+      paid: false,
+      bookingStatus: BookingStatus.pending_confirmation,
+      paymentDueAt: dueAt,
+    });
+  });
+});
+
+describe("PaymentsService extension payments", () => {
+  const EXTENSION_ID = "00000000-0000-4000-8000-0000000000f1";
+  const holdUntil = new Date("2026-10-11T03:30:00.000Z");
+
+  function extensionService(options?: { amount?: number }) {
+    const extension = {
+      id: EXTENSION_ID,
+      bookingId: BOOKING_ID,
+      previousEndDate: new Date("2026-10-12T00:00:00.000Z"),
+      newEndDate: new Date("2026-10-14T00:00:00.000Z"),
+      extraDays: 2,
+      amount: new Prisma.Decimal(options?.amount ?? 240000),
+      expiresAt: holdUntil,
+    };
+    const extensions = {
+      requestExtension: vi.fn().mockResolvedValue(extension),
+      attachPayment: vi.fn().mockResolvedValue(undefined),
+      abortPending: vi.fn().mockResolvedValue(true),
+      applyPendingExtension: vi.fn().mockResolvedValue("applied"),
+      handlePaymentPaid: vi.fn().mockResolvedValue("applied"),
+    };
+    const tx = {
+      $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+      payment: {
+        findMany: vi.fn().mockResolvedValue([{ providerTransactionId: String(ORDER_CODE) }]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: "extension-payment" }),
+      },
+    };
+    const prisma = {
+      payment: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      runSerializable: vi.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
+    };
+    const service = new PaymentsService(prisma as never, config() as never, extensions as never);
+    return { service, prisma, tx, extensions };
+  }
+
+  it("holds the dates, then opens a PayOS link that expires with the hold", async () => {
+    const { service, tx, extensions } = extensionService();
+
+    const result = await service.createExtensionPaymentLink(BOOKING_ID, CUSTOMER_ID, 2);
+
+    expect(extensions.requestExtension).toHaveBeenCalledWith(CUSTOMER_ID, BOOKING_ID, 2);
+    expect(tx.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: BOOKING_ID,
+        provider: "payos",
+        amount: 240000,
+        depositAmount: 0,
+        status: PaymentStatus.pending,
+      }),
+    });
+    // Mã đơn PayOS mới, không trùng lần thanh toán trước của đơn.
+    expect(tx.payment.create.mock.calls[0][0].data.providerTransactionId).not.toBe(String(ORDER_CODE));
+    expect(payos.paymentRequests.create).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 240000,
+      expiredAt: Math.floor(holdUntil.getTime() / 1000),
+      returnUrl: `https://frontend.example/booking/extension?extensionId=${EXTENSION_ID}`,
+    }));
+    expect(payos.paymentRequests.create.mock.calls[0][0].description.length).toBeLessThanOrEqual(25);
+    expect(extensions.attachPayment).toHaveBeenCalledWith(EXTENSION_ID, "extension-payment", "https://pay.example/checkout");
+    expect(result.data).toMatchObject({ checkoutUrl: "https://pay.example/checkout", newEndDate: "2026-10-14", applied: false });
+  });
+
+  it("releases the hold and cancels the intent when PayOS fails", async () => {
+    const { service, prisma, extensions } = extensionService();
+    payos.paymentRequests.create.mockRejectedValueOnce(new Error("PayOS down"));
+
+    await expect(service.createExtensionPaymentLink(BOOKING_ID, CUSTOMER_ID, 2)).rejects.toThrow("gia hạn");
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "extension-payment", status: PaymentStatus.pending },
+      data: { status: PaymentStatus.cancelled },
+    });
+    expect(extensions.abortPending).toHaveBeenCalledWith(EXTENSION_ID, expect.any(String));
+  });
+
+  it("applies a free extension right away without PayOS", async () => {
+    const { service, extensions, tx } = extensionService({ amount: 0 });
+
+    const result = await service.createExtensionPaymentLink(BOOKING_ID, CUSTOMER_ID, 1);
+
+    expect(extensions.applyPendingExtension).toHaveBeenCalledWith(EXTENSION_ID);
+    expect(tx.payment.create).not.toHaveBeenCalled();
+    expect(payos.paymentRequests.create).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ applied: true, checkoutUrl: null });
+  });
+
+  it("lets the extension service react once the webhook marks a payment paid", async () => {
+    const { tx, current } = webhookService({ bookingStatus: BookingStatus.renting });
+    const extensions = { handlePaymentPaid: vi.fn().mockResolvedValue("applied") };
+    const prisma = {
+      payment: { findMany: vi.fn().mockResolvedValue([current]) },
+      runSerializable: vi.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
+    };
+    const service = new PaymentsService(prisma as never, config() as never, extensions as never);
+
+    await service.handleWebhook({ code: "00", data: { amount: 160, currency: "VND" } });
+
+    expect(extensions.handlePaymentPaid).toHaveBeenCalledWith("payment-1");
+    // Đơn đang thuê không bị đổi trạng thái vì khoản phí gia hạn.
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("still acknowledges the webhook if applying the extension fails", async () => {
+    const { tx, current } = webhookService({ bookingStatus: BookingStatus.renting });
+    const extensions = { handlePaymentPaid: vi.fn().mockRejectedValue(new Error("db hiccup")) };
+    const prisma = {
+      payment: { findMany: vi.fn().mockResolvedValue([current]) },
+      runSerializable: vi.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
+    };
+    const service = new PaymentsService(prisma as never, config() as never, extensions as never);
+
+    const result = await service.handleWebhook({ code: "00", data: { amount: 160, currency: "VND" } });
+
+    expect(result.data).toEqual({ message: "Payment processed successfully." });
+  });
+});
