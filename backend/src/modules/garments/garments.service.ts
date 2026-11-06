@@ -407,7 +407,6 @@ export class GarmentsService {
         quantity: number;
         isIncluded: boolean;
         extraPrice: number;
-        replacementValue: number;
       }>;
       sizeMap: Map<string, {
         garmentSizeId: string;
@@ -430,7 +429,6 @@ export class GarmentsService {
           quantity: number;
           isIncluded: boolean;
           extraPrice: number;
-          replacementValue: number;
         }>;
       }>;
     }>();
@@ -499,7 +497,6 @@ export class GarmentsService {
           quantity: link.quantity ?? 1,
           isIncluded: link.is_included ?? true,
           extraPrice: Number(link.extra_price ?? 0),
-          replacementValue: Number(link.accessories.replacement_value ?? 0),
         }));
       for (const s of g.garment_sizes) {
         const sk = (s.size_label ?? "__nosize__").trim().toLowerCase();
@@ -527,7 +524,6 @@ export class GarmentsService {
           quantity: link.quantity ?? 1,
           isIncluded: link.is_included ?? true,
           extraPrice: Number(link.extra_price ?? 0),
-          replacementValue: Number(acc.replacement_value ?? 0),
         });
       }
     }

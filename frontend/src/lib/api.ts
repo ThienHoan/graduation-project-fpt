@@ -120,7 +120,6 @@ export type GroupedGarmentAccessory = {
   quantity: number;
   isIncluded: boolean;
   extraPrice: number;
-  replacementValue: number;
 };
 
 export type GarmentGrouped = {
@@ -354,7 +353,7 @@ export type BookingAccessoryItem = {
   rentalTotal: number;
   accessoryAssetId?: string | null;
   assetCode?: string | null;
-  replacementValue?: number;
+  purchaseCost?: number;
   conditionStatus?: string | null;
   conditionNote?: string | null;
   inspectedAt?: string | null;
@@ -1089,7 +1088,7 @@ export type AccessoryProcessingItem = {
   assetCode: string;
   status: string;
   conditionNote: string | null;
-  replacementValue: number;
+  purchaseCost: number;
   bookingId: string | null;
   bookingStatus: string | null;
   updatedAt: string;
@@ -1816,7 +1815,6 @@ export type AccessoryItem = {
   material: string | null;
   color: string | null;
   imageUrl: string | null;
-  replacementValue: number;
   isActive: boolean;
   assetCount: number;
   createdAt: string;
@@ -1834,6 +1832,7 @@ export type AccessoryAsset = {
   assetCode: string;
   status: string;
   conditionNote: string | null;
+  purchaseCost: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -1856,7 +1855,6 @@ export type AccessoryPayload = {
   material?: string;
   color?: string;
   imageUrl?: string | null;
-  replacementValue?: number;
   isActive?: boolean;
 };
 
@@ -1891,9 +1889,20 @@ export async function createAccessoryAsset(payload: {
   accessoryId: string;
   assetCode: string;
   conditionNote?: string;
+  purchaseCost?: number;
 }) {
   return apiRequest<AccessoryAsset>("/accessories/assets", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAccessoryAsset(
+  assetId: string,
+  payload: { purchaseCost?: number },
+) {
+  return apiRequest<AccessoryAsset>(`/accessories/assets/${assetId}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -2213,7 +2222,8 @@ export type PriceCalendarEntry = {
   toDate: string;
   adjustmentPercent: number;
   priority: number;
-  garmentKeywords: string[];
+  applyAll: boolean;
+  targetGarmentIds: string[];
   isActive: boolean;
   note: string | null;
   createdAt: string;
@@ -2272,9 +2282,24 @@ export type PriceCalendarPayload = {
   toDate: string;
   adjustmentPercent?: number;
   priority?: number;
-  garmentKeywords?: string[];
+  applyAll?: boolean;
+  targetGarmentIds?: string[];
   isActive?: boolean;
   note?: string;
+};
+
+export type PricingCalendarTargetOptions = {
+  categories: Array<{ id: string; name: string }>;
+  occasions: string[];
+  garments: Array<{
+    id: string;
+    name: string;
+    categoryId: string | null;
+    categoryName: string | null;
+    occasions: string[];
+    sizeCount: number;
+    sizeLabels: string[];
+  }>;
 };
 
 export type GenerateSuggestionsResult = {
@@ -2291,7 +2316,7 @@ export type GenerateSuggestionsResult = {
 };
 
 export async function getPricingCalendar(query?: {
-  activeOnly?: boolean;
+  includeInactive?: boolean;
   upcoming?: boolean;
   search?: string;
   from?: string;
@@ -2300,7 +2325,7 @@ export async function getPricingCalendar(query?: {
   limit?: number;
 }) {
   const params = new URLSearchParams();
-  if (query?.activeOnly) params.append("activeOnly", "true");
+  if (query?.includeInactive) params.append("includeInactive", "true");
   if (query?.upcoming) params.append("upcoming", "true");
   if (query?.search) params.append("search", query.search);
   if (query?.from) params.append("from", query.from);
@@ -2316,6 +2341,21 @@ export async function createPricingCalendar(payload: PriceCalendarPayload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function getPricingCalendarTargetOptions(query?: {
+  search?: string;
+  categoryId?: string;
+  occasion?: string;
+}) {
+  const params = new URLSearchParams();
+  if (query?.search) params.append("search", query.search);
+  if (query?.categoryId) params.append("categoryId", query.categoryId);
+  if (query?.occasion) params.append("occasion", query.occasion);
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<PricingCalendarTargetOptions>(
+    `/pricing/calendar/target-options${queryStr}`,
+  );
 }
 
 export async function updatePricingCalendar(id: string, payload: Partial<PriceCalendarPayload>) {
@@ -2352,10 +2392,11 @@ export async function getPricingSuggestions(query?: {
   return apiRequest<{ items: PriceSuggestionEntry[]; total: number; page: number; limit: number }>(`/pricing/suggestions${queryStr}`);
 }
 
-export async function generatePricingSuggestions(payload: { calendarId?: string; from?: string; to?: string }) {
+export async function generatePricingSuggestions(payload: { calendarId?: string; from?: string; to?: string }, signal?: AbortSignal) {
   return apiRequest<GenerateSuggestionsResult>("/pricing/suggestions/generate", {
     method: "POST",
     body: JSON.stringify(payload),
+    signal,
   });
 }
 

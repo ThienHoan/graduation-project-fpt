@@ -6,6 +6,7 @@ import type { CreateAccessoryDto } from "./dto/create-accessory.dto";
 import type { UpdateAccessoryDto } from "./dto/update-accessory.dto";
 import type { CreateAccessoryAssetDto } from "./dto/create-accessory-asset.dto";
 import type { UpdateAccessoryAssetStatusDto } from "./dto/update-accessory-asset-status.dto";
+import type { UpdateAccessoryAssetDto } from "./dto/update-accessory-asset.dto";
 
 @Injectable()
 export class AccessoriesService {
@@ -31,7 +32,6 @@ export class AccessoriesService {
         material: a.material,
         color: a.color,
         imageUrl: a.image_url,
-        replacementValue: Number(a.replacement_value ?? 0),
         isActive: a.is_active,
         assetCount: a._count.accessory_assets,
         createdAt: a.created_at.toISOString(),
@@ -71,7 +71,6 @@ export class AccessoriesService {
           material: dto.material?.trim() || null,
           color: dto.color?.trim() || null,
           image_url: dto.imageUrl?.trim() || null,
-          replacement_value: dto.replacementValue ?? 0,
         },
         include: { accessory_assets: { orderBy: { asset_code: "asc" } } },
       });
@@ -130,7 +129,6 @@ export class AccessoriesService {
           ...(dto.material !== undefined ? { material: dto.material?.trim() || null } : {}),
           ...(dto.color !== undefined ? { color: dto.color?.trim() || null } : {}),
           ...(dto.imageUrl !== undefined ? { image_url: dto.imageUrl?.trim() || null } : {}),
-          ...(dto.replacementValue !== undefined ? { replacement_value: dto.replacementValue } : {}),
           ...(dto.isActive !== undefined ? { is_active: dto.isActive } : {}),
           updated_at: new Date(),
         },
@@ -184,6 +182,7 @@ export class AccessoriesService {
           accessory_id: dto.accessoryId,
           asset_code: dto.assetCode.trim(),
           condition_note: dto.conditionNote?.trim() || null,
+          purchase_cost: dto.purchaseCost ?? null,
           status: "available",
         },
       });
@@ -209,6 +208,69 @@ export class AccessoriesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Sửa giá vốn của một tài sản phụ kiện.
+   * Chặn khi asset đang gắn với đơn chưa kết thúc ở các giai đoạn có thể phát
+   * sinh đền bù/hoàn tiền: đang giao, đang thuê, quá hạn, đã trả, chờ kiểm tra,
+   * đang hoàn tiền. Nhờ vậy khoản đền không bị đổi giữa lúc staff thẩm định.
+   */
+  async updateAsset(id: string, dto: UpdateAccessoryAssetDto, userId?: string) {
+    const asset = await this.prisma.accessory_assets.findUnique({ where: { id } });
+    if (!asset) throw new NotFoundException("Không tìm thấy tài sản phụ kiện.");
+
+    if (dto.purchaseCost !== undefined) {
+      const lockedBookingItem = await this.prisma.bookingAccessoryItem.findFirst({
+        where: {
+          accessoryAssetId: id,
+          booking: {
+            status: {
+              in: [
+                "delivering",
+                "renting",
+                "returned",
+                "inspection_pending",
+                "overdue",
+                "refund_pending",
+              ],
+            },
+          },
+        },
+        select: { bookingId: true },
+      });
+      if (lockedBookingItem) {
+        throw new BadRequestException(
+          "Không thể sửa giá vốn vì tài sản đang nằm trong đơn chưa kết thúc (đang giao, đang thuê, quá hạn, đã trả, chờ kiểm tra hoặc đang hoàn tiền). Hãy hoàn tất đơn trước.",
+        );
+      }
+
+      const oldCost = asset.purchase_cost != null ? Number(asset.purchase_cost) : 0;
+      const updated = await this.prisma.accessory_assets.update({
+        where: { id },
+        data: { purchase_cost: dto.purchaseCost, updated_at: new Date() },
+      });
+      if (oldCost !== dto.purchaseCost) {
+        await this.prisma.accessory_asset_history.create({
+          data: {
+            asset_id: id,
+            action: "purchase_cost_change",
+            note: `Giá vốn: ${oldCost.toLocaleString("vi-VN")}đ → ${dto.purchaseCost.toLocaleString("vi-VN")}đ`,
+            created_by: userId ?? null,
+          },
+        });
+      }
+
+      const accessory = await this.prisma.accessories.findUnique({
+        where: { id: updated.accessory_id },
+      });
+      return ok(this.serializeAsset(updated, accessory?.name ?? null));
+    }
+
+    const accessory = await this.prisma.accessories.findUnique({
+      where: { id: asset.accessory_id },
+    });
+    return ok(this.serializeAsset(asset, accessory?.name ?? null));
   }
 
   async updateAssetStatus(id: string, dto: UpdateAccessoryAssetStatusDto, userId?: string) {
@@ -322,7 +384,7 @@ export class AccessoriesService {
     const assets = await this.prisma.accessory_assets.findMany({
       where: { status: { in: ["laundry", "maintenance", "damaged", "lost"] } },
       include: {
-        accessories: { select: { id: true, name: true, replacement_value: true } },
+        accessories: { select: { id: true, name: true } },
         booking_accessory_items: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -344,7 +406,7 @@ export class AccessoriesService {
           assetCode: a.asset_code,
           status: a.status,
           conditionNote: a.condition_note ?? latest?.conditionNote ?? null,
-          replacementValue: Number(a.accessories.replacement_value ?? 0),
+          purchaseCost: Number(a.purchase_cost ?? 0),
           bookingId: latest?.booking.id ?? null,
           bookingStatus: latest?.booking.status ?? null,
           updatedAt: a.updated_at.toISOString(),
@@ -364,7 +426,6 @@ export class AccessoriesService {
     material: string | null;
     color: string | null;
     image_url: string | null;
-    replacement_value: unknown;
     is_active: boolean;
     created_at: Date;
     updated_at: Date;
@@ -374,6 +435,7 @@ export class AccessoriesService {
       asset_code: string;
       status: unknown;
       condition_note: string | null;
+      purchase_cost: unknown;
       created_at: Date;
       updated_at: Date;
     }>;
@@ -387,7 +449,6 @@ export class AccessoriesService {
       material: accessory.material,
       color: accessory.color,
       imageUrl: accessory.image_url,
-      replacementValue: Number(accessory.replacement_value ?? 0),
       isActive: accessory.is_active,
       createdAt: accessory.created_at.toISOString(),
       updatedAt: accessory.updated_at.toISOString(),
@@ -404,6 +465,7 @@ export class AccessoriesService {
       asset_code: string;
       status: unknown;
       condition_note: string | null;
+      purchase_cost: unknown;
       created_at: Date;
       updated_at: Date;
     },
@@ -416,6 +478,7 @@ export class AccessoriesService {
       assetCode: asset.asset_code,
       status: asset.status as string,
       conditionNote: asset.condition_note,
+      purchaseCost: Number(asset.purchase_cost ?? 0),
       createdAt: asset.created_at.toISOString(),
       updatedAt: asset.updated_at.toISOString(),
     };

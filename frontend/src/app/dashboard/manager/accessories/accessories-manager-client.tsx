@@ -11,6 +11,7 @@ import {
   getAccessoryById,
   getAccessoryGarments,
   updateAccessory,
+  updateAccessoryAsset,
   updateAccessoryAssetStatus,
   type AccessoryAsset,
   type AccessoryAssetHistory,
@@ -300,9 +301,6 @@ export function AccessoriesManagerClient() {
                 <div className="mt-3 flex items-center justify-between">
                   <p className="text-sm text-stone-600">
                     <span className="font-semibold text-ink">{a.assetCount}</span> tài sản
-                    {a.replacementValue > 0 && (
-                      <span className="text-stone-400"> · Đền {formatVND(a.replacementValue)}</span>
-                    )}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -383,6 +381,7 @@ export function AccessoriesManagerClient() {
           history={history}
           onAddAsset={() => setAssetModalOpen(true)}
           onStatusChange={handleAssetStatus}
+          onCostChange={handleAssetCost}
           onToggleHistory={(assetId) => void toggleHistory(assetId)}
           onClose={() => setSelectedId(null)}
         />
@@ -436,7 +435,7 @@ export function AccessoriesManagerClient() {
     }
   }
 
-  async function handleCreateAsset(payload: { assetCode: string; conditionNote?: string }) {
+  async function handleCreateAsset(payload: { assetCode: string; conditionNote?: string; purchaseCost?: number }) {
     if (!selected) return;
     const res = await createAccessoryAsset({ accessoryId: selected.id, ...payload });
     if (res.success) {
@@ -446,6 +445,17 @@ export function AccessoriesManagerClient() {
       await load();
     } else {
       showToast("error", res.message ?? "Không thể tạo tài sản.");
+    }
+  }
+
+  async function handleAssetCost(asset: AccessoryAsset, purchaseCost: number) {
+    const res = await updateAccessoryAsset(asset.id, { purchaseCost });
+    if (res.success) {
+      showToast("success", `Đã cập nhật giá vốn ${asset.assetCode}.`);
+      if (selected) await refreshAssets(selected.id);
+      await load();
+    } else {
+      showToast("error", res.message ?? "Không thể cập nhật giá vốn.");
     }
   }
 
@@ -484,6 +494,7 @@ function AssetsPanel({
   history,
   onAddAsset,
   onStatusChange,
+  onCostChange,
   onToggleHistory,
   onClose,
 }: {
@@ -493,12 +504,15 @@ function AssetsPanel({
   history: Record<string, AccessoryAssetHistory[]>;
   onAddAsset: () => void;
   onStatusChange: (asset: AccessoryAsset, status: string, note?: string) => void;
+  onCostChange: (asset: AccessoryAsset, purchaseCost: number) => void;
   onToggleHistory: (assetId: string) => void;
   onClose: () => void;
 }) {
   const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
   const [statusValue, setStatusValue] = useState("available");
   const [statusNote, setStatusNote] = useState("");
+  const [editingCostId, setEditingCostId] = useState<string | null>(null);
+  const [costValue, setCostValue] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
   const visibleAssets =
@@ -571,6 +585,7 @@ function AssetsPanel({
               <tr className="border-b border-sand text-xs uppercase tracking-wider text-stone-400">
                 <th className="py-2 pr-4 font-semibold">Mã tài sản</th>
                 <th className="py-2 pr-4 font-semibold">Trạng thái</th>
+                <th className="py-2 pr-4 font-semibold">Giá vốn</th>
                 <th className="py-2 pr-4 font-semibold">Ghi chú</th>
                 <th className="py-2 text-right font-semibold">Thao tác</th>
               </tr>
@@ -581,9 +596,12 @@ function AssetsPanel({
                   <tr key={a.id} className="border-b border-sand/60 last:border-0">
                     <td className="py-3 pr-4 font-mono font-semibold text-ink">{a.assetCode}</td>
                     <td className="py-3 pr-4">{statusBadge(a.status)}</td>
+                    <td className="py-3 pr-4 tabular-nums text-stone-600">
+                      {a.purchaseCost > 0 ? formatVND(a.purchaseCost) : "—"}
+                    </td>
                     <td className="max-w-[220px] truncate py-3 pr-4 text-stone-500">{a.conditionNote ?? "—"}</td>
                     <td className="py-3 text-right">
-                      <div className="inline-flex gap-2">
+                      <div className="inline-flex flex-wrap justify-end gap-2">
                         <button
                           type="button"
                           onClick={() => {
@@ -597,6 +615,16 @@ function AssetsPanel({
                         </button>
                         <button
                           type="button"
+                          onClick={() => {
+                            setEditingCostId(editingCostId === a.id ? null : a.id);
+                            setCostValue(a.purchaseCost > 0 ? String(a.purchaseCost) : "");
+                          }}
+                          className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-jade transition hover:border-jade"
+                        >
+                          Sửa giá vốn
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => onToggleHistory(a.id)}
                           className="rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-stone-500 transition hover:border-antique"
                         >
@@ -605,9 +633,42 @@ function AssetsPanel({
                       </div>
                     </td>
                   </tr>
+                  {editingCostId === a.id && (
+                    <tr key={`${a.id}-cost`} className="border-b border-sand/60 bg-mist/50">
+                      <td colSpan={5} className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                            Giá vốn (VNĐ)
+                          </label>
+                          <input
+                            value={costValue}
+                            onChange={(e) => setCostValue(e.target.value.replace(/\D/g, ""))}
+                            inputMode="numeric"
+                            placeholder="Vd: 500000"
+                            className="min-w-[160px] flex-1 rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-antique"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const value = costValue.trim() ? Number(costValue) : 0;
+                              onCostChange(a, Number.isFinite(value) ? value : 0);
+                              setEditingCostId(null);
+                            }}
+                            className="rounded-lg bg-lotus px-4 py-2 text-xs font-semibold text-white transition hover:bg-oxblood"
+                          >
+                            Lưu
+                          </button>
+                        </div>
+                        <p className="mt-1 text-[11px] text-stone-400">
+                          Không thể sửa khi tài sản đang nằm trong đơn chưa kết thúc (đang giao,
+                          đang thuê, quá hạn, đã trả, chờ kiểm tra hoặc đang hoàn tiền).
+                        </p>
+                      </td>
+                    </tr>
+                  )}
                   {editingStatusId === a.id && (
                     <tr key={`${a.id}-edit`} className="border-b border-sand/60 bg-mist/50">
-                      <td colSpan={4} className="px-4 py-3">
+                      <td colSpan={5} className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <select
                             value={statusValue}
@@ -642,7 +703,7 @@ function AssetsPanel({
                   )}
                   {history[a.id] && (
                     <tr key={`${a.id}-history`} className="border-b border-sand/60 bg-stone-50/60">
-                      <td colSpan={4} className="px-4 py-3">
+                      <td colSpan={5} className="px-4 py-3">
                         {history[a.id].length === 0 ? (
                           <p className="text-xs text-stone-400">Chưa có lịch sử.</p>
                         ) : (
@@ -652,7 +713,9 @@ function AssetsPanel({
                                 <span className="font-semibold text-ink">
                                   {h.action === "created"
                                     ? "Tạo mới"
-                                    : `${ASSET_STATUS_LABELS[h.oldStatus ?? ""] ?? h.oldStatus ?? "?"} → ${ASSET_STATUS_LABELS[h.newStatus ?? ""] ?? h.newStatus ?? "?"}`}
+                                    : h.action === "purchase_cost_change"
+                                      ? "Đổi giá vốn"
+                                      : `${ASSET_STATUS_LABELS[h.oldStatus ?? ""] ?? h.oldStatus ?? "?"} → ${ASSET_STATUS_LABELS[h.newStatus ?? ""] ?? h.newStatus ?? "?"}`}
                                 </span>{" "}
                                 · {new Date(h.createdAt).toLocaleString("vi-VN")}
                                 {h.createdBy && (
@@ -697,9 +760,6 @@ function AccessoryFormModal({
   const [category, setCategory] = useState(initial?.category ?? "");
   const [material, setMaterial] = useState(initial?.material ?? "");
   const [color, setColor] = useState(initial?.color ?? "");
-  const [replacementValue, setReplacementValue] = useState(
-    initial?.replacementValue ? String(initial.replacementValue) : "",
-  );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [imagePreview, setImagePreview] = useState<string | null>(initial?.imageUrl ?? null);
   const [pendingUpload, setPendingUpload] = useState<string | null>(null);
@@ -763,10 +823,6 @@ function AccessoryFormModal({
     const errs: Record<string, string> = {};
     if (!code.trim()) errs.code = "Vui lòng nhập mã phụ kiện.";
     if (!name.trim()) errs.name = "Vui lòng nhập tên phụ kiện.";
-    const replacement = replacementValue.trim() ? Number(replacementValue.replace(/\D/g, "")) : undefined;
-    if (replacement !== undefined && (!Number.isFinite(replacement) || replacement < 0)) {
-      errs.replacementValue = "Giá trị đền bù không hợp lệ.";
-    }
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;
@@ -782,7 +838,6 @@ function AccessoryFormModal({
         material: material.trim() || undefined,
         color: color.trim() || undefined,
         imageUrl: imagePreview,
-        replacementValue: replacement,
       },
       initial?.id,
     );
@@ -813,17 +868,13 @@ function AccessoryFormModal({
               {errors.code && <p className="mt-1 text-xs text-red-500">{errors.code}</p>}
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Giá trị đền bù (VNĐ)
-              </label>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Nhóm</label>
               <input
-                value={replacementValue}
-                onChange={(e) => setReplacementValue(e.target.value.replace(/\D/g, ""))}
-                inputMode="numeric"
-                className={inputClass(errors.replacementValue)}
-                placeholder="Vd: 500000"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className={inputClass()}
+                placeholder="Mấn, Quạt..."
               />
-              {errors.replacementValue && <p className="mt-1 text-xs text-red-500">{errors.replacementValue}</p>}
             </div>
           </div>
           <div>
@@ -836,16 +887,7 @@ function AccessoryFormModal({
             />
             {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name}</p>}
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Nhóm</label>
-              <input
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className={inputClass()}
-                placeholder="Mấn, Quạt..."
-              />
-            </div>
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">Chất liệu</label>
               <input
@@ -933,16 +975,18 @@ function AccessoryAssetFormModal({
   accessoryId: string;
   accessoryName: string;
   onClose: () => void;
-  onSubmit: (payload: { assetCode: string; conditionNote?: string }) => void;
+  onSubmit: (payload: { assetCode: string; conditionNote?: string; purchaseCost?: number }) => void;
 }) {
   const [assetCode, setAssetCode] = useState("");
   const [conditionNote, setConditionNote] = useState("");
+  const [purchaseCost, setPurchaseCost] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     onSubmit({
       assetCode: assetCode.trim(),
       conditionNote: conditionNote.trim() || undefined,
+      purchaseCost: purchaseCost.trim() ? Number(purchaseCost) : undefined,
     });
   }
 
@@ -974,6 +1018,21 @@ function AccessoryAssetFormModal({
               placeholder="Vd: PKA-001"
             />
             <p className="mt-1 text-xs text-stone-400">Mã duy nhất cho món đồ vật lý.</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">
+              Giá vốn (VNĐ)
+            </label>
+            <input
+              value={purchaseCost}
+              onChange={(e) => setPurchaseCost(e.target.value.replace(/\D/g, ""))}
+              inputMode="numeric"
+              className="w-full rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
+              placeholder="Vd: 500000"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Dùng để tính tiền đền khi tài sản bị mất. Bỏ trống = 0.
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-stone-500">

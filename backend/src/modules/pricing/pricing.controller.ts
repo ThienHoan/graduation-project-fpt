@@ -34,7 +34,7 @@ export class PricingController {
 
   @Get("calendar")
   listCalendar(
-    @Query("activeOnly") activeOnly?: string,
+    @Query("includeInactive") includeInactive?: string,
     @Query("upcoming") upcoming?: string,
     @Query("search") search?: string,
     @Query("from") from?: string,
@@ -43,13 +43,26 @@ export class PricingController {
     @Query("limit") limit?: string,
   ) {
     return this.pricing.listCalendar({
-      activeOnly: activeOnly === "true",
+      includeInactive: includeInactive === "true",
       upcoming: upcoming === "true",
       search: search || undefined,
       from: from || undefined,
       to: to || undefined,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get("calendar/target-options")
+  getCalendarTargetOptions(
+    @Query("search") search?: string,
+    @Query("categoryId") categoryId?: string,
+    @Query("occasion") occasion?: string,
+  ) {
+    return this.pricing.getCalendarTargetOptions({
+      search: search || undefined,
+      categoryId: categoryId || undefined,
+      occasion: occasion || undefined,
     });
   }
 

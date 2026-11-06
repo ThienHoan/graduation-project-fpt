@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -32,9 +33,14 @@ export class CreatePriceCalendarDto {
   priority?: number;
 
   @IsOptional()
+  @IsBoolean()
+  applyAll?: boolean;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  garmentKeywords?: string[];
+  @ArrayMaxSize(500)
+  targetGarmentIds?: string[];
 
   @IsOptional()
   @IsBoolean()

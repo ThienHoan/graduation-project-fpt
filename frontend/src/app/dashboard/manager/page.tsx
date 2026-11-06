@@ -5345,7 +5345,7 @@ function DamagedTab({
                 )}
                 {a.status === "lost" && (
                   <p className="mt-2 text-xs font-semibold text-red-700 tabular-nums">
-                    Đền {formatVND(a.replacementValue)} — đã trừ vào cọc
+                    Đền {formatVND(a.purchaseCost)} — Sẽ trừ vào cọc
                   </p>
                 )}
                 {a.bookingId && (

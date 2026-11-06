@@ -1054,10 +1054,10 @@ describe("BookingsService.inspectBookingAccessory", () => {
         })),
       },
       accessories: {
-        findUnique: vi.fn().mockResolvedValue({ replacement_value: 500000, name: "Mấn" }),
+        findUnique: vi.fn().mockResolvedValue(null),
       },
       accessory_assets: {
-        findUnique: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID, status: "available", asset_code: "PK-001" }),
+        findUnique: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID, status: "available", asset_code: "PK-001", purchase_cost: 500000 }),
         update: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID }),
       },
       accessory_asset_history: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
@@ -1159,7 +1159,7 @@ describe("BookingsService.inspectBookingAccessory", () => {
     });
   });
 
-  it("auto-charges replacement value on lost inspection", async () => {
+  it("auto-charges the asset purchase cost on lost inspection", async () => {
     const { service, tx } = createInspectService("returned", ACCESSORY_ASSET_ID);
     await service.inspectBookingAccessory(
       BOOKING_ID, ACCESSORY_ITEM_ID, { conditionStatus: "lost" }, STAFF_ID,

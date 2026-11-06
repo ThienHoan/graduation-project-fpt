@@ -2382,15 +2382,12 @@ export class BookingsService {
       });
       if (!asset) throw new NotFoundException("Accessory asset not found.");
 
-      // Phạt: hư hỏng → phiếu phạt staff nhập; mất → tự lấy giá trị đền.
-      // Phạt cộng vào penaltyTotal nên tự trừ khi hoàn cọc (deposit - penalty).
+      // Phạt: hư hỏng → phiếu phạt staff nhập; mất → tự lấy giá vốn của tài sản
+      // được gán (purchase_cost, thiếu thì 0). Phạt cộng vào penaltyTotal nên tự
+      // trừ khi hoàn cọc (deposit - penalty).
       let penaltyAmount = 0;
       if (dto.conditionStatus === "lost") {
-        const accessory = await tx.accessories.findUnique({
-          where: { id: accessoryItem.accessoryId },
-          select: { replacement_value: true, name: true },
-        });
-        penaltyAmount = Number(accessory?.replacement_value ?? 0);
+        penaltyAmount = Number(asset.purchase_cost ?? 0);
       } else if (dto.conditionStatus === "damaged") {
         penaltyAmount = Math.max(0, Math.floor(dto.penaltyAmount ?? 0));
       }
@@ -3266,7 +3263,7 @@ export class BookingsService {
         rentalTotal: Number(row.rentalTotal ?? row.rental_total ?? 0),
         accessoryAssetId: row.accessoryAssetId ?? row.accessory_asset_id ?? null,
         assetCode: row.accessoryAsset?.asset_code ?? null,
-        replacementValue: Number(row.accessory?.replacement_value ?? 0),
+        purchaseCost: Number(row.accessoryAsset?.purchase_cost ?? 0),
         conditionStatus: row.conditionStatus ?? row.condition_status ?? null,
         conditionNote: row.conditionNote ?? row.condition_note ?? null,
         inspectedAt: row.inspectedAt?.toISOString?.() ?? row.inspected_at?.toISOString?.() ?? null,

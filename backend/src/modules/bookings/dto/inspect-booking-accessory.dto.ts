@@ -15,7 +15,7 @@ export type AccessoryConditionStatus =
  * Ghi nhận kiểm tra 1 dòng phụ kiện khi khách trả đồ.
  * - good: tốt, asset sẵn sàng cho đơn sau
  * - laundry / maintenance / damaged: chuyển asset sang trạng thái tương ứng
- * - lost: mất, asset sang 'lost' + phạt = giá trị đền (replacement_value)
+ * - lost: mất, asset sang 'lost' + phạt = giá vốn của asset (purchase_cost)
  * - penaltyAmount: phiếu phạt khi hư hỏng (không dùng cho mất vì đã có giá đền)
  */
 export class InspectBookingAccessoryDto {

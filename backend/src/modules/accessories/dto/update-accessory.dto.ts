@@ -1,4 +1,4 @@
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class UpdateAccessoryDto {
   @IsOptional()
@@ -30,11 +30,6 @@ export class UpdateAccessoryDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  replacementValue?: number;
 
   @IsOptional()
   @IsBoolean()

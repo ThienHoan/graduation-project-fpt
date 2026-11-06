@@ -1264,8 +1264,8 @@ async function handleComplete(finalAssetStatus: string) {
             {form.status === "lost" && (
               <p className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700">
                 Tự động đền{" "}
-                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.replacementValue ?? 0)}
-                {" "}— trừ vào cọc
+                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.purchaseCost ?? 0)}
+                {" "}— Sẽ trừ vào cọc
               </p>
             )}
             {form.status === "damaged" && (

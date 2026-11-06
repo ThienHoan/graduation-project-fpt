@@ -1417,8 +1417,6 @@ function AccessoriesShowcase({
                       {item.isIncluded
                         ? "Đi kèm miễn phí trong bộ"
                         : `+ ${formatVND(item.extraPrice)} / ngày`}
-                      {item.replacementValue > 0 &&
-                        ` · Đền ${formatVND(item.replacementValue)} nếu mất/hỏng`}
                     </p>
                   </div>
 

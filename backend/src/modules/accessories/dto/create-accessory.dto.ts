@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class CreateAccessoryDto {
   @IsNotEmpty()
@@ -28,9 +28,4 @@ export class CreateAccessoryDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  replacementValue?: number;
 }
