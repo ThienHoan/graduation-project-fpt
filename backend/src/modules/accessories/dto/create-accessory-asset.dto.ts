@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, Matches } from "class-validator";
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Matches, Min } from "class-validator";
 import { CANONICAL_UUID_REGEX } from "../../../common/validation/uuid-pattern";
 
 export class CreateAccessoryAssetDto {
@@ -13,4 +13,9 @@ export class CreateAccessoryAssetDto {
   @IsOptional()
   @IsString()
   conditionNote?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  purchaseCost?: number;
 }

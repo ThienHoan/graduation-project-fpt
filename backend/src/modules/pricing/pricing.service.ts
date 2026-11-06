@@ -8,6 +8,14 @@ import { Prisma, AssetStatus, BookingStatus } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { requestPricingBatch, type PricingBatchItem } from "./pricing-ai-batch";
 import { PrismaService } from "../../prisma/prisma.service";
+import { getCanonicalOccasions } from "../ai/utils/filter-extractor";
+import {
+  hasAnyTargetSelection,
+  matchesCalendarTarget,
+  normalizeTargetList,
+  targetConfigFromRow,
+  type CalendarTargetConfig,
+} from "./price-calendar-targets";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import type { CreatePriceCalendarDto } from "./dto/create-price-calendar.dto";
 import type { CreateSuggestionDto } from "./dto/create-suggestion.dto";
@@ -149,21 +157,6 @@ export class PricingService {
     return Math.round(n * 100) / 100;
   }
 
-  private matchesKeywords(
-    description: string | null | undefined,
-    occasions: string[] | null | undefined,
-    keywords: string[],
-  ): boolean {
-    if (!keywords || keywords.length === 0) return false;
-    const text = (description ?? "").toLowerCase();
-    const occs = (occasions ?? []).map((o) => o.toLowerCase());
-    return keywords.some((k) => {
-      const needle = k?.toLowerCase().trim();
-      if (!needle) return false;
-      return text.includes(needle) || occs.some((o) => o.includes(needle));
-    });
-  }
-
   /**
    * Giá vốn cấp garment = MAX(purchase_cost) trong các asset khả dụng
    * (available / reserved / rented). NULL hoặc <= 0 => không có sàn.
@@ -184,10 +177,20 @@ export class PricingService {
   private async computeBounds(
     sizeId: string,
     config: PricingConfig,
-  ): Promise<PriceBounds & { name: string; sizeLabel: string | null; description: string | null; occasion: string[]; garmentId: string }> {
+  ): Promise<PriceBounds & { name: string; sizeLabel: string | null; description: string | null; occasion: string[]; categoryId: string | null; garmentId: string }> {
     const size = await this.prisma.garment_sizes.findUnique({
       where: { id: sizeId },
-      include: { garments: { select: { id: true, name: true, description: true, occasion: true } } },
+      include: {
+        garments: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            occasion: true,
+            categoryId: true,
+          },
+        },
+      },
     });
     if (!size) throw new NotFoundException("Garment size not found.");
 
@@ -209,6 +212,7 @@ export class PricingService {
       name: size.garments.name,
       description: size.garments.description,
       occasion: size.garments.occasion,
+      categoryId: size.garments.categoryId,
       garmentId: size.garments.id,
     };
   }
@@ -310,7 +314,12 @@ export class PricingService {
       },
     });
     const holidays = events
-      .filter((e) => this.matchesKeywords(bounds.description, bounds.occasion, e.garment_keywords))
+      .filter((e) =>
+        matchesCalendarTarget(
+          { id: bounds.garmentId },
+          targetConfigFromRow(e),
+        ),
+      )
       .map((e) => ({
         name: e.name,
         adjustmentPercent: e.adjustment_percent,
@@ -368,7 +377,8 @@ export class PricingService {
     to_date: Date;
     adjustment_percent: number;
     priority: number;
-    garment_keywords: string[];
+    apply_all: boolean;
+    target_garment_ids: string[];
     is_active: boolean;
     note: string | null;
     created_at: Date;
@@ -381,15 +391,42 @@ export class PricingService {
       toDate: row.to_date.toISOString().slice(0, 10),
       adjustmentPercent: row.adjustment_percent,
       priority: row.priority,
-      garmentKeywords: row.garment_keywords,
+      applyAll: row.apply_all,
+      targetGarmentIds: row.target_garment_ids,
       isActive: row.is_active,
       note: row.note,
       createdAt: row.created_at.toISOString(),
     };
   }
 
+  /**
+   * Chuẩn hóa phạm vi áp dụng từ DTO (create) hoặc kết hợp DTO + dữ liệu cũ
+   * (update). Ném lỗi nếu tắt "áp dụng tất cả" mà không chọn sản phẩm nào.
+   */
+  private resolveTargetConfig(
+    input: {
+      applyAll?: boolean;
+      targetGarmentIds?: string[];
+    },
+    fallback?: CalendarTargetConfig,
+  ): CalendarTargetConfig {
+    const garmentIds = normalizeTargetList(
+      input.targetGarmentIds ?? fallback?.garmentIds ?? [],
+    );
+    const applyAll =
+      input.applyAll ?? fallback?.applyAll ?? garmentIds.length === 0;
+
+    const config: CalendarTargetConfig = { applyAll, garmentIds };
+    if (!hasAnyTargetSelection(config)) {
+      throw new BadRequestException(
+        "Vui lòng chọn ít nhất một sản phẩm cụ thể hoặc bật “Tất cả sản phẩm”.",
+      );
+    }
+    return config;
+  }
+
   async listCalendar(options?: {
-    activeOnly?: boolean;
+    includeInactive?: boolean;
     upcoming?: boolean;
     search?: string;
     from?: string;
@@ -401,7 +438,9 @@ export class PricingService {
     const page = options?.page ?? 1;
     const limit = Math.min(options?.limit ?? 50, 100);
     const where: Prisma.price_calendarWhereInput = {
-      ...(options?.activeOnly ? { is_active: true } : {}),
+      // Mặc định chỉ trả sự kiện đang bật. Xóa là xóa mềm (is_active=false) nên
+      // nếu không lọc, sự kiện vừa xóa vẫn hiện trong danh sách.
+      ...(options?.includeInactive ? {} : { is_active: true }),
       ...(options?.upcoming ? { to_date: { gte: today } } : {}),
       ...(options?.search ? { name: { contains: options.search, mode: "insensitive" } } : {}),
       ...(options?.from || options?.to
@@ -433,6 +472,8 @@ export class PricingService {
       throw new BadRequestException("occasionType không hợp lệ.");
     }
 
+    const target = this.resolveTargetConfig(dto);
+
     const row = await this.prisma.price_calendar.create({
       data: {
         name: dto.name,
@@ -441,7 +482,8 @@ export class PricingService {
         to_date: toDate,
         adjustment_percent: dto.adjustmentPercent ?? 0,
         priority: dto.priority ?? 0,
-        garment_keywords: dto.garmentKeywords ?? [],
+        apply_all: target.applyAll,
+        target_garment_ids: target.garmentIds,
         is_active: dto.isActive ?? true,
         note: dto.note ?? null,
       },
@@ -463,9 +505,17 @@ export class PricingService {
     }
     if (dto.adjustmentPercent !== undefined) data.adjustment_percent = dto.adjustmentPercent;
     if (dto.priority !== undefined) data.priority = dto.priority;
-    if (dto.garmentKeywords !== undefined) data.garment_keywords = dto.garmentKeywords;
     if (dto.isActive !== undefined) data.is_active = dto.isActive;
     if (dto.note !== undefined) data.note = dto.note;
+
+    const scopeProvided =
+      dto.applyAll !== undefined || dto.targetGarmentIds !== undefined;
+
+    if (scopeProvided) {
+      const target = this.resolveTargetConfig(dto, targetConfigFromRow(existing));
+      data.apply_all = target.applyAll;
+      data.target_garment_ids = target.garmentIds;
+    }
 
     if (dto.fromDate !== undefined || dto.toDate !== undefined) {
       const fromDate = dto.fromDate !== undefined ? this.parseDateStr(dto.fromDate, "fromDate") : this.dayUtc(existing.from_date);
@@ -482,11 +532,95 @@ export class PricingService {
   async removeCalendar(id: string) {
     const existing = await this.prisma.price_calendar.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException("Price calendar entry not found.");
+
+    // Chỉ được ẩn khi không còn đề xuất nào đang chờ duyệt thuộc sự kiện này.
+    const pendingCount = await this.prisma.price_suggestions.count({
+      where: { calendar_id: id, status: "pending" },
+    });
+    if (pendingCount > 0) {
+      throw new BadRequestException(
+        `Sự kiện còn ${pendingCount} đề xuất chờ duyệt. Hãy từ chối các đề xuất này trước khi ẩn.`,
+      );
+    }
+
     const row = await this.prisma.price_calendar.update({
       where: { id },
       data: { is_active: false },
     });
     return ok({ id, deactivated: true, calendar: this.serializeCalendar(row) });
+  }
+
+  // ── Lựa chọn phạm vi áp dụng cho form sự kiện ──────────────────────────────
+
+  async getCalendarTargetOptions(options?: {
+    search?: string;
+    categoryId?: string;
+    occasion?: string;
+  }) {
+    const search = options?.search?.trim();
+    const [categories, garments] = await Promise.all([
+      this.prisma.garmentCategory.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      this.prisma.garment.findMany({
+        where: {
+          isActive: true,
+          deletedAt: null,
+          ...(options?.categoryId ? { categoryId: options.categoryId } : {}),
+          ...(options?.occasion ? { occasion: { has: options.occasion } } : {}),
+          ...(search ? { name: { contains: search, mode: "insensitive" } } : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          categoryId: true,
+          occasion: true,
+          category: { select: { name: true } },
+          garment_sizes: {
+            where: { is_active: true },
+            select: {
+              id: true,
+              size_label: true,
+              garment_assets: {
+                where: {
+                  status: { notIn: [AssetStatus.retired, AssetStatus.lost] },
+                },
+                select: { id: true },
+                take: 1,
+              },
+            },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+    const items = garments
+      .map((g) => {
+        const usableSizes = g.garment_sizes.filter(
+          (s) => s.garment_assets.length > 0,
+        );
+        return {
+          id: g.id,
+          name: g.name,
+          categoryId: g.categoryId,
+          categoryName: g.category?.name ?? null,
+          occasions: g.occasion ?? [],
+          sizeCount: usableSizes.length,
+          sizeLabels: usableSizes
+            .map((s) => s.size_label ?? "")
+            .filter((label) => label.length > 0),
+        };
+      })
+      .filter((g) => g.sizeCount > 0);
+
+    return ok({
+      categories,
+      occasions: getCanonicalOccasions(),
+      garments: items,
+    });
   }
 
   // ── Sinh đề xuất AI ────────────────────────────────────────────────────────
@@ -495,12 +629,30 @@ export class PricingService {
     const calendar = await this.prisma.price_calendar.findUnique({ where: { id: calendarId } });
     if (!calendar) throw new NotFoundException("Price calendar entry not found.");
 
+    const target = targetConfigFromRow(calendar);
     const sizes = await this.prisma.garment_sizes.findMany({
-      where: { is_active: true },
-      include: { garments: { select: { description: true, occasion: true } } },
+      where: {
+        is_active: true,
+        garments: { isActive: true, deletedAt: null },
+      },
+      include: {
+        garments: {
+          select: {
+            id: true,
+            categoryId: true,
+            description: true,
+            occasion: true,
+          },
+        },
+      },
     });
     return sizes
-      .filter((s) => this.matchesKeywords(s.garments.description, s.garments.occasion, calendar.garment_keywords))
+      .filter((s) =>
+        matchesCalendarTarget(
+          { id: s.garments.id },
+          target,
+        ),
+      )
       .map((s) => s.id);
   }
 
@@ -555,7 +707,7 @@ export class PricingService {
       if (sizeIds.length === 0) {
         return ok({
           generated: 0,
-          skipped: [{ note: "Không có garment nào vừa khớp garment_keywords vừa có ít nhất 1 asset tồn tại." }],
+          skipped: [{ note: "Không có sản phẩm nào trong phạm vi sự kiện vừa có ít nhất 1 tài sản tồn tại." }],
           suggestions: [],
         });
       }
@@ -787,6 +939,7 @@ export class PricingService {
             OR: [
               { garment_sizes: { garments: { name: { contains: options.search, mode: "insensitive" } } } },
               { garment_sizes: { size_label: { contains: options.search, mode: "insensitive" } } },
+              { price_calendar: { name: { contains: options.search, mode: "insensitive" } } },
             ],
           }
         : {}),

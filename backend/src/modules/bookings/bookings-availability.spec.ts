@@ -16,6 +16,9 @@ function createMockPrisma() {
     bookingItem: {
       findMany: vi.fn(),
     },
+    systemSetting: {
+      findUnique: vi.fn().mockResolvedValue({ key: "laundry_buffer_days", value: { value: 0 } }),
+    },
   };
 }
 
@@ -115,5 +118,40 @@ describe("BookingsService.getSizeAvailabilityCalendar", () => {
         toDate: "2027-10-05",
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("locks 1 buffer day after rentalEndDate for laundry when laundry_buffer_days=1", async () => {
+    prisma.garment_sizes.findFirst.mockResolvedValue({ id: SIZE_ID });
+    prisma.garmentAsset.findMany.mockResolvedValue([{ id: "a1", status: "available" }]);
+    prisma.bookingItem.findMany.mockResolvedValue([
+      {
+        garmentAssetId: null,
+        booking: {
+          id: "b1",
+          status: "confirmed",
+          rentalStartDate: new Date("2026-10-10T00:00:00.000Z"),
+          rentalEndDate: new Date("2026-10-10T00:00:00.000Z"),
+        },
+      },
+    ]);
+    prisma.systemSetting.findUnique.mockResolvedValue({
+      key: "laundry_buffer_days",
+      value: { value: 1 },
+    });
+
+    const result = await service.getSizeAvailabilityCalendar({
+      garmentSizeId: SIZE_ID,
+      fromDate: "2026-10-10",
+      toDate: "2026-10-12",
+    });
+
+    expect(result.data?.days).toEqual([
+      // Ngày 10: b1 thuê → hết hàng (availableCount: 0)
+      { date: "2026-10-10", available: false, availableCount: 0, capacity: 1 },
+      // Ngày 11: đệm giặt 1 ngày sau ngày 10 → bị khoá (availableCount: 0)
+      { date: "2026-10-11", available: false, availableCount: 0, capacity: 1 },
+      // Ngày 12: hết hạn giặt → sẵn sàng (availableCount: 1)
+      { date: "2026-10-12", available: true, availableCount: 1, capacity: 1 },
+    ]);
   });
 });

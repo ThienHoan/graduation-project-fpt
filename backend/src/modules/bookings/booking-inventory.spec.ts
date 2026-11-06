@@ -77,4 +77,61 @@ describe("booking inventory helper", () => {
     expect(isUnreturnedOverdue(booking("b1", BookingStatus.renting, "2026-01-01", "2026-01-04"), day("2026-01-05"))).toBe(true);
     expect(isUnreturnedOverdue(booking("b2", BookingStatus.returned, "2026-01-01", "2026-01-04"), day("2026-01-05"))).toBe(false);
   });
+
+  it("blocks laundry buffer days after rentalEndDate", () => {
+    // 1 chiếc áo, 1 đơn kết thúc ngày 03.
+    // Với buffer=1 ngày, ngày 04 vẫn bị khoá → available chỉ từ ngày 05.
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-04"),
+        endDay: day("2026-01-04"),
+        assets: [asset("a1")],
+        items: [
+          {
+            garmentAssetId: null,
+            booking: booking("b1", BookingStatus.confirmed, "2026-01-01", "2026-01-03"),
+          },
+        ],
+        laundryBufferDays: 1,
+      }),
+    );
+    expect(result.available).toBe(0);
+  });
+
+  it("does not block when request starts after buffer window", () => {
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-05"),
+        endDay: day("2026-01-05"),
+        assets: [asset("a1")],
+        items: [
+          {
+            garmentAssetId: null,
+            booking: booking("b1", BookingStatus.confirmed, "2026-01-01", "2026-01-03"),
+          },
+        ],
+        laundryBufferDays: 1,
+      }),
+    );
+    expect(result.available).toBe(1);
+  });
+
+  it("does not apply buffer to INVENTORY_RELEASED_STATUSES that already exclude demand", () => {
+    // completed đơn không tính demand — buffer không áp dụng
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-04"),
+        endDay: day("2026-01-04"),
+        assets: [asset("a1")],
+        items: [
+          {
+            garmentAssetId: null,
+            booking: booking("b1", BookingStatus.completed, "2026-01-01", "2026-01-03"),
+          },
+        ],
+        laundryBufferDays: 1,
+      }),
+    );
+    expect(result.available).toBe(1);
+  });
 });

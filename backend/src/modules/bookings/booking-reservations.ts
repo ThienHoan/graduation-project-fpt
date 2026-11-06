@@ -3,6 +3,7 @@ import { AssetStatus, BookingStatus, Prisma } from "@prisma/client";
 import {
   INVENTORY_RELEASED_STATUSES, InventoryItem, PHYSICAL_HOLD_STATUSES,
   RENTABLE_ASSET_STATUSES, isUnreturnedOverdue, parseRentalDateRange, vietnamToday,
+  DAY_MS, DEFAULT_LAUNDRY_BUFFER_DAYS,
 } from "./booking-inventory";
 
 const ASSIGNMENT_SELECT = {
@@ -41,6 +42,7 @@ export interface AssetScheduleRequest {
   garmentId?: string;
   garmentSizeId?: string;
   now?: Date;
+  laundryBufferDays?: number;
 }
 
 export interface AccessoryAssetScheduleRequest {
@@ -51,6 +53,7 @@ export interface AccessoryAssetScheduleRequest {
   startDay: Date;
   endDay: Date;
   now?: Date;
+  laundryBufferDays?: number;
 }
 
 /** Bản sao của assertAssetScheduleAvailable cho phụ kiện (accessory_assets).
@@ -75,15 +78,19 @@ export async function assertAccessoryAssetScheduleAvailable(
     },
   });
 
+  const buffer = request.laundryBufferDays !== undefined ? request.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   const today = vietnamToday(request.now);
+  const requestEndWithBuffer = new Date(+endDay + buffer * DAY_MS);
+
   for (const assignment of assignments) {
     if (assignment.id === request.accessoryItemId) continue;
     if (assignment.bookingId === request.bookingId) {
       throw new ConflictException("Không được gán cùng một accessory asset cho hai món trong một booking.");
     }
     const booking = assignment.booking;
-    if (isUnreturnedOverdue(booking, today) || (booking.rentalStartDate <= endDay && booking.rentalEndDate >= startDay)) {
-      throw new ConflictException("Accessory asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày.");
+    const bookingEndWithBuffer = new Date(+booking.rentalEndDate + buffer * DAY_MS);
+    if (isUnreturnedOverdue(booking, today) || (booking.rentalStartDate <= requestEndWithBuffer && bookingEndWithBuffer >= startDay)) {
+      throw new ConflictException("Accessory asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày (bao gồm ngày đệm giặt).");
     }
   }
 }
@@ -108,7 +115,10 @@ export async function assertAssetScheduleAvailable(
   }
   const assignments = await activeAssignments(client, asset.id);
 
+  const buffer = request.laundryBufferDays !== undefined ? request.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   const today = vietnamToday(request.now);
+  const requestEndWithBuffer = new Date(+endDay + buffer * DAY_MS);
+
   for (const assignment of assignments) {
     if (assignment.id === request.itemId) continue;
     if (assignment.bookingId === request.bookingId) {
@@ -117,8 +127,9 @@ export async function assertAssetScheduleAvailable(
     const booking = assignment.booking;
     const physicalStart = PHYSICAL_HOLD_STATUSES.includes(booking.status) && asset.status !== AssetStatus.available
       ? new Date(Math.min(+today, +booking.rentalStartDate)) : booking.rentalStartDate;
-    if (isUnreturnedOverdue(booking, today) || (physicalStart <= endDay && booking.rentalEndDate >= startDay)) {
-      throw new ConflictException("Asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày.");
+    const bookingEndWithBuffer = new Date(+booking.rentalEndDate + buffer * DAY_MS);
+    if (isUnreturnedOverdue(booking, today) || (physicalStart <= requestEndWithBuffer && bookingEndWithBuffer >= startDay)) {
+      throw new ConflictException("Asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày (bao gồm ngày đệm giặt).");
     }
   }
 }
@@ -148,6 +159,9 @@ export async function claimBookingAssets(client: Prisma.TransactionClient, booki
     const asset = await client.garmentAsset.findUnique({ where: { id: assetId } });
     if (!asset) throw new ConflictException("Asset không còn tồn tại.");
     const assignments = await activeAssignments(client, assetId);
+    const buffer = DEFAULT_LAUNDRY_BUFFER_DAYS;
+    const requestEndWithBuffer = new Date(+endDay + buffer * DAY_MS);
+
     // Block only if another booking is physically holding this asset AND their rental
     // period overlaps with ours (or they are unreturned-overdue). Admin may legitimately
     // assign the same physical asset to back-to-back bookings on non-overlapping dates,
@@ -159,7 +173,8 @@ export async function claimBookingAssets(client: Prisma.TransactionClient, booki
       // Physically held assets extend their start date to today if already reserved/rented.
       const physicalStart = asset.status !== AssetStatus.available
         ? new Date(Math.min(+today, +item.booking.rentalStartDate)) : item.booking.rentalStartDate;
-      return physicalStart <= endDay && item.booking.rentalEndDate >= startDay;
+      const bookingEndWithBuffer = new Date(+item.booking.rentalEndDate + buffer * DAY_MS);
+      return physicalStart <= requestEndWithBuffer && bookingEndWithBuffer >= startDay;
     });
     if (conflictingHolder) {
       throw new ConflictException("Asset đang được đơn khác giữ và có lịch thuê trùng ngày.");

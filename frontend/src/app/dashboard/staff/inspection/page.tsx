@@ -8,6 +8,8 @@ import {
   getStaffReturnBookings,
   getBookingInspections,
   createInspectionSession,
+  getDamageFeeTable,
+  type DamageFeeEntry,
   addInspectionFinding,
   deleteInspectionFinding,
   addInspectionPhoto,
@@ -41,14 +43,20 @@ import {
   Sparkles,
   Shirt,
   ZoomIn,
+  Tag,
   ClipboardCheck,
   X,
+  Lock,
+  Unlock,
+  PenLine,
+  User,
   Camera,
   UploadCloud,
   Layers,
   ArrowRight,
   Bot,
   RefreshCw,
+  RotateCcw,
   CheckCheck,
   ShieldCheck,
   ShieldAlert,
@@ -56,10 +64,27 @@ import {
   Send,
   Trash2,
   Loader2,
+  Smartphone,
+  FolderOpen,
+  SwitchCamera,
+  ChevronDown,
+  BarChart3,
   type LucideIcon,
 } from "lucide-react";
 
 // ── Helpers ──
+
+const DAMAGE_LOCATIONS = [
+  "Cổ áo",
+  "Tà trước",
+  "Tà sau",
+  "Nách áo",
+  "Cổ tay",
+  "Gấu váy / Quần",
+  "Khóa kéo",
+  "Lớp lót trong",
+  "Đính đá / Hạt cườm",
+];
 
 function formatDate(iso: string) {
   const [y, m, d] = iso.split("-");
@@ -125,6 +150,18 @@ const FINAL_ACTIONS = [
   },
 ];
 
+// Các nấc % quy chuẩn cho từng nhóm lỗi có thể thay đổi linh hoạt theo giá trị áo
+const TIERED_DAMAGE_PCTS: Record<string, { tiers: number[]; defaultPct: number }> = {
+  "Rách to / mất phụ kiện đính": {
+    tiers: [15, 20, 25, 30],
+    defaultPct: 20,
+  },
+  "Biến dạng / ố vàng nghiêm trọng": {
+    tiers: [30, 40, 50, 60],
+    defaultPct: 40,
+  },
+};
+
 // ── Component ──
 
 export default function StaffInspectionPage() {
@@ -147,11 +184,33 @@ export default function StaffInspectionPage() {
   const [findingText, setFindingText] = useState("");
   const [findingPenalty, setFindingPenalty] = useState("");
   const [findingSeverity, setFindingSeverity] = useState("low");
-  const [photoUrl, setPhotoUrl] = useState("");
+  const [findingDescription, setFindingDescription] = useState("");
+  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
+  const [isManualPenalty, setIsManualPenalty] = useState(false);
+  const [damageFeeTable, setDamageFeeTable] = useState<DamageFeeEntry[]>([
+    { label: "Rách nhỏ / sờn vải nhẹ", amount: 50000, severity: "low" },
+    { label: "Mất khuy / tuột chỉ", amount: 30000, severity: "low" },
+    { label: "Vết bẩn không giặt sạch", amount: 80000, severity: "medium" },
+    { label: "Rách to / mất phụ kiện đính", pct: 20, tiers: [15, 20, 25, 30], severity: "medium" },
+    { label: "Biến dạng / ố vàng nghiêm trọng", pct: 40, tiers: [30, 40, 50, 60], severity: "high" },
+    { label: "Hư hỏng không phục hồi / mất đồ", pct: 100, severity: "severe" },
+  ]);
+  const [selectedDamageFeeLabel, setSelectedDamageFeeLabel] = useState<string | null>(null);
+  const [selectedPctStep, setSelectedPctStep] = useState<number | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
   const [currentNote, setCurrentNote] = useState("");
   const [finalizingBooking, setFinalizingBooking] = useState(false);
   const [finalizeMsg, setFinalizeMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Live Camera / Webcam states
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<"environment" | "user">("environment");
+  const [capturedInSession, setCapturedInSession] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const mobileCameraInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // AI comparison states
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
@@ -177,6 +236,16 @@ export default function StaffInspectionPage() {
 
   // Modal to view detailed inspection report
   const [viewingModalSessionId, setViewingModalSessionId] = useState<string | null>(null);
+
+  // Collapsible sections
+  const [sectionOpen, setSectionOpen] = useState({
+    findings: true,       // Kiểm tra tình trạng & Ghi nhận lỗi
+    penaltyMeter: true,   // Thước đo tiền phạt
+    findingsList: true,   // Lỗi đã ghi nhận vào biên bản
+    aiComparison: true,   // Đối chiếu hình ảnh & Thẩm định AI
+  });
+  const toggleSection = (key: keyof typeof sectionOpen) =>
+    setSectionOpen((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // Lightbox phóng to ảnh khi bấm vào
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -234,7 +303,13 @@ export default function StaffInspectionPage() {
   const activeBookingIdRef = useRef<string | null>(null);
   const isInitialLoadedRef = useRef(false);
 
-  const refreshReturnBookings = useCallback(async (preserveCurrent = true) => {
+  const mockSessionsMapRef = useRef(mockSessionsMap);
+  useEffect(() => {
+    mockSessionsMapRef.current = mockSessionsMap;
+  }, [mockSessionsMap]);
+
+  const refreshReturnBookings = useCallback(async (preserveCurrent = true, showLoading = false) => {
+    if (showLoading) setLoadingBookings(true);
     try {
       const res = await getStaffReturnBookings();
       if (res.success && res.data && res.data.length > 0) {
@@ -260,83 +335,88 @@ export default function StaffInspectionPage() {
       }
     } catch {
       setBookings(mockReturnBookings);
-      const targetId = mockReturnBookings[0].id;
+      const currentId = activeBookingIdRef.current;
+      const targetId = preserveCurrent && currentId && mockReturnBookings.some((b) => b.id === currentId)
+        ? currentId
+        : mockReturnBookings[0].id;
       activeBookingIdRef.current = targetId;
       setSelectedBookingId(targetId);
       return targetId;
     } finally {
-      setLoadingBookings(false);
+      if (showLoading) setLoadingBookings(false);
     }
   }, []);
 
-  const refreshSessions = useCallback(async (bookingId: string | null) => {
+  const refreshSessions = useCallback(async (bookingId: string | null, showLoading = false) => {
     if (!bookingId) {
       setSessions([]);
       setLoadingSessions(false);
       return;
     }
-    setLoadingSessions(true);
+    if (showLoading) setLoadingSessions(true);
     try {
       const res = await getBookingInspections(bookingId);
       if (res.success && res.data && res.data.length > 0) {
         setSessions(res.data);
       } else {
-        setSessions(mockSessionsMap[bookingId] ?? []);
+        setSessions(mockSessionsMapRef.current[bookingId] ?? []);
       }
     } catch {
-      setSessions(mockSessionsMap[bookingId] ?? []);
+      setSessions(mockSessionsMapRef.current[bookingId] ?? []);
     } finally {
-      setLoadingSessions(false);
+      if (showLoading) setLoadingSessions(false);
     }
-  }, [mockSessionsMap]);
+  }, []);
 
-// Tải đồng bộ lần đầu: queue đơn trả + sessions của đơn đầu tiên cùng lúc (không bị waterfall, không bị nháy trang tạo kiểm tra)
-useEffect(() => {
-  let cancelled = false;
-  async function init() {
-    setLoadingBookings(true);
-    setLoadingSessions(true);
-    setErrorMsg(null);
-    const targetBookingId = await refreshReturnBookings(false);
-    if (cancelled) return;
-    if (targetBookingId) {
-      await refreshSessions(targetBookingId);
-    } else {
+  // Tải đồng bộ lần đầu: queue đơn trả + sessions của đơn đầu tiên cùng lúc (không bị waterfall, không bị nháy trang tạo kiểm tra)
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      setLoadingBookings(true);
+      setLoadingSessions(true);
+      setErrorMsg(null);
+      const targetBookingId = await refreshReturnBookings(false, false);
+      if (cancelled) return;
+      if (targetBookingId) {
+        await refreshSessions(targetBookingId, false);
+      }
+      setLoadingBookings(false);
       setLoadingSessions(false);
+      isInitialLoadedRef.current = true;
     }
-    isInitialLoadedRef.current = true;
-  }
-  void init();
-  return () => {
-    cancelled = true;
-  };
-}, [refreshReturnBookings, refreshSessions]);
+    void init();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-// Khi nhân viên chọn thủ công một đơn khác trong danh sách
-useEffect(() => {
-  if (!isInitialLoadedRef.current) return;
-  if (!selectedBookingId) {
-    activeBookingIdRef.current = null;
-    setSessions([]);
-    return;
-  }
-  if (activeBookingIdRef.current !== selectedBookingId) {
-    activeBookingIdRef.current = selectedBookingId;
-    setSelectedItemId(null);
-    void refreshSessions(selectedBookingId);
-  }
-}, [selectedBookingId, refreshSessions]);
+  // Khi nhân viên chọn thủ công một đơn khác trong danh sách
+  useEffect(() => {
+    if (!isInitialLoadedRef.current) return;
+    if (!selectedBookingId) {
+      activeBookingIdRef.current = null;
+      setSessions([]);
+      return;
+    }
+    if (activeBookingIdRef.current !== selectedBookingId) {
+      activeBookingIdRef.current = selectedBookingId;
+      setSelectedItemId(null);
+      void refreshSessions(selectedBookingId, true);
+    }
+  }, [selectedBookingId, refreshSessions]);
 
-const refreshQueueOnly = useCallback(async () => {
-  await refreshReturnBookings(true);
-}, [refreshReturnBookings]);
+  const refreshQueueOnly = useCallback(async () => {
+    await refreshReturnBookings(true, false);
+  }, [refreshReturnBookings]);
 
-const refreshAll = useCallback(async () => {
-  const targetBookingId = await refreshReturnBookings(true);
-  if (targetBookingId) {
-    await refreshSessions(targetBookingId);
-  }
-}, [refreshReturnBookings, refreshSessions]);
+  const refreshAll = useCallback(async () => {
+    const currentId = activeBookingIdRef.current;
+    await refreshReturnBookings(true, false);
+    if (currentId) {
+      await refreshSessions(currentId, false);
+    }
+  }, [refreshReturnBookings, refreshSessions]);
 
 useRealtimeInvalidation({
   bookings: refreshAll,
@@ -370,7 +450,6 @@ function clearItemForm() {
   setFindingText("");
   setFindingPenalty("");
   setFindingSeverity("low");
-  setPhotoUrl("");
   setCurrentNote("");
 }
 
@@ -415,17 +494,134 @@ const garmentValue = useMemo(() => {
 }, [selectedItem, activeSession]);
 
 const hasSevereIssue = activeSession?.findings?.some((f) => f.severity === "severe") ?? false;
-const garmentRatio = garmentValue > 0 ? currentTotalPenalty / garmentValue : 0;
-const isPenaltyHigh = currentTotalPenalty > 0 && (
-  (currentDeposit > 0 ? (currentTotalPenalty / currentDeposit > 0.3 || currentTotalPenalty > currentDeposit) : true) ||
-  (garmentValue > 0 && garmentRatio >= 0.7) ||
-  hasSevereIssue
+const isPenaltyCapped = garmentValue > 0 && currentTotalPenalty > garmentValue;
+const effectivePenalty = isPenaltyCapped ? garmentValue : currentTotalPenalty;
+const excessPenalty = isPenaltyCapped ? currentTotalPenalty - garmentValue : 0;
+const cappedRatio = garmentValue > 0 ? effectivePenalty / garmentValue : 0;
+
+// Tính toán phân bổ cọc & số tiền khách phải bù thêm ngoài cọc (hoặc được hoàn lại)
+const depositDeduction = currentDeposit > 0 ? Math.min(effectivePenalty, currentDeposit) : 0;
+const additionalPayRequired = currentDeposit > 0 ? Math.max(0, effectivePenalty - currentDeposit) : effectivePenalty;
+const refundDeposit = currentDeposit > 0 ? Math.max(0, currentDeposit - effectivePenalty) : 0;
+
+const isPenaltyHigh = effectivePenalty > 0 && (
+  (currentDeposit > 0 ? (effectivePenalty / currentDeposit > 0.3 || effectivePenalty > currentDeposit) : true) ||
+  (garmentValue > 0 && cappedRatio >= 0.7) ||
+  hasSevereIssue ||
+  isPenaltyCapped
 );
 const isPendingApproval = activeSession?.status === "pending_manager_approval";
 // Check toan bo sessions cua booking - neu con session nao cho manager duyet
 // thi booking chua the dong, hien canh bao thay vi de staff bam nut loi
 const hasPendingManagerApproval = sessions.some((s) => s.status === "pending_manager_approval");
 const pendingApprovalSessions = sessions.filter((s) => s.status === "pending_manager_approval");
+
+useEffect(() => {
+  getDamageFeeTable()
+    .then((res) => {
+      if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+        setDamageFeeTable(res.data);
+      }
+    })
+    .catch(() => {});
+}, []);
+
+const handleSelectDamageFee = useCallback(
+  (entry: DamageFeeEntry) => {
+    setSelectedDamageFeeLabel(entry.label);
+    setFindingText(entry.label);
+    setFindingSeverity(entry.severity);
+    setIsManualPenalty(false);
+
+    const defaultPct = entry.pct ?? TIERED_DAMAGE_PCTS[entry.label]?.defaultPct ?? null;
+    setSelectedPctStep(defaultPct);
+
+    let penalty = 0;
+    if (entry.amount !== undefined && entry.amount !== null) {
+      penalty = Number(entry.amount);
+    } else if (defaultPct !== null) {
+      const base = garmentValue > 0 ? garmentValue : 400000;
+      penalty = Math.round(((base * defaultPct) / 100) / 1000) * 1000;
+    }
+    setFindingPenalty(penalty > 0 ? String(penalty) : "");
+
+    // Tính toán nếu phạt vượt tiền cọc
+    const extraCompensation =
+      currentDeposit > 0 && penalty > currentDeposit
+        ? ` (Vượt cọc ${currentDeposit.toLocaleString("vi-VN")}đ, khách cần bù thêm ${(penalty - currentDeposit).toLocaleString("vi-VN")}đ)`
+        : "";
+
+    const pctLabel = defaultPct !== null && defaultPct < 100 ? ` (${defaultPct}%)` : "";
+    // Sinh mô tả chuẩn
+    if (selectedLocations.length > 0) {
+      setFindingDescription(`Ghi nhận ${entry.label}${pctLabel} tại: ${selectedLocations.join(", ")}${extraCompensation}`);
+    } else {
+      setFindingDescription(`Ghi nhận: ${entry.label}${pctLabel}${extraCompensation}`);
+    }
+
+    // Nếu tiền phạt vượt cọc và chưa có ghi chú, tự động gợi ý ghi chú gửi Quản lý
+    if (currentDeposit > 0 && penalty > currentDeposit) {
+      const diff = penalty - currentDeposit;
+      setCurrentNote((prev) =>
+        prev.trim()
+          ? prev
+          : `Ghi nhận ${entry.label}${pctLabel} (phạt ${penalty.toLocaleString("vi-VN")}đ). Tiền cọc (${currentDeposit.toLocaleString("vi-VN")}đ) không đủ, đề xuất khấu trừ toàn bộ 100% cọc và truy thu bù thêm ${diff.toLocaleString("vi-VN")}đ từ khách hàng.`
+      );
+    }
+  },
+  [garmentValue, selectedLocations, currentDeposit],
+);
+
+const handleSelectPctStep = useCallback(
+  (pct: number) => {
+    setSelectedPctStep(pct);
+    const base = garmentValue > 0 ? garmentValue : 400000;
+    const penalty = Math.round(((base * pct) / 100) / 1000) * 1000;
+    setFindingPenalty(penalty > 0 ? String(penalty) : "");
+
+    // Cập nhật severity theo nấc %
+    const newSeverity = pct >= 100 ? "severe" : pct >= 40 ? "high" : "medium";
+    setFindingSeverity(newSeverity);
+
+    const entryLabel = selectedDamageFeeLabel || findingText.trim() || "Hư hại trang phục";
+    const extraCompensation =
+      currentDeposit > 0 && penalty > currentDeposit
+        ? ` (Vượt cọc ${currentDeposit.toLocaleString("vi-VN")}đ, khách cần bù thêm ${(penalty - currentDeposit).toLocaleString("vi-VN")}đ)`
+        : "";
+
+    if (selectedLocations.length > 0) {
+      setFindingDescription(`Ghi nhận ${entryLabel} (${pct}%) tại: ${selectedLocations.join(", ")}${extraCompensation}`);
+    } else {
+      setFindingDescription(`Ghi nhận: ${entryLabel} (${pct}%)${extraCompensation}`);
+    }
+
+    if (currentDeposit > 0 && penalty > currentDeposit) {
+      const diff = penalty - currentDeposit;
+      setCurrentNote((prev) =>
+        prev.trim()
+          ? prev
+          : `Ghi nhận ${entryLabel} (${pct}%) phạt ${penalty.toLocaleString("vi-VN")}đ. Tiền cọc (${currentDeposit.toLocaleString("vi-VN")}đ) không đủ, đề xuất khấu trừ toàn bộ cọc và truy thu bù thêm ${diff.toLocaleString("vi-VN")}đ từ khách hàng.`
+      );
+    }
+  },
+  [garmentValue, selectedDamageFeeLabel, findingText, selectedLocations, currentDeposit],
+);
+
+const handleToggleLocation = useCallback(
+  (loc: string) => {
+    setSelectedLocations((prev) => {
+      const next = prev.includes(loc) ? prev.filter((l) => l !== loc) : [...prev, loc];
+      const baseName = findingText.trim() || "hư tổn trang phục";
+      if (next.length > 0) {
+        setFindingDescription(`Ghi nhận ${baseName} tại: ${next.join(", ")}`);
+      } else {
+        setFindingDescription(findingText.trim() ? `Ghi nhận: ${findingText.trim()}` : "");
+      }
+      return next;
+    });
+  },
+  [findingText],
+);
 
 // Tính sẵn sàng hoàn tất đơn trên frontend để hiển thị blocker rõ ràng
 const bookingReadiness = useMemo(() => {
@@ -543,10 +739,12 @@ async function handleAddFinding() {
   if (!activeSession || !findingText.trim()) return;
   setActioning("finding");
   setErrorMsg(null);
+  const finalDesc = findingDescription.trim() || currentNote.trim() || `Ghi nhận lỗi: ${findingText.trim()}`;
   try {
     const res = await addInspectionFinding(activeSession.id, {
       findingType: findingText.trim(),
       severity: findingSeverity,
+      description: finalDesc,
       penaltyAmount: findingPenalty ? Number(findingPenalty) : 0,
     });
     if (res.success && res.data) {
@@ -559,6 +757,11 @@ async function handleAddFinding() {
       );
       setFindingText("");
       setFindingPenalty("");
+      setFindingDescription("");
+      setSelectedLocations([]);
+      setIsManualPenalty(false);
+      setSelectedDamageFeeLabel(null);
+      setSelectedPctStep(null);
       setActioning(null);
       return;
     }
@@ -570,7 +773,7 @@ async function handleAddFinding() {
     id: `finding-${Date.now()}`,
     findingType: findingText.trim(),
     severity: findingSeverity,
-    description: currentNote.trim() || `Ghi nhận lỗi: ${findingText.trim()}`,
+    description: finalDesc,
     penaltyAmount: findingPenalty ? Number(findingPenalty) : 0,
     createdAt: new Date().toISOString(),
   };
@@ -591,65 +794,83 @@ async function handleAddFinding() {
   }
   setFindingText("");
   setFindingPenalty("");
+  setFindingDescription("");
+  setSelectedLocations([]);
+  setIsManualPenalty(false);
+  setSelectedDamageFeeLabel(null);
+  setSelectedPctStep(null);
   setActioning(null);
 }
 
-async function handleAddPhoto() {
-  if (!activeSession || !photoUrl.trim()) return;
-  setActioning("photo");
-  setErrorMsg(null);
-  try {
-    const res = await addInspectionPhoto(activeSession.id, {
-      imageUrl: photoUrl.trim(),
-    });
-    if (res.success && res.data) {
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === activeSession.id
-            ? { ...s, photos: [...s.photos, res.data!] }
-            : s,
-        ),
-      );
-      setPhotoUrl("");
-      setActioning(null);
-      return;
+  const startCamera = useCallback(async (facing: "environment" | "user" = "environment") => {
+    setCameraError(null);
+    setIsCameraModalOpen(true);
+    setCapturedInSession(0);
+    try {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+        cameraStreamRef.current = null;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: facing,
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      console.error("Camera access error:", err);
+      setCameraError("Không thể mở camera. Vui lòng cấp quyền truy cập camera cho trình duyệt hoặc dùng nút tải ảnh.");
     }
-  } catch {
-    // Fallback
-  }
+  }, []);
 
-  const newPhoto = {
-    id: `photo-${Date.now()}`,
-    imageUrl: photoUrl.trim(),
-    photoType: "after",
-    note: "Ảnh trả đồ tải lên",
-    createdAt: new Date().toISOString(),
-  };
+  const stopCamera = useCallback(() => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraModalOpen(false);
+    setCameraError(null);
+  }, []);
 
-  const updateSessions = (prev: InspectionSessionResponse[]) =>
-    prev.map((s) =>
-      s.id === activeSession.id
-        ? { ...s, photos: [...s.photos, newPhoto] }
-        : s,
-    );
+  const toggleCameraFacing = useCallback(() => {
+    const next = cameraFacingMode === "environment" ? "user" : "environment";
+    setCameraFacingMode(next);
+    startCamera(next);
+  }, [cameraFacingMode, startCamera]);
 
-  setSessions(updateSessions);
-  if (selectedBookingId) {
-    setMockSessionsMap((prev) => ({
-      ...prev,
-      [selectedBookingId]: updateSessions(prev[selectedBookingId] ?? []),
-    }));
-  }
-  setPhotoUrl("");
-  setActioning(null);
-}
+  useEffect(() => {
+    if (isCameraModalOpen && cameraStreamRef.current && videoRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [isCameraModalOpen]);
 
-async function handleReturnPhotoUpload(files: FileList | null) {
-  if (!activeSession || !files || files.length === 0) return;
+  useEffect(() => {
+    return () => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+async function handleReturnPhotoUpload(files: FileList | File[] | null) {
+  if (!activeSession || !files) return;
+  const fileArray = Array.from(files);
+  if (fileArray.length === 0) return;
   setUploadingReturnPhoto(true);
   setErrorMsg(null);
   try {
-    for (const file of Array.from(files)) {
+    for (const file of fileArray) {
       let url: string;
       try {
         url = await uploadFile(file, "handover");
@@ -701,6 +922,30 @@ async function handleReturnPhotoUpload(files: FileList | null) {
     setUploadingReturnPhoto(false);
   }
 }
+
+const takeCameraPhoto = useCallback(async () => {
+  const video = videoRef.current;
+  if (!video || video.videoWidth === 0 || !activeSession) return;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  if (cameraFacingMode === "user") {
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, 0, 0);
+
+  canvas.toBlob(async (blob) => {
+    if (!blob) return;
+    const file = new File([blob], `tra-do-${Date.now()}.jpg`, { type: "image/jpeg" });
+    await handleReturnPhotoUpload([file]);
+    setCapturedInSession((prev) => prev + 1);
+  }, "image/jpeg", 0.92);
+}, [activeSession, cameraFacingMode]);
 
 async function handleDeleteReturnPhoto(photoId: string) {
   if (!activeSession) return;
@@ -1264,8 +1509,8 @@ async function handleComplete(finalAssetStatus: string) {
             {form.status === "lost" && (
               <p className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700">
                 Tự động đền{" "}
-                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.replacementValue ?? 0)}
-                {" "}— trừ vào cọc
+                {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(acc.purchaseCost ?? 0)}
+                {" "}— Sẽ trừ vào cọc
               </p>
             )}
             {form.status === "damaged" && (
@@ -1587,7 +1832,7 @@ async function handleComplete(finalAssetStatus: string) {
                     </div>
                   )}
                   <div>
-                    <h2 className="font-display text-xl text-ink sm:text-2xl">
+                    <h2 className="text-xl font-bold text-ink sm:text-2xl">
                       {selectedItem.garmentName ?? "Trang phục"}
                     </h2>
                     {selectedItem.assetCode ? (
@@ -1678,7 +1923,7 @@ async function handleComplete(finalAssetStatus: string) {
                 {selectedItemSession?.status === "completed" ? (
                   <>
                     <CheckCircle2 className="mx-auto h-12 w-12 text-jade" />
-                    <h3 className="mt-4 font-display text-2xl text-ink">Món này đã kiểm tra xong</h3>
+                    <h3 className="mt-4 text-2xl font-bold text-ink">Món này đã kiểm tra xong</h3>
                     <p className="mt-2 text-stone-500">
                       Chọn món khác trong danh sách tài sản để tiếp tục kiểm tra đơn trả.
                     </p>
@@ -1686,7 +1931,7 @@ async function handleComplete(finalAssetStatus: string) {
                 ) : (
                   <>
                     <ClipboardCheck className="mx-auto h-12 w-12 text-stone-300" />
-                    <h3 className="mt-4 font-display text-2xl text-ink">
+                    <h3 className="mt-4 text-2xl font-bold text-ink">
                       Bắt đầu kiểm tra
                     </h3>
                     <p className="mt-2 text-stone-500">
@@ -1732,99 +1977,662 @@ async function handleComplete(finalAssetStatus: string) {
               </section>
             ) : activeSession ? (
               <>
-                {/* Condition assessment */}
-                <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-                  <h2 className="mb-6 border-b border-sand pb-3 text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">
-                    Đánh giá tình trạng
-                  </h2>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    {[
-                      {
-                        key: "ok",
-                        icon: CheckCircle2,
-                        color: "text-jade",
-                        bg: "bg-jade/5",
-                        border: "hover:border-jade",
-                        title: "Không vấn đề",
-                        desc: "Sẵn sàng cho làm sạch tiêu chuẩn",
-                      },
-                      {
-                        key: "low",
-                        icon: Wrench,
-                        color: "text-orange-700",
-                        bg: "bg-lotus/5",
-                        border: "hover:border-orange-600",
-                        title: "Mòn nhẹ",
-                        desc: "Cần vá nhỏ hoặc xử lý điểm bẩn",
-                      },
-                      {
-                        key: "high",
-                        icon: AlertOctagon,
-                        color: "text-red-700",
-                        bg: "bg-red-50",
-                        border: "hover:border-red-700",
-                        title: "Hư hỏng nặng",
-                        desc: "Cần chuyển phục hồi ngay",
-                      },
-                    ].map((opt) => {
-                      const OptIcon = opt.icon;
-                      return (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => {
-                            if (!findingText.trim()) {
-                              setFindingText(
-                                opt.key === "ok"
-                                  ? "Tình trạng tốt"
-                                  : opt.key === "low"
-                                    ? "Mòn nhẹ / vết bẩn nhỏ"
-                                    : "Hư hỏng nặng cần phục hồi",
-                              );
-                            }
-                            if (opt.key === "low") setFindingSeverity("medium");
-                            if (opt.key === "high") setFindingSeverity("high");
-                          }}
-                          className={`rounded-lg border border-sand ${opt.bg} p-4 text-center transition ${opt.border}`}
-                        >
-                          <OptIcon className={`mx-auto h-8 w-8 ${opt.color}`} />
-                          <h3 className="mt-2 font-semibold text-ink">{opt.title}</h3>
-                          <p className="mt-1 text-sm text-stone-600">{opt.desc}</p>
-                        </button>
-                      );
-                    })}
-                  </div>
+                {/* ═══════════════════════════════════════════════════════
+                    UNIFIED PANEL: Kiểm tra tình trạng & Ghi nhận lỗi
+                ════════════════════════════════════════════════════════ */}
+                <section className="rounded-2xl border border-sand bg-white shadow-sm overflow-hidden transition-all duration-200 hover:border-antique/40">
 
-                  <div className="mt-6">
-                    <label className="mb-2 block text-sm font-semibold uppercase tracking-[0.16em] text-ink">
-                      Ghi chú chi tiết
-                    </label>
-                    <textarea
-                      className="h-32 w-full rounded-lg border border-sand bg-mist p-4 text-sm text-ink outline-none transition focus:border-antique"
-                      placeholder="Mô tả vị trí sờn, vết bẩn hoặc phụ kiện thiếu..."
-                      value={currentNote}
-                      onChange={(e) => setCurrentNote(e.target.value)}
-                    />
-                  </div>
-
-                  {/* Findings list */}
-                  {activeSession.findings.length > 0 && (
-                    <div className="mt-6 border-t border-sand pt-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-stone-500">
-                          Ghi nhận đã lưu ({activeSession.findings.length})
-                        </h3>
-                        <span className="text-xs text-stone-500 italic">Nhân viên có thể xóa bớt lỗi nếu AI bắt nhầm</span>
+                  {/* ── HEADER COLLAPSIBLE ── */}
+                  <button
+                    type="button"
+                    onClick={() => toggleSection("findings")}
+                    className="w-full border-b border-sand/80 bg-mist/60 px-6 py-4 flex items-center justify-between hover:bg-sand/20 transition-all text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-antique/15 border border-antique/30 text-bronze shadow-2xs">
+                        <ClipboardCheck className="h-5 w-5 text-oxblood" />
                       </div>
-                      <div className="space-y-2">
-                        {activeSession.findings.map((f) => (
+                      <div>
+                        <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-ink">
+                          Kiểm tra tình trạng &amp; Ghi nhận lỗi
+                        </h2>
+                        <p className="text-[11px] text-stone-500 mt-0.5">
+                          Chọn định mức chuẩn hoặc tùy chỉnh để tính phạt minh bạch
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-xs text-stone-500">
+                      {activeSession.findings.length > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-700 shadow-2xs">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
+                          {activeSession.findings.length} lỗi đã ghi nhận
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-sand/30 px-2.5 py-0.5 text-[11px] font-medium text-stone-500">
+                          Chưa có lỗi nào
+                        </span>
+                      )}
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sand/30 text-stone-500 transition-transform duration-200">
+                        <ChevronDown
+                          className={`h-4 w-4 transition-transform duration-200 ${sectionOpen.findings ? "rotate-180" : ""}`}
+                        />
+                      </div>
+                    </div>
+                  </button>
+
+                  <div className={`grid transition-all duration-300 ease-in-out ${sectionOpen.findings ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                  <div className="p-6 space-y-6">
+
+                    {/* ── Ghi nhận từng lỗi cụ thể ── */}
+                    <div className="rounded-xl border border-sand/80 bg-mist/50 p-5 space-y-5 shadow-2xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sand/60 pb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-antique/20 text-bronze">
+                            <Tag className="h-3.5 w-3.5" />
+                          </div>
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-ink">
+                            Ghi nhận lỗi hư hỏng &amp; Phạt định mức
+                          </h3>
+                        </div>
+                        <span className="text-[11px] text-stone-400 italic">
+                          Click chọn định mức + vị trí để tự động tính phí phạt
+                        </span>
+                      </div>
+
+                      {/* 1. Chọn loại lỗi từ định mức */}
+                      <div className="space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-antique text-white text-[11px] font-bold shadow-2xs">
+                              1
+                            </span>
+                            <span className="text-xs font-bold uppercase tracking-wider text-ink/80">
+                              Chọn từ bảng định mức chuẩn
+                            </span>
+                          </div>
+                          {/* Chú thích màu sắc theo ngưỡng cọc và 100% áo */}
+                          <div className="flex flex-wrap items-center gap-3 text-[11px] text-stone-500">
+                            <span className="inline-flex items-center gap-1.5 text-emerald-700 font-medium">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              ≤ 30% cọc (Tự xử lý)
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-amber-700 font-medium">
+                              <span className="h-2 w-2 rounded-full bg-amber-500" />
+                              &gt; 30% cọc (QL duyệt)
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 text-rose-700 font-medium">
+                              <span className="h-2 w-2 rounded-full bg-rose-500" />
+                              100% áo (Đền toàn bộ)
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Danh sách chip định mức với màu chuẩn hóa */}
+                        <div className="flex flex-wrap gap-2.5 pt-1">
+                          {damageFeeTable.map((entry) => {
+                            const isSelected = selectedDamageFeeLabel === entry.label;
+                            let feeDisplay = "";
+                            let calculatedPenalty = 0;
+                            if (entry.amount !== undefined && entry.amount !== null) {
+                              calculatedPenalty = Number(entry.amount);
+                              feeDisplay = `${calculatedPenalty.toLocaleString("vi-VN")}đ`;
+                            } else if (entry.pct !== undefined && entry.pct !== null) {
+                              const base = garmentValue > 0 ? garmentValue : 400000;
+                              const currentPct = isSelected && selectedPctStep !== null ? selectedPctStep : Number(entry.pct);
+                              calculatedPenalty = Math.round(((base * currentPct) / 100) / 1000) * 1000;
+                              feeDisplay = `${currentPct}% (~${calculatedPenalty.toLocaleString("vi-VN")}đ)`;
+                            }
+
+                            // Quy chuẩn màu: 100% áo -> Đỏ | > 30% cọc -> Vàng cam | <= 30% cọc -> Xanh ngọc
+                            let colorClasses = "border-emerald-200 bg-emerald-50/70 text-emerald-900 hover:bg-emerald-100 hover:border-emerald-300";
+                            if (entry.pct === 100 || entry.severity === "severe") {
+                              colorClasses = "border-rose-200 bg-rose-50/70 text-rose-900 hover:bg-rose-100 hover:border-rose-300";
+                            } else if (currentDeposit > 0 && calculatedPenalty / currentDeposit > 0.3) {
+                              colorClasses = "border-amber-200 bg-amber-50/70 text-amber-900 hover:bg-amber-100 hover:border-amber-300";
+                            }
+
+                            return (
+                              <button
+                                key={entry.label}
+                                type="button"
+                                onClick={() => handleSelectDamageFee(entry)}
+                                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition-all shadow-2xs hover:shadow-xs active:scale-[0.98] ${colorClasses} ${
+                                  isSelected ? "ring-2 ring-antique ring-offset-2 font-bold shadow-sm scale-[1.02] bg-white border-antique" : ""
+                                }`}
+                                title={`Mức độ: ${entry.severity} — Click để tự động áp dụng định mức`}
+                              >
+                                <span>{entry.label}</span>
+                                <span className="rounded-lg bg-white/90 px-2 py-0.5 text-[11px] font-bold text-ink shadow-2xs">
+                                  {feeDisplay}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Hàng chọn nấc % quy chuẩn linh hoạt (tự động theo tiers từ DB hoặc nấc mặc định) */}
+                        {(() => {
+                          if (!selectedDamageFeeLabel) return null;
+                          const currentEntry = damageFeeTable.find((e) => e.label === selectedDamageFeeLabel);
+                          if (!currentEntry || currentEntry.pct === undefined || currentEntry.pct === null) return null;
+                          const tiers = (Array.isArray(currentEntry.tiers) && currentEntry.tiers.length > 0)
+                            ? currentEntry.tiers
+                            : (TIERED_DAMAGE_PCTS[currentEntry.label]?.tiers ?? (currentEntry.pct > 0 && currentEntry.pct < 100 ? [Math.max(5, currentEntry.pct - 10), currentEntry.pct, Math.min(95, currentEntry.pct + 10)] : null));
+                          if (!tiers || tiers.length <= 1) return null;
+                          const defaultPct = Number(currentEntry.pct);
+
+                          return (
+                            <div className="mt-3 rounded-xl border border-sand bg-white p-3.5 shadow-2xs space-y-2">
+                              <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
+                                <span className="font-bold text-ink flex items-center gap-1.5">
+                                  <Tag className="h-3.5 w-3.5 text-antique" />
+                                  Chọn nấc % hư tổn định sẵn cho: &ldquo;{currentEntry.label}&rdquo;
+                                </span>
+                                <span className="text-[11px] text-stone-500">
+                                  Giá trị trang phục: <strong className="text-ink">{garmentValue > 0 ? `${garmentValue.toLocaleString("vi-VN")}đ` : "400.000đ"}</strong>
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {tiers.map((pct) => {
+                                  const isCurrentTier = selectedPctStep === pct;
+                                  const base = garmentValue > 0 ? garmentValue : 400000;
+                                  const tierAmount = Math.round(((base * pct) / 100) / 1000) * 1000;
+                                  const isOver30 = currentDeposit > 0 && tierAmount / currentDeposit > 0.3;
+                                  return (
+                                    <button
+                                      key={pct}
+                                      type="button"
+                                      onClick={() => handleSelectPctStep(pct)}
+                                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-all shadow-2xs active:scale-95 ${
+                                        isCurrentTier
+                                          ? "bg-antique text-white border-antique shadow-xs scale-105"
+                                          : isOver30
+                                          ? "bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100"
+                                          : "bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100"
+                                      }`}
+                                    >
+                                      <span>{pct}%</span>
+                                      <span className={`text-[10px] rounded px-1.5 py-0.5 ${isCurrentTier ? "bg-white/20 text-white" : "bg-black/5 text-ink font-bold"}`}>
+                                        ~{tierAmount.toLocaleString("vi-VN")}đ
+                                      </span>
+                                      {pct === defaultPct && (
+                                        <span className="text-[10px] opacity-75 font-normal">(Chuẩn)</span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* 2. Chọn vị trí hư hỏng */}
+                      <div className="space-y-2 border-t border-sand/50 pt-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-antique text-white text-[11px] font-bold shadow-2xs">
+                              2
+                            </span>
+                            <span className="text-xs font-bold uppercase tracking-wider text-ink/80">
+                              Chọn vị trí hư hỏng
+                            </span>
+                            <span className="text-[11px] text-stone-400 italic">(1 chạm, không cần gõ bàn phím)</span>
+                          </div>
+                          {selectedLocations.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedLocations([]);
+                                setFindingDescription(findingText.trim() ? `Ghi nhận: ${findingText.trim()}` : "");
+                              }}
+                              className="text-[11px] font-medium text-stone-500 hover:text-rose-600 underline"
+                            >
+                              Xóa chọn ({selectedLocations.length})
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-0.5">
+                          {DAMAGE_LOCATIONS.map((loc) => {
+                            const isLocSelected = selectedLocations.includes(loc);
+                            return (
+                              <button
+                                key={loc}
+                                type="button"
+                                onClick={() => handleToggleLocation(loc)}
+                                className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-all shadow-2xs active:scale-95 ${
+                                  isLocSelected
+                                    ? "border-oxblood bg-lotus text-white font-semibold shadow-xs"
+                                    : "border-sand bg-white text-stone-700 hover:border-antique/80 hover:bg-sand/20"
+                                }`}
+                              >
+                                {isLocSelected ? `✓ ${loc}` : `+ ${loc}`}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 3. Form nhập chi tiết + nút thêm */}
+                      <div className="rounded-xl border border-sand bg-white p-4 space-y-3.5 shadow-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-antique text-white text-[11px] font-bold shadow-2xs">
+                            3
+                          </span>
+                          <span className="text-xs font-bold uppercase tracking-wider text-ink/80">
+                            Xác nhận thông tin &amp; Phí phạt
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-end gap-3.5">
+                          {/* Loại lỗi */}
+                          <div className="min-w-[200px] flex-1">
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                              Loại lỗi / Hư hại
+                            </label>
+                            <input
+                              className="w-full rounded-xl border border-sand bg-mist/30 px-3.5 py-2.5 text-sm text-ink outline-none transition focus:border-antique focus:bg-white focus:ring-2 focus:ring-antique/20"
+                              placeholder="Chọn từ định mức (1) hoặc gõ tùy chỉnh..."
+                              value={findingText}
+                              onChange={(e) => {
+                                setFindingText(e.target.value);
+                                if (selectedDamageFeeLabel && e.target.value !== selectedDamageFeeLabel) {
+                                  setSelectedDamageFeeLabel(null);
+                                }
+                              }}
+                            />
+                          </div>
+
+                          {/* Mức độ */}
+                          <div className="w-36">
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                              Mức độ
+                            </label>
+                            <select
+                              className="w-full rounded-xl border border-sand bg-mist/30 px-3 py-2.5 text-sm text-ink outline-none transition focus:border-antique focus:bg-white focus:ring-2 focus:ring-antique/20"
+                              value={findingSeverity}
+                              onChange={(e) => setFindingSeverity(e.target.value)}
+                              aria-label="Mức độ"
+                            >
+                              <option value="low">Nhẹ</option>
+                              <option value="medium">Trung bình</option>
+                              <option value="high">Nặng</option>
+                              <option value="severe">Nghiêm trọng</option>
+                            </select>
+                          </div>
+
+                          {/* Tiền phạt với cơ chế Tự khóa / Mở sửa */}
+                          <div className="w-52">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <label className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
+                                Phí phạt (VNĐ)
+                              </label>
+                              {isManualPenalty ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsManualPenalty(false);
+                                    if (selectedDamageFeeLabel) {
+                                      const entry = damageFeeTable.find((e) => e.label === selectedDamageFeeLabel);
+                                      if (entry) handleSelectDamageFee(entry);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 hover:underline"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  <span>Khôi phục định mức</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setIsManualPenalty(true)}
+                                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-antique hover:underline"
+                                >
+                                  <PenLine className="h-3 w-3" />
+                                  <span>Sửa ngoại lệ</span>
+                                </button>
+                              )}
+                            </div>
+                            <div className="relative">
+                              <input
+                                className={`w-full rounded-xl border px-3.5 py-2.5 text-sm font-semibold outline-none transition ${
+                                  isManualPenalty
+                                    ? "border-amber-400 bg-white ring-2 ring-amber-300/40 text-ink"
+                                    : "border-sand bg-mist/80 text-stone-700 cursor-not-allowed"
+                                }`}
+                                placeholder="0"
+                                type="number"
+                                min={0}
+                                readOnly={!isManualPenalty}
+                                value={findingPenalty}
+                                onChange={(e) => setFindingPenalty(e.target.value)}
+                              />
+                              <div className="absolute right-2.5 top-3">
+                                {isManualPenalty ? (
+                                  <span className="inline-flex items-center gap-1 text-amber-800 font-bold text-[10px] bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-300">
+                                    <Unlock className="h-3 w-3" /> Nhập tay
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-emerald-800 font-bold text-[10px] bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-300">
+                                    <Lock className="h-3 w-3" /> Tự khóa
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mô tả chi tiết — tự sinh + nhân viên có thể sửa */}
+                        <div className="flex flex-wrap gap-3 items-end pt-1">
+                          <div className="min-w-[240px] flex-1">
+                            <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                              Mô tả chi tiết
+                              <span className="ml-1.5 font-normal text-stone-400 normal-case">
+                                (Tự sinh từ loại lỗi + vị trí — có thể bổ sung)
+                              </span>
+                            </label>
+                            <input
+                              className="w-full rounded-xl border border-sand bg-mist/30 px-3.5 py-2.5 text-sm outline-none transition focus:border-antique focus:bg-white focus:ring-2 focus:ring-antique/20"
+                              placeholder="Mô tả sẽ tự sinh khi bạn chọn lỗi và vị trí phía trên..."
+                              value={findingDescription}
+                              onChange={(e) => setFindingDescription(e.target.value)}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            disabled={actioning === "finding" || !findingText.trim()}
+                            onClick={handleAddFinding}
+                            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-lotus to-oxblood px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-lotus/20 transition-all hover:brightness-105 active:scale-[0.98] disabled:opacity-50 shrink-0"
+                          >
+                            {actioning === "finding" ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span>Đang lưu...</span>
+                              </>
+                            ) : (
+                              <span>+ Thêm vào biên bản</span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* end form ghi nhận lỗi */}
+                  </div>
+                  </div>
+                  </div>
+                </section>
+
+                {/* ═══════════════════════════════════════════════════════
+                    SECTION: Thước đo tiền phạt & Phương án cọc
+                ════════════════════════════════════════════════════════ */}
+                {currentTotalPenalty > 0 && (
+                  <section className="rounded-2xl border border-sand bg-white shadow-sm overflow-hidden transition-all duration-200 hover:border-antique/40">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection("penaltyMeter")}
+                      className="w-full border-b border-sand/80 bg-mist/60 px-6 py-4 flex items-center justify-between hover:bg-sand/20 transition-all text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 shadow-2xs">
+                          <BarChart3 className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-ink">
+                            Thước đo tiền phạt &amp; Phương án cọc
+                          </h2>
+                          <p className="text-[11px] text-stone-500 mt-0.5">
+                            Đối soát tự động với tiền cọc và giá trị gốc của trang phục
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                        <div className="hidden sm:flex items-center gap-2 rounded-lg bg-sand/30 px-2.5 py-1 text-stone-600">
+                          <span>Áo:</span>
+                          <strong className="text-ink">
+                            {garmentValue > 0 ? `${garmentValue.toLocaleString("vi-VN")}đ` : "400.000đ"}
+                          </strong>
+                        </div>
+                        <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 border border-rose-200 px-2.5 py-1">
+                          <span className="text-stone-500">Tổng phạt:</span>
+                          <strong className={isPenaltyCapped ? "text-red-600 line-through text-xs" : "text-rose-700 text-sm font-bold"}>
+                            {currentTotalPenalty.toLocaleString("vi-VN")}đ
+                          </strong>
+                        </div>
+                        {isPenaltyCapped && (
+                          <span className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-bold text-white shadow-2xs">
+                            Trần 100%: {effectivePenalty.toLocaleString("vi-VN")}đ
+                          </span>
+                        )}
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sand/30 text-stone-500 transition-transform duration-200">
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform duration-200 ${sectionOpen.penaltyMeter ? "rotate-180" : ""}`}
+                          />
+                        </div>
+                      </div>
+                    </button>
+                    <div className={`grid transition-all duration-300 ease-in-out ${sectionOpen.penaltyMeter ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                    <div className="overflow-hidden">
+                    <div className="p-6 space-y-4">
+                      {/* Gauge / Progress bar với marker */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-stone-500">
+                          <span>Tiến độ thiệt hại:</span>
+                          <span>Ngưỡng 30% cọc: duyệt Quản lý · 100% áo: Trả hết giá trị</span>
+                        </div>
+                        <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-stone-100 p-0.5 border border-sand/60">
+                          {/* Marker 30% cọc nếu có */}
+                          {currentDeposit > 0 && (
+                            <div
+                              className="absolute top-0 bottom-0 z-10 w-0.5 bg-ink/40"
+                              style={{ left: `${Math.min(100, Math.round(((currentDeposit * 0.3) / (garmentValue > 0 ? garmentValue : 400000)) * 100))}%` }}
+                              title="Ngưỡng 30% tiền cọc (bắt đầu cần Quản lý phê duyệt)"
+                            />
+                          )}
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 shadow-inner ${
+                              isPenaltyCapped
+                                ? "bg-gradient-to-r from-lotus to-rose-600"
+                                : cappedRatio >= 0.7
+                                ? "bg-gradient-to-r from-orange-500 to-rose-500"
+                                : cappedRatio >= 0.3
+                                ? "bg-gradient-to-r from-amber-400 to-orange-500"
+                                : "bg-gradient-to-r from-jade to-emerald-500"
+                            }`}
+                            style={{ width: `${Math.min(100, Math.round(cappedRatio * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Tỷ lệ % + trạng thái thẩm định */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-mist/60 border border-sand/60 p-3 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-stone-600">
+                          <span>
+                            Thiệt hại áo:{" "}
+                            <strong className={cappedRatio >= 0.7 ? "text-rose-700 font-bold" : "text-ink font-bold"}>
+                              {Math.round(cappedRatio * 100)}%
+                            </strong>
+                          </span>
+                          {currentDeposit > 0 && (
+                            <>
+                              <span className="text-stone-300">|</span>
+                              <span>
+                                Chiếm cọc ({currentDeposit.toLocaleString("vi-VN")}đ):{" "}
+                                <strong className={
+                                  effectivePenalty / currentDeposit > 1
+                                    ? "text-red-700 font-bold"
+                                    : effectivePenalty / currentDeposit > 0.3
+                                    ? "text-amber-700 font-bold"
+                                    : "text-emerald-700 font-bold"
+                                }>
+                                  {Math.round((effectivePenalty / currentDeposit) * 100)}%
+                                </strong>
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        <div>
+                          {isPenaltyHigh ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg text-xs">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                              {isPenaltyCapped
+                                ? "Chạm trần 100% áo — Bắt buộc Quản lý duyệt"
+                                : hasSevereIssue
+                                ? "Hư hỏng nghiêm trọng — Cần Quản lý duyệt"
+                                : currentDeposit > 0 && effectivePenalty / currentDeposit > 0.3
+                                ? "Phạt vượt 30% tiền cọc — Cần Quản lý duyệt"
+                                : "Thiệt hại nặng (≥70% áo) — Cần Quản lý duyệt"}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg text-xs">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                              Mức phạt trong giới hạn an toàn — Staff tự xử lý
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Phương án xử lý cọc */}
+                      {currentDeposit > 0 && (
+                        <div
+                          className={`rounded-xl border p-4 text-xs transition-all shadow-2xs ${
+                            additionalPayRequired > 0
+                              ? "border-rose-300 bg-rose-50/70 text-rose-950"
+                              : "border-emerald-300 bg-emerald-50/70 text-emerald-950"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="text-sm font-bold flex items-center gap-2">
+                                {additionalPayRequired > 0 ? (
+                                  <>
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-rose-200 text-rose-700">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                    </div>
+                                    <span>Cọc không đủ bù hư hại — Cần thu thêm tiền:</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-200 text-emerald-700">
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                    </div>
+                                    <span>Khấu trừ trực tiếp vào tiền cọc của khách:</span>
+                                  </>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-stone-600 pl-8">
+                                Tiền cọc giữ: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong>
+                                {" ➔ "}Khấu trừ: <strong className="text-rose-700">{depositDeduction.toLocaleString("vi-VN")}đ</strong>
+                              </p>
+                            </div>
+                            <div>
+                              {additionalPayRequired > 0 ? (
+                                <div className="text-right bg-white border border-rose-300 rounded-xl px-4 py-2 shadow-2xs">
+                                  <span className="text-[10px] uppercase tracking-wider block text-rose-700 font-bold">
+                                    Khách cần thanh toán bù
+                                  </span>
+                                  <span className="text-base font-extrabold text-rose-700">
+                                    +{additionalPayRequired.toLocaleString("vi-VN")}đ
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="text-right bg-white border border-emerald-300 rounded-xl px-4 py-2 shadow-2xs">
+                                  <span className="text-[10px] uppercase tracking-wider block text-emerald-700 font-bold">
+                                    Hoàn trả lại cọc cho khách
+                                  </span>
+                                  <span className="text-base font-extrabold text-emerald-700">
+                                    {refundDeposit.toLocaleString("vi-VN")}đ
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    </div>
+                    </div>
+                  </section>
+                )}
+
+                {/* ═══════════════════════════════════════════════════════
+                    SECTION: Lỗi đã ghi nhận vào biên bản
+                ════════════════════════════════════════════════════════ */}
+                {activeSession.findings.length > 0 && (
+                  <section className="rounded-2xl border border-sand bg-white shadow-sm overflow-hidden transition-all duration-200 hover:border-antique/40">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection("findingsList")}
+                      className="w-full border-b border-sand/80 bg-mist/60 px-6 py-4 flex items-center justify-between hover:bg-sand/20 transition-all text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-jade/10 border border-jade/20 text-jade shadow-2xs">
+                          <ClipboardCheck className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-ink">
+                              Lỗi đã ghi nhận vào biên bản
+                            </h2>
+                            <span className="inline-flex items-center rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-xs font-bold text-rose-700">
+                              {activeSession.findings.length} lỗi
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-stone-500 mt-0.5">
+                            Các lỗi đã được thêm và sẽ xuất hiện trong biên bản trả hàng
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className="hidden sm:inline text-[11px] text-stone-400 italic">
+                          Có thể xóa nếu AI hoặc nhân viên bắt nhầm
+                        </span>
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sand/30 text-stone-500 transition-transform duration-200">
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform duration-200 ${sectionOpen.findingsList ? "rotate-180" : ""}`}
+                          />
+                        </div>
+                      </div>
+                    </button>
+                    <div className={`grid transition-all duration-300 ease-in-out ${sectionOpen.findingsList ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                    <div className="overflow-hidden">
+                    <div className="p-5 space-y-2.5">
+                      {activeSession.findings.map((f) => {
+                        const isAi =
+                          f.findingType.startsWith("[AI]") ||
+                          Boolean(
+                            activeSession.aiComparisonResult?.detectedIssues?.some(
+                              (d) => d.findingType === f.findingType || f.findingType.includes(d.findingType)
+                            )
+                          );
+                        const isPreset =
+                          !isAi &&
+                          damageFeeTable.some(
+                            (e) =>
+                              e.label.toLowerCase() === f.findingType.toLowerCase() ||
+                              f.findingType.toLowerCase().includes(e.label.toLowerCase())
+                          );
+                        return (
                           <div
                             key={f.id}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-sand bg-mist px-4 py-2.5 text-sm"
+                            className="flex items-center justify-between gap-3 rounded-xl border border-sand/80 bg-mist/40 p-3.5 text-sm transition-all hover:bg-white hover:border-antique/40 hover:shadow-2xs"
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-ink">{f.findingType}</span>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isAi ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+                                    <Bot className="h-3 w-3" /> AI Giám định
+                                  </span>
+                                ) : isPreset ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                    <Tag className="h-3 w-3" /> Chuẩn định mức
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                                    <User className="h-3 w-3" /> Nhân viên lập
+                                  </span>
+                                )}
+                                <span className="font-bold text-ink">{f.findingType}</span>
                                 {(() => {
                                   const s = f.severity?.toLowerCase();
                                   const isSevere = s === "severe" || s === "critical";
@@ -1832,14 +2640,15 @@ async function handleComplete(finalAssetStatus: string) {
                                   const isMed = s === "medium" || s === "moderate" || s === "vua";
                                   return (
                                     <span
-                                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold border ${isSevere
-                                          ? "bg-red-100 text-red-800 border-red-300"
+                                      className={`rounded-md px-2 py-0.5 text-[10px] font-bold border ${
+                                        isSevere
+                                          ? "bg-rose-50 text-rose-800 border-rose-200"
                                           : isHigh
-                                            ? "bg-orange-100 text-orange-800 border-orange-300"
-                                            : isMed
-                                              ? "bg-amber-100 text-amber-800 border-amber-300"
-                                              : "bg-blue-100 text-blue-700 border-blue-200"
-                                        }`}
+                                          ? "bg-orange-50 text-orange-800 border-orange-200"
+                                          : isMed
+                                          ? "bg-amber-50 text-amber-800 border-amber-200"
+                                          : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                      }`}
                                     >
                                       {isSevere ? "Nghiêm trọng" : isHigh ? "Nặng" : isMed ? "Trung bình" : "Nhẹ"}
                                     </span>
@@ -1847,75 +2656,37 @@ async function handleComplete(finalAssetStatus: string) {
                                 })()}
                               </div>
                               {f.description && (
-                                <p className="mt-0.5 text-xs text-stone-600 line-clamp-2">{f.description}</p>
+                                <p className="mt-1 text-xs text-stone-500 line-clamp-2 pl-0.5">{f.description}</p>
                               )}
                             </div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 shrink-0">
                               {f.penaltyAmount > 0 && (
-                                <span className="text-xs font-bold text-red-700">
-                                  {new Intl.NumberFormat("vi-VN", {
-                                    style: "currency",
-                                    currency: "VND",
-                                  }).format(f.penaltyAmount)}
+                                <span className="text-sm font-bold text-rose-700 bg-white border border-rose-200 rounded-lg px-2.5 py-1 shadow-2xs">
+                                  {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(f.penaltyAmount)}
                                 </span>
                               )}
                               <button
                                 type="button"
                                 disabled={deletingFindingId === f.id}
                                 onClick={() => void handleDeleteFinding(f.id)}
-                                className="rounded p-1 text-stone-400 hover:bg-red-50 hover:text-red-600 transition disabled:opacity-50"
+                                className="flex h-8 w-8 items-center justify-center rounded-lg text-stone-400 hover:bg-rose-50 hover:text-rose-600 transition-colors disabled:opacity-50"
                                 title="Xóa lỗi này khỏi biên bản"
                               >
                                 {deletingFindingId === f.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin text-red-600" />
+                                  <Loader2 className="h-4 w-4 animate-spin text-rose-600" />
                                 ) : (
                                   <Trash2 className="h-4 w-4" />
                                 )}
                               </button>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
-                  )}
-
-                  {/* Quick add finding */}
-                  <div className="mt-4 flex flex-wrap gap-3 rounded-lg border border-dashed border-sand bg-mist p-4">
-                    <input
-                      className="min-w-[200px] flex-1 rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
-                      placeholder="Loại lỗi / ghi nhận..."
-                      value={findingText}
-                      onChange={(e) => setFindingText(e.target.value)}
-                    />
-                    <select
-                      className="rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none"
-                      value={findingSeverity}
-                      onChange={(e) => setFindingSeverity(e.target.value)}
-                      aria-label="Mức độ"
-                    >
-                      <option value="low">Nhẹ</option>
-                      <option value="medium">Trung bình</option>
-                      <option value="high">Nặng</option>
-                      <option value="severe">Nghiêm trọng (Hủy hoại)</option>
-                    </select>
-                    <input
-                      className="w-36 rounded-lg border border-sand px-3 py-2 text-sm outline-none focus:border-antique"
-                      placeholder="Phí phạt (VNĐ)"
-                      type="number"
-                      min={0}
-                      value={findingPenalty}
-                      onChange={(e) => setFindingPenalty(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      disabled={actioning === "finding" || !findingText.trim()}
-                      onClick={handleAddFinding}
-                      className="rounded-lg bg-lotus px-4 py-2 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
-                    >
-                      {actioning === "finding" ? "..." : "Thêm ghi nhận"}
-                    </button>
-                  </div>
-                </section>
+                    </div>
+                    </div>
+                  </section>
+                )}
 
                 {/* AI Notification Banner */}
                 {aiSuccessMsg && (
@@ -1935,53 +2706,75 @@ async function handleComplete(finalAssetStatus: string) {
                 )}
 
                 {/* Photos & AI Inspection Comparison Section */}
-                <section className="rounded-xl border border-sand bg-white p-6 shadow-sm">
-                  <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Bot className="h-5 w-5 text-lotus" />
-                        <h2 className="font-display text-lg text-ink">
-                          Đối chiếu hình ảnh & Thẩm định AI
-                        </h2>
-                      </div>
-                      <p className="mt-1 text-xs text-stone-500">
-                        So sánh ảnh lúc bàn giao (trước thuê) và ảnh trả hàng thực tế (sau thuê) để phát hiện hư hại chính xác.
-                      </p>
-                    </div>
-
+                <section className="rounded-2xl border border-sand bg-white shadow-sm overflow-hidden transition-all duration-200 hover:border-antique/40">
+                  {/* Header collapsible */}
+                  <div className="w-full border-b border-sand/80 bg-mist/60 px-6 py-4 flex items-center justify-between">
                     <button
                       type="button"
-                      disabled={aiAnalyzing || activeSession.photos.length === 0}
-                      onClick={handleRunAiCompare}
-                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-lotus to-oxblood px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:opacity-50"
-                      title={activeSession.photos.length === 0 ? "Hãy tải lên ít nhất 1 ảnh trả đồ để chạy AI" : "Bấm để AI phân tích đối chiếu ảnh"}
+                      onClick={() => toggleSection("aiComparison")}
+                      className="flex items-center gap-3 text-left flex-1 hover:opacity-85 transition-opacity"
                     >
-                      {aiAnalyzing ? (
-                        <>
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                          <span>AI đang phân tích đối chiếu...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4 text-amber-200" />
-                          <span>{activeSession.aiComparisonResult ? "Phân tích lại bằng AI" : "Phân tích đối chiếu AI"}</span>
-                        </>
-                      )}
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-700 shadow-2xs">
+                        <Bot className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-ink">
+                          Đối chiếu hình ảnh &amp; Thẩm định AI
+                        </h2>
+                        <p className="text-[11px] text-stone-500 mt-0.5">
+                          Tự động so sánh ảnh bàn giao (trước thuê) và ảnh trả hàng thực tế để phát hiện hư hại chính xác
+                        </p>
+                      </div>
                     </button>
+                    <div className="flex items-center gap-2.5 shrink-0 ml-4">
+                      <button
+                        type="button"
+                        disabled={aiAnalyzing || activeSession.photos.length === 0}
+                        onClick={handleRunAiCompare}
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-lotus to-oxblood px-4 py-2 text-xs font-semibold text-white shadow-md shadow-lotus/20 transition-all hover:brightness-105 active:scale-[0.98] disabled:opacity-50"
+                        title={activeSession.photos.length === 0 ? "Hãy tải lên ít nhất 1 ảnh trả đồ để chạy AI" : "Bấm để AI phân tích đối chiếu ảnh"}
+                      >
+                        {aiAnalyzing ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            <span>AI đang phân tích...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4 text-amber-200" />
+                            <span>{activeSession.aiComparisonResult ? "Phân tích lại bằng AI" : "Phân tích đối chiếu AI"}</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleSection("aiComparison")}
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-sand/30 text-stone-500 hover:bg-sand/60 transition-transform duration-200"
+                        aria-label="Đóng mở phần thẩm định AI"
+                      >
+                        <ChevronDown
+                          className={`h-4 w-4 transition-transform duration-200 ${sectionOpen.aiComparison ? "rotate-180" : ""}`}
+                        />
+                      </button>
+                    </div>
                   </div>
+
+                  <div className={`grid transition-all duration-300 ease-in-out ${sectionOpen.aiComparison ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                  <div className="p-6">
 
                   {/* 2-Column Photo Comparison (Trước vs Sau) */}
                   <div className="grid gap-6 md:grid-cols-2">
                     {/* Cột 1: Ảnh bàn giao trước thuê */}
-                    <div className="rounded-xl border border-sand bg-mist/30 p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="flex h-2 w-2 rounded-full bg-jade" />
-                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-700">
+                    <div className="rounded-2xl border border-sand bg-mist/40 p-5 shadow-2xs">
+                      <div className="mb-3.5 flex items-center justify-between border-b border-sand/50 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-2.5 w-2.5 rounded-full bg-jade shadow-xs" />
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-800">
                             Ảnh bàn giao (Trước thuê)
                           </h3>
                         </div>
-                        <span className="rounded-full bg-jade/10 px-2.5 py-0.5 text-[11px] font-semibold text-jade">
+                        <span className="rounded-full bg-jade/10 border border-jade/20 px-3 py-0.5 text-[11px] font-bold text-jade">
                           {activeSession.conditionBeforeRental ? `Tình trạng: ${activeSession.conditionBeforeRental}` : "Lúc bàn giao"}
                         </span>
                       </div>
@@ -2039,15 +2832,15 @@ async function handleComplete(finalAssetStatus: string) {
                     </div>
 
                     {/* Cột 2: Ảnh trả hàng sau thuê */}
-                    <div className="rounded-xl border border-sand bg-mist/30 p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="flex h-2 w-2 rounded-full bg-lotus" />
-                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-700">
+                    <div className="rounded-2xl border border-sand bg-mist/40 p-5 shadow-2xs">
+                      <div className="mb-3.5 flex items-center justify-between border-b border-sand/50 pb-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-2.5 w-2.5 rounded-full bg-lotus shadow-xs" />
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-stone-800">
                             Ảnh nhận trả hàng (Sau thuê)
                           </h3>
                         </div>
-                        <span className="rounded-full bg-lotus/10 px-2.5 py-0.5 text-[11px] font-semibold text-lotus">
+                        <span className="rounded-full bg-lotus/10 border border-lotus/20 px-3 py-0.5 text-[11px] font-bold text-lotus">
                           {activeSession.photos.length} ảnh đã chụp
                         </span>
                       </div>
@@ -2094,59 +2887,108 @@ async function handleComplete(finalAssetStatus: string) {
                           </div>
                         ))}
 
-                        {/* Nút upload file ảnh trả hàng trực tiếp */}
-                        <label className="flex aspect-square cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-lotus/40 bg-lotus/5 text-center transition hover:border-lotus hover:bg-lotus/10">
-                          <input
-                            type="file"
-                            multiple
-                            accept="image/*"
-                            disabled={uploadingReturnPhoto}
-                            onChange={(e) => handleReturnPhotoUpload(e.target.files)}
-                            className="hidden"
-                          />
+                        {/* Nút mở nhanh camera / tải ảnh */}
+                        <button
+                          type="button"
+                          disabled={uploadingReturnPhoto}
+                          onClick={() => startCamera()}
+                          className="flex aspect-square flex-col items-center justify-center rounded-lg border-2 border-dashed border-lotus/40 bg-lotus/5 text-center transition hover:border-lotus hover:bg-lotus/10 disabled:opacity-50"
+                          title="Mở camera chụp ảnh trực tiếp"
+                        >
                           {uploadingReturnPhoto ? (
                             <RefreshCw className="h-5 w-5 animate-spin text-lotus" />
                           ) : (
                             <>
                               <Camera className="h-5 w-5 text-lotus mb-1" />
-                              <span className="text-[11px] font-semibold text-lotus">Chụp / Tải ảnh</span>
+                              <span className="text-[11px] font-semibold text-lotus">Chụp ảnh</span>
                             </>
                           )}
-                        </label>
-                      </div>
-
-                      {/* Nhập link ảnh trực tiếp nếu có */}
-                      <div className="mt-3 flex gap-2">
-                        <input
-                          className="min-w-0 flex-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-xs outline-none focus:border-antique"
-                          placeholder="Hoặc dán URL ảnh trả đồ..."
-                          value={photoUrl}
-                          onChange={(e) => setPhotoUrl(e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          disabled={actioning === "photo" || !photoUrl.trim()}
-                          onClick={handleAddPhoto}
-                          className="rounded-lg bg-stone-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink disabled:opacity-50"
-                        >
-                          {actioning === "photo" ? "..." : "Thêm URL"}
                         </button>
                       </div>
+
+                      {/* Ẩn input file & mobile camera */}
+                      <input
+                        ref={mobileCameraInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        disabled={uploadingReturnPhoto}
+                        onChange={(e) => handleReturnPhotoUpload(e.target.files)}
+                        className="hidden"
+                      />
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        disabled={uploadingReturnPhoto}
+                        onChange={(e) => handleReturnPhotoUpload(e.target.files)}
+                        className="hidden"
+                      />
+
+                      {/* Các nút thao tác chụp ảnh thực tế tại quầy */}
+                      <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
+                        <button
+                          type="button"
+                          disabled={uploadingReturnPhoto}
+                          onClick={() => startCamera()}
+                          className="flex flex-1 min-w-[170px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-jade to-emerald-700 px-3.5 py-2.5 text-xs font-semibold text-white shadow-xs transition-all hover:brightness-105 active:scale-[0.98] disabled:opacity-50"
+                        >
+                          <Camera className="h-4 w-4" />
+                          <span>Chụp trực tiếp (Webcam)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={uploadingReturnPhoto}
+                          onClick={() => mobileCameraInputRef.current?.click()}
+                          className="flex items-center justify-center gap-1.5 rounded-xl border border-sand bg-white px-3.5 py-2.5 text-xs font-semibold text-ink shadow-2xs transition-all hover:border-antique hover:bg-mist active:scale-[0.98] disabled:opacity-50"
+                          title="Chụp bằng camera điện thoại"
+                        >
+                          <Smartphone className="h-4 w-4 text-lotus" />
+                          <span>Camera ĐT</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={uploadingReturnPhoto}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex items-center justify-center gap-1.5 rounded-xl border border-sand bg-white px-3.5 py-2.5 text-xs font-semibold text-ink shadow-2xs transition-all hover:border-antique hover:bg-mist active:scale-[0.98] disabled:opacity-50"
+                          title="Tải ảnh có sẵn từ máy"
+                        >
+                          <FolderOpen className="h-4 w-4 text-stone-600" />
+                          <span>Tải file ảnh</span>
+                        </button>
+                      </div>
+
+                      {uploadingReturnPhoto && (
+                        <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-lotus/10 border border-lotus/20 px-3 py-2 text-xs text-lotus font-medium animate-pulse">
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          <span>Đang tải và cập nhật ảnh trả đồ vào biên bản...</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* KẾT QUẢ PHÂN TÍCH SO SÁNH AI */}
                   {activeSession.aiComparisonResult && (
-                    <div className="mt-6 rounded-xl border border-sand bg-parchment/60 p-5 shadow-xs">
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand pb-3">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="h-5 w-5 text-amber-600" />
-                          <h3 className="font-display text-base text-ink">
-                            Kết quả AI Thẩm định & So sánh
-                          </h3>
+                    <div className="mt-6 rounded-2xl border border-sand bg-gradient-to-br from-parchment/70 via-mist to-white p-6 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sand/70 pb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-700 shadow-2xs">
+                            <Sparkles className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-ink">
+                              Kết quả AI Thẩm định &amp; Đối chiếu
+                            </h3>
+                            <p className="text-[11px] text-stone-500">
+                              Phân tích tự động dựa trên thị giác máy tính và lịch sử bàn giao
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2.5">
                           {/* Huy hiệu tình trạng */}
                           {(() => {
                             const cond = activeSession.aiComparisonResult.overallCondition;
@@ -2159,7 +3001,7 @@ async function handleComplete(finalAssetStatus: string) {
                             };
                             const current = metaMap[cond] ?? metaMap.good;
                             return (
-                              <span className={`rounded-full border px-3 py-1 text-xs font-bold ${current.color}`}>
+                              <span className={`rounded-full border px-3 py-1 text-xs font-bold shadow-2xs ${current.color}`}>
                                 {current.label}
                               </span>
                             );
@@ -2169,14 +3011,14 @@ async function handleComplete(finalAssetStatus: string) {
                             const score = Math.max(0, Math.min(100, activeSession.aiComparisonResult.conditionScore));
                             const loss = 100 - score;
                             return (
-                              <span className="text-xs text-stone-600 bg-sand/40 border border-sand px-2.5 py-1 rounded-full font-medium">
+                              <span className="text-xs text-stone-700 bg-white/90 border border-sand px-3 py-1 rounded-full font-medium shadow-2xs">
                                 Độ nguyên vẹn: <strong className="text-ink font-bold">{score}/100</strong>
                                 {loss > 0 ? (
-                                  <span className="text-amber-800 font-semibold ml-1">
+                                  <span className="text-amber-800 font-bold ml-1.5">
                                     (Hao tổn {loss}%)
                                   </span>
                                 ) : (
-                                  <span className="text-emerald-700 font-semibold ml-1">
+                                  <span className="text-emerald-700 font-bold ml-1.5">
                                     (Hoàn hảo 100%)
                                   </span>
                                 )}
@@ -2187,15 +3029,15 @@ async function handleComplete(finalAssetStatus: string) {
                       </div>
 
                       {/* Tóm tắt đánh giá */}
-                      <p className="mt-3 text-sm leading-relaxed text-stone-800">
+                      <p className="mt-3.5 text-sm leading-relaxed text-stone-800 bg-white/60 p-3.5 rounded-xl border border-sand/50">
                         {activeSession.aiComparisonResult.summary}
                       </p>
 
                       {/* Khuyến nghị hành động */}
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sand bg-white p-3 text-xs">
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white p-3.5 text-xs shadow-2xs">
                         <div>
-                          <span className="font-semibold text-stone-600">Khuyến nghị từ AI: </span>
-                          <span className="font-bold text-ink">
+                          <span className="font-semibold text-stone-500">Khuyến nghị từ AI: </span>
+                          <span className="font-bold text-ink text-sm">
                             {activeSession.aiComparisonResult.recommendedAction === "laundry"
                               ? "Chuyển Giặt Sấy Tiêu Chuẩn"
                               : activeSession.aiComparisonResult.recommendedAction === "maintenance"
@@ -2312,6 +3154,9 @@ async function handleComplete(finalAssetStatus: string) {
                       )}
                     </div>
                   )}
+                  </div>
+                  </div>
+                  </div>
                 </section>
 
                 {/* Finalize message banner */}
@@ -2339,7 +3184,14 @@ async function handleComplete(finalAssetStatus: string) {
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-amber-800">
-                          Mức phạt ({currentTotalPenalty.toLocaleString("vi-VN")}đ) vượt 30% tiền cọc ({currentDeposit.toLocaleString("vi-VN")}đ).
+                          Mức phạt ({effectivePenalty.toLocaleString("vi-VN")}đ)
+                          {garmentValue > 0 && <> (chiếm {Math.min(100, Math.round((effectivePenalty / garmentValue) * 100))}% giá trị áo)</>}
+                          {currentDeposit > 0 && <> · Cọc: {currentDeposit.toLocaleString("vi-VN")}đ</>}.
+                          {additionalPayRequired > 0 && (
+                            <strong className="text-red-700 block mt-1">
+                              👉 Đề xuất truy thu bù thêm từ khách: +{additionalPayRequired.toLocaleString("vi-VN")}đ.
+                            </strong>
+                          )}
                           Biên bản đã được chuyển tự động sang danh sách chờ duyệt của Quản lý. Hệ thống chưa trừ cọc của khách hàng.
                         </p>
                       </div>
@@ -2356,58 +3208,190 @@ async function handleComplete(finalAssetStatus: string) {
                     </div>
                   </div>
                 ) : (
-                  <div className="sticky bottom-0 space-y-3 rounded-xl border border-sand bg-white/95 p-4 shadow-sm backdrop-blur">
-                    {/* Cảnh báo khi cần Quản lý duyệt */}
+                  <div className="space-y-4">
+                    {/* 1. Cảnh báo khi cần Quản lý duyệt hoặc Chạm trần — NẰM TRONG LUỒNG CUỘN TỰ NHIÊN, KHÔNG CHE MÀN HÌNH */}
                     {isPenaltyHigh && (
-                      <div className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                        <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold">Mức phạt cần Quản lý duyệt:</p>
-                          <p className="mt-0.5">
-                            Tổng phạt ghi nhận: <strong>{currentTotalPenalty.toLocaleString("vi-VN")}đ</strong>
-                            {garmentValue > 0 && (
-                              <> (chiếm <strong>{Math.min(100, Math.round((currentTotalPenalty / garmentValue) * 100))}%</strong> giá trị món đồ <strong>{garmentValue.toLocaleString("vi-VN")}đ</strong>)</>
-                            )}
+                      <div
+                        className={`rounded-xl border p-4 text-xs space-y-2 ${
+                          isPenaltyCapped || additionalPayRequired > 0
+                            ? "border-red-300 bg-red-50 text-red-950"
+                            : "border-amber-300 bg-amber-50 text-amber-950"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          {isPenaltyCapped || additionalPayRequired > 0 ? (
+                            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                          ) : (
+                            <ShieldAlert className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+                          )}
+                          <div className="flex-1 space-y-1">
+                            <p className="font-bold text-sm">
+                              {additionalPayRequired > 0
+                                ? "⚠️ Tiền phạt vượt tiền cọc — Cần Quản lý duyệt & Khách bù thêm:"
+                                : isPenaltyCapped
+                                ? "⚠️ Chạm trần 100% giá trị áo — Bắt buộc Quản lý phê duyệt:"
+                                : "Mức phạt cần Quản lý duyệt:"}
+                            </p>
+                            <p className="leading-relaxed">
+                              {isPenaltyCapped ? (
+                                <>
+                                  Tổng phạt các lỗi: <span className="line-through">{currentTotalPenalty.toLocaleString("vi-VN")}đ</span>.{" "}
+                                  Mức phạt áp dụng thực tế:{" "}
+                                  <strong className="text-red-700 font-bold">
+                                    {effectivePenalty.toLocaleString("vi-VN")}đ
+                                  </strong>{" "}
+                                  (khống chế trần 100% giá trị áo {garmentValue.toLocaleString("vi-VN")}đ, miễn {excessPenalty.toLocaleString("vi-VN")}đ vượt trần).
+                                </>
+                              ) : (
+                                <>
+                                  Tổng phạt áp dụng: <strong>{effectivePenalty.toLocaleString("vi-VN")}đ</strong>
+                                  {garmentValue > 0 && (
+                                    <>
+                                      {" "}
+                                      (chiếm{" "}
+                                      <strong>
+                                        {Math.min(100, Math.round((effectivePenalty / garmentValue) * 100))}%
+                                      </strong>{" "}
+                                      giá trị món đồ <strong>{garmentValue.toLocaleString("vi-VN")}đ</strong>)
+                                    </>
+                                  )}
+                                  {currentDeposit > 0 && (
+                                    <>
+                                      {" "}
+                                      / Cọc: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong>
+                                    </>
+                                  )}
+                                  .
+                                </>
+                              )}
+                            </p>
+
+                            {/* Thông báo chi tiết số tiền BÙ THÊM hoặc HOÀN CỌC để Quản lý và Khách cùng biết */}
                             {currentDeposit > 0 && (
-                              <> / Cọc: <strong>{currentDeposit.toLocaleString("vi-VN")}đ</strong></>
-                            )}.
-                            Khi bạn bấm một trong các nút bên dưới, hệ thống sẽ <strong>tự động gửi biên bản sang Quản lý duyệt</strong> (chưa trừ cọc của khách hàng).
-                          </p>
+                              <div className="mt-2 rounded-lg bg-white/95 border border-sand p-2.5 text-xs flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <span className="text-stone-600">Khấu trừ tiền cọc: </span>
+                                  <strong className="text-ink">{depositDeduction.toLocaleString("vi-VN")}đ</strong>
+                                  {" "}({Math.min(100, Math.round((depositDeduction / currentDeposit) * 100))}% cọc)
+                                </div>
+                                <div>
+                                  {additionalPayRequired > 0 ? (
+                                    <span className="font-extrabold text-red-700 bg-red-100 border border-red-300 px-2.5 py-1 rounded text-xs">
+                                      👉 Khách cần thanh toán bù thêm: +{additionalPayRequired.toLocaleString("vi-VN")}đ
+                                    </span>
+                                  ) : (
+                                    <span className="font-extrabold text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded text-xs">
+                                      👉 Hoàn trả cọc còn thừa cho khách: {refundDeposit.toLocaleString("vi-VN")}đ
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            <p className="text-[11px] text-stone-600 italic pt-1">
+                              Khi bạn bấm nút chuyển tiếp bên dưới, hệ thống sẽ{" "}
+                              <strong>tự động gửi biên bản sang Quản lý duyệt</strong> (chưa trừ cọc của khách hàng).
+                            </p>
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      {/* Nút hoàn tất — safety net khi booking ready nhưng chưa tự đóng.
-                           Bình thường booking sẽ tự finalize sau khi staff bấm nút hoàn tất phiên cuối cùng.
-                           Nút này chỉ xuất hiện khi tất cả trang phục/phụ kiện đã xong nhưng booking vẫn còn inspection_pending. */}
-                      {booking?.status === "inspection_pending" && bookingReadiness.ready && !hasPendingManagerApproval && (
-                        <button
-                          type="button"
-                          disabled={finalizingBooking || actioning !== null}
-                          onClick={handleFinalizeBooking}
-                          className="rounded-lg border border-jade bg-jade/5 px-4 py-2.5 text-sm font-semibold text-jade transition hover:bg-jade/15 disabled:opacity-50"
-                        >
-                          {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
-                        </button>
-                      )}
-                      <div className="flex flex-wrap gap-3 ml-auto">
-                        {FINAL_ACTIONS.map((action) => (
-                          <button
-                            key={action.key}
-                            type="button"
-                            disabled={actioning !== null}
-                            onClick={() => handleComplete(action.key)}
-                            className={`inline-flex items-center gap-1.5 rounded-lg px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
-                          >
-                            {isPenaltyHigh && <Send className="h-3.5 w-3.5" />}
-                            {actioning === `complete-${action.key}`
-                              ? "Đang xử lý..."
-                              : isPenaltyHigh
-                                ? action.approvalLabel
-                                : action.label}
-                          </button>
-                        ))}
+                    {/* 2. Ghi chú biên bản gửi Quản lý phê duyệt — NẰM TRONG LUỒNG CUỘN TỰ NHIÊN, KHÔNG CHE MÀN HÌNH */}
+                    <div className="rounded-xl border border-sand bg-white p-4 space-y-2 shadow-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <FileText className="h-4 w-4 text-antique" />
+                          <label className="text-xs font-bold uppercase tracking-wider text-ink">
+                            Ghi chú biên bản gửi Quản lý phê duyệt:
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {activeSession.aiComparisonResult?.summary && (
+                            <button
+                              type="button"
+                              onClick={() => setCurrentNote(activeSession.aiComparisonResult!.summary)}
+                              className="text-xs text-antique hover:underline font-medium"
+                              title="Chép lại kết luận phân tích của AI vào ghi chú"
+                            >
+                              ↺ Điền tóm tắt từ AI
+                            </button>
+                          )}
+                          <span className="text-xs text-stone-500 italic">
+                            (Quản lý sẽ đọc nội dung này khi xem xét duyệt phạt)
+                          </span>
+                        </div>
+                      </div>
+                      <textarea
+                        rows={3}
+                        className="w-full rounded-lg border border-sand bg-mist/30 p-3 text-xs leading-relaxed text-ink outline-none transition focus:border-antique focus:bg-white focus:ring-1 focus:ring-antique resize-y"
+                        placeholder="Nhập ghi chú tổng kết biên bản gửi cho Quản lý (hệ thống tự động điền từ tóm tắt AI hoặc khi phạt vượt cọc)..."
+                        value={currentNote}
+                        onChange={(e) => setCurrentNote(e.target.value)}
+                      />
+                    </div>
+
+                    {/* 3. THANH ACTION BAR STICKY SIÊU GỌN — CHỈ CỐ ĐỊNH HÀNG NÚT BẤM & TỔNG TIỀN */}
+                    <div className="sticky bottom-0 z-20 rounded-xl border border-sand bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        {/* Tóm tắt thanh toán & bù cọc bên trái */}
+                        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                          {effectivePenalty > 0 ? (
+                            <>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-stone-500 font-medium">Tổng phạt:</span>
+                                <strong className="text-red-700 font-bold text-sm">
+                                  {effectivePenalty.toLocaleString("vi-VN")}đ
+                                </strong>
+                              </div>
+                              {currentDeposit > 0 && (
+                                <div className="border-l border-sand pl-2.5 flex items-center gap-1.5">
+                                  {additionalPayRequired > 0 ? (
+                                    <span className="font-extrabold text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded text-xs animate-pulse">
+                                      Khách cần bù: +{additionalPayRequired.toLocaleString("vi-VN")}đ
+                                    </span>
+                                  ) : (
+                                    <span className="font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded text-xs">
+                                      Hoàn cọc cho khách: {refundDeposit.toLocaleString("vi-VN")}đ
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-emerald-700 font-medium">✓ Đồ đạt chuẩn — Không phạt</span>
+                          )}
+                        </div>
+
+                        {/* Hàng nút bấm bên phải */}
+                        <div className="flex flex-wrap items-center gap-2.5 ml-auto">
+                          {booking?.status === "inspection_pending" && bookingReadiness.ready && !hasPendingManagerApproval && (
+                            <button
+                              type="button"
+                              disabled={finalizingBooking || actioning !== null}
+                              onClick={handleFinalizeBooking}
+                              className="rounded-lg border border-jade bg-jade/5 px-4 py-2.5 text-sm font-semibold text-jade transition hover:bg-jade/15 disabled:opacity-50"
+                            >
+                              {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
+                            </button>
+                          )}
+                          {FINAL_ACTIONS.map((action) => (
+                            <button
+                              key={action.key}
+                              type="button"
+                              disabled={actioning !== null}
+                              onClick={() => handleComplete(action.key)}
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${action.style}`}
+                            >
+                              {isPenaltyHigh && <Send className="h-3.5 w-3.5" />}
+                              {actioning === `complete-${action.key}`
+                                ? "Đang xử lý..."
+                                : isPenaltyHigh
+                                  ? action.approvalLabel
+                                  : action.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2417,6 +3401,146 @@ async function handleComplete(finalAssetStatus: string) {
           </div>
         </div>
       )}
+      {/* Live Camera / Webcam Capture Modal */}
+      {isCameraModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chụp ảnh trực tiếp"
+        >
+          <div className="relative flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-stone-900 text-white shadow-2xl">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <Camera className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Chụp ảnh kiểm tra trả đồ</h3>
+                  <p className="text-[11px] text-white/60">Căn chỉnh góc chụp và bấm nút để lưu vào biên bản</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleCameraFacing}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white/90 transition hover:bg-white/20"
+                  title="Chuyển đổi camera trước / sau"
+                >
+                  <SwitchCamera className="h-3.5 w-3.5" />
+                  <span>Đổi camera</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={stopCamera}
+                  className="rounded-lg p-1.5 text-white/70 transition hover:bg-white/10 hover:text-white"
+                  aria-label="Đóng camera"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Video Viewfinder */}
+            <div className="relative aspect-4/3 sm:aspect-16/10 w-full overflow-hidden bg-black flex items-center justify-center">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-full w-full object-cover"
+              />
+
+              {/* Khung hướng dẫn căn chỉnh */}
+              <div className="pointer-events-none absolute inset-6 sm:inset-10 rounded-xl border border-dashed border-white/30 flex flex-col justify-between p-3">
+                <div className="flex justify-between text-[10px] text-white/40 font-mono">
+                  <span>┌</span>
+                  <span>┐</span>
+                </div>
+                <div className="self-center rounded-full bg-black/50 px-3 py-1 text-[11px] text-white/70 backdrop-blur-xs">
+                  Căn trang phục hoặc chi tiết lỗi vào khung ngắm
+                </div>
+                <div className="flex justify-between text-[10px] text-white/40 font-mono">
+                  <span>└</span>
+                  <span>┘</span>
+                </div>
+              </div>
+
+              {/* Badge số ảnh đã chụp trong phiên mở camera này */}
+              {capturedInSession > 0 && (
+                <div className="absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-emerald-600/90 px-3 py-1 text-xs font-semibold text-white shadow-md">
+                  <CheckCheck className="h-3.5 w-3.5" />
+                  <span>Đã chụp {capturedInSession} ảnh</span>
+                </div>
+              )}
+
+              {/* Thông báo lỗi nếu không mở được camera */}
+              {cameraError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-stone-900/95 p-6 text-center">
+                  <AlertTriangle className="h-10 w-10 text-amber-400 mb-2" />
+                  <p className="text-sm font-medium text-white mb-1">Không thể kết nối Camera</p>
+                  <p className="text-xs text-white/60 max-w-md mb-4">{cameraError}</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startCamera(cameraFacingMode)}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
+                    >
+                      Thử lại
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="rounded-lg bg-white/10 px-4 py-2 text-xs font-medium text-white hover:bg-white/20"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Controls */}
+            <div className="flex items-center justify-between border-t border-white/10 bg-stone-950/80 px-5 py-4">
+              <span className="text-xs text-white/60 hidden sm:inline">
+                Có thể chụp nhiều góc khác nhau trước khi đóng
+              </span>
+
+              <div className="flex flex-1 sm:flex-initial items-center justify-center gap-3">
+                <button
+                  type="button"
+                  disabled={uploadingReturnPhoto || !!cameraError}
+                  onClick={takeCameraPhoto}
+                  className="flex items-center gap-2 rounded-full bg-emerald-600 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 hover:scale-105 active:scale-95 disabled:opacity-50"
+                >
+                  {uploadingReturnPhoto ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Đang lưu ảnh...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="h-4 w-4" />
+                      <span>Bấm chụp ảnh</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={stopCamera}
+                  className="rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/20"
+                >
+                  Xong ({capturedInSession})
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Lightbox phóng to ảnh */}
       {lightboxUrl && (
         <div

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   approvePricingSuggestion,
   bulkPricingSuggestionAction,
@@ -11,6 +11,7 @@ import {
   generatePricingSuggestions,
   getGarmentsGrouped,
   getPricingCalendar,
+  getPricingCalendarTargetOptions,
   getPricingPeriods,
   getPricingSuggestions,
   rejectPricingSuggestion,
@@ -21,6 +22,7 @@ import {
   type PriceCalendarEntry,
   type PricePeriodEntry,
   type PriceSuggestionEntry,
+  type PricingCalendarTargetOptions,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { statusBadgeClass } from "@/lib/status-labels";
@@ -38,6 +40,8 @@ import {
   Check,
   X,
   Pencil,
+  Eye,
+  EyeOff,
   type LucideIcon,
 } from "lucide-react";
 
@@ -109,9 +113,8 @@ function ToastView({ toast }: { toast: Toast }) {
   if (!toast) return null;
   return (
     <div
-      className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border animate-slide-in ${
-        toast.kind === "success" ? "bg-jade/5 text-jade border-jade/30" : "bg-red-50 text-red-700 border-red-200"
-      }`}
+      className={`fixed right-6 top-20 z-[120] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold shadow-lg border animate-slide-in ${toast.kind === "success" ? "bg-jade/5 text-jade border-jade/30" : "bg-red-50 text-red-700 border-red-200"
+        }`}
     >
       {toast.kind === "success" ? (
         <CheckCircle2 className="h-5 w-5 shrink-0" />
@@ -254,9 +257,8 @@ export function PricingManagerClient() {
               key={t.key}
               type="button"
               onClick={() => setTab(t.key)}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-                tab === t.key ? "bg-lotus text-white shadow" : "bg-white text-stone-600 border border-sand hover:border-lotus hover:text-lotus"
-              }`}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${tab === t.key ? "bg-lotus text-white shadow" : "bg-white text-stone-600 border border-sand hover:border-lotus hover:text-lotus"
+                }`}
             >
               <TabIcon className="h-4 w-4" />
               {t.label}
@@ -285,29 +287,47 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
   const [filter, setFilter] = useState<DateFilter>(EMPTY_FILTER);
   const [draft, setDraft] = useState<DateFilter>(EMPTY_FILTER);
   const [loading, setLoading] = useState(true);
-  const [showOnlyActive, setShowOnlyActive] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
   const [modal, setModal] = useState<{ open: boolean; editing: PriceCalendarEntry | null }>({ open: false, editing: null });
-  const [deleteTarget, setDeleteTarget] = useState<PriceCalendarEntry | null>(null);
+  const [hideTarget, setHideTarget] = useState<PriceCalendarEntry | null>(null);
+  const [pendingBlock, setPendingBlock] = useState<{
+    event: PriceCalendarEntry;
+    total: number;
+    items: PriceSuggestionEntry[];
+  } | null>(null);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
   const [generating, setGenerating] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [generateResult, setGenerateResult] = useState<{ eventName: string; result: GenerateSuggestionsResult } | null>(null);
 
   // Đồng hồ đếm giây khi sinh đề xuất: giúp phân biệt "đang chạy" với "treo".
-  useEffect(() => {
-    if (!generating) {
-      setElapsed(0);
-      return;
+  // Dùng ref giữ interval id để luôn cleanup chắc chắn, tránh nhiều interval
+  // chồng nhau khiến đồng hồ vẫn tăng sau khi đã có kết quả.
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inFlightRef = useRef(false);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
+  }, []);
+
+  useEffect(() => {
+    return () => stopTimer();
+  }, [stopTimer]);
+
+  const startTimer = useCallback(() => {
+    stopTimer();
     setElapsed(0);
-    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(timer);
-  }, [generating]);
+    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+  }, [stopTimer]);
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getPricingCalendar({
-      activeOnly: showOnlyActive || undefined,
+      includeInactive: showInactive || undefined,
       search: filter.search || undefined,
       from: filter.from || undefined,
       to: filter.to || undefined,
@@ -321,25 +341,42 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
       showToast("error", res.message || "Không thể tải lịch sự kiện");
     }
     setLoading(false);
-  }, [showOnlyActive, filter, page, showToast]);
+  }, [showInactive, filter, page, showToast]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const handleGenerate = async (evt: PriceCalendarEntry) => {
-    if (generating) return;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setGenerating(evt.id);
+    startTimer();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+
     let res: Awaited<ReturnType<typeof generatePricingSuggestions>>;
     try {
-      res = await generatePricingSuggestions({ calendarId: evt.id });
-    } catch {
-      // Mất mạng giữa chừng: backend vẫn có thể đã tạo xong đề xuất.
-      setGenerating(null);
-      showToast("error", "Mất kết nối khi sinh đề xuất. Kiểm tra lại tab Đề xuất giá.");
+      res = await generatePricingSuggestions({ calendarId: evt.id }, controller.signal);
+    } catch (err) {
+      // Abort do timeout → backend đã bỏ dở; các lỗi khác (mất mạng) backend vẫn
+      // có thể đã tạo xong đề xuất.
+      const timedOut = err instanceof DOMException && err.name === "AbortError";
+      showToast(
+        "error",
+        timedOut
+          ? "Sinh đề xuất quá lâu (quá 180 giây). Vui lòng thử lại."
+          : "Mất kết nối khi sinh đề xuất. Kiểm tra lại tab Đề xuất giá.",
+      );
       return;
+    } finally {
+      clearTimeout(timeoutId);
+      stopTimer();
+      setGenerating(null);
+      inFlightRef.current = false;
     }
-    setGenerating(null);
+
     if (res.success && res.data) {
       setGenerateResult({ eventName: evt.name, result: res.data });
       const created = res.data.generated ?? 0;
@@ -354,15 +391,112 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    const res = await removePricingCalendar(deleteTarget.id);
-    setDeleteTarget(null);
+  const fetchAllPendingIds = useCallback(
+    async (calendarId: string): Promise<string[]> => {
+      const ids: string[] = [];
+      let currentPage = 1;
+      for (; ;) {
+        const res = await getPricingSuggestions({
+          calendarId,
+          status: "pending",
+          page: currentPage,
+          limit: 100,
+        });
+        if (!res.success || !res.data) break;
+        ids.push(...res.data.items.map((i) => i.id));
+        if (res.data.items.length === 0 || ids.length >= res.data.total) break;
+        currentPage += 1;
+      }
+      return ids;
+    },
+    [],
+  );
+
+  const handleToggleVisibility = async (evt: PriceCalendarEntry, nextActive: boolean) => {
+    if (visibilityBusy) return;
+
+    if (nextActive) {
+      setVisibilityBusy(true);
+      const res = await updatePricingCalendar(evt.id, { isActive: true });
+      setVisibilityBusy(false);
+      if (res.success) {
+        showToast("success", `Đã hiện sự kiện "${evt.name}"`);
+        load();
+      } else {
+        showToast("error", res.message || "Không thể hiện sự kiện");
+      }
+      return;
+    }
+
+    // Ẩn: kiểm tra đề xuất đang chờ duyệt trước.
+    setVisibilityBusy(true);
+    const res = await getPricingSuggestions({
+      calendarId: evt.id,
+      status: "pending",
+      page: 1,
+      limit: 100,
+    });
+    setVisibilityBusy(false);
+    if (!res.success || !res.data) {
+      showToast("error", res.message || "Không thể kiểm tra đề xuất chờ duyệt");
+      return;
+    }
+    if (res.data.total > 0) {
+      setPendingBlock({ event: evt, total: res.data.total, items: res.data.items });
+    } else {
+      setHideTarget(evt);
+    }
+  };
+
+  const handleHide = async () => {
+    if (!hideTarget) return;
+    setVisibilityBusy(true);
+    const res = await removePricingCalendar(hideTarget.id);
+    setVisibilityBusy(false);
+    setHideTarget(null);
     if (res.success) {
-      showToast("success", `Đã xóa sự kiện "${deleteTarget.name}"`);
+      showToast("success", `Đã ẩn sự kiện "${hideTarget.name}"`);
       load();
     } else {
-      showToast("error", res.message || "Không thể xóa sự kiện");
+      showToast("error", res.message || "Không thể ẩn sự kiện");
+    }
+  };
+
+  const handleRejectAllAndHide = async () => {
+    if (!pendingBlock) return;
+    setVisibilityBusy(true);
+    const ids = await fetchAllPendingIds(pendingBlock.event.id);
+    if (ids.length === 0) {
+      setVisibilityBusy(false);
+      setPendingBlock(null);
+      showToast("error", "Không còn đề xuất chờ duyệt. Vui lòng thử ẩn lại.");
+      return;
+    }
+    const rejectRes = await bulkPricingSuggestionAction(ids, "reject");
+    if (!rejectRes.success || !rejectRes.data) {
+      setVisibilityBusy(false);
+      showToast("error", rejectRes.message || "Không thể từ chối đề xuất");
+      return;
+    }
+    if (rejectRes.data.failureCount > 0) {
+      setVisibilityBusy(false);
+      showToast(
+        "error",
+        `Đã từ chối ${rejectRes.data.successCount}/${ids.length} đề xuất. ${rejectRes.data.failed
+          .map((f) => f.reason)
+          .join("; ")}`,
+      );
+      return;
+    }
+    const hideRes = await removePricingCalendar(pendingBlock.event.id);
+    setVisibilityBusy(false);
+    if (hideRes.success) {
+      const name = pendingBlock.event.name;
+      setPendingBlock(null);
+      showToast("success", `Đã từ chối ${ids.length} đề xuất và ẩn sự kiện "${name}"`);
+      load();
+    } else {
+      showToast("error", hideRes.message || "Đã từ chối đề xuất nhưng chưa ẩn được sự kiện");
     }
   };
 
@@ -373,11 +507,11 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
           <label className="inline-flex items-center gap-2 text-sm text-stone-600">
             <input
               type="checkbox"
-              checked={showOnlyActive}
-              onChange={(e) => setShowOnlyActive(e.target.checked)}
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
               className="h-4 w-4 rounded border-sand text-lotus focus:ring-lotus"
             />
-            Chỉ sự kiện đang bật
+            Hiện sự kiện đã tắt
           </label>
         </div>
         <button
@@ -409,7 +543,7 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
                 <th className="py-3 px-4">Loại dịp</th>
                 <th className="py-3 px-4">Khoảng ngày</th>
                 <th className="py-3 px-4 text-right">Điều chỉnh</th>
-                <th className="py-3 px-4">Từ khóa áp dụng</th>
+                <th className="py-3 px-4">Phạm vi áp dụng</th>
                 <th className="py-3 px-4">Trạng thái</th>
                 <th className="py-3 px-4 text-right">Thao tác</th>
               </tr>
@@ -438,14 +572,16 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
                     <div className="text-xs text-stone-500">Ưu tiên {evt.priority}</div>
                   </td>
                   <td className="py-3 px-4">
-                    {evt.garmentKeywords.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {evt.garmentKeywords.map((k) => (
-                          <span key={k} className="text-xs px-2 py-0.5 rounded bg-stone-100 text-stone-600">{k}</span>
-                        ))}
-                      </div>
+                    {evt.applyAll ? (
+                      <span className="inline-flex items-center rounded bg-jade/10 px-2 py-0.5 text-xs font-semibold text-jade">
+                        Tất cả sản phẩm
+                      </span>
+                    ) : evt.targetGarmentIds.length > 0 ? (
+                      <span className="text-xs px-2 py-0.5 rounded bg-stone-100 text-stone-600 font-semibold">
+                        Sản phẩm ({evt.targetGarmentIds.length})
+                      </span>
                     ) : (
-                      <span className="text-xs text-stone-400">Áp dụng toàn bộ</span>
+                      <span className="text-xs text-stone-400">Chưa chọn sản phẩm</span>
                     )}
                   </td>
                   <td className="py-3 px-4">
@@ -471,13 +607,27 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
                       >
                         Sửa
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(evt)}
-                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
-                      >
-                        Xóa
-                      </button>
+                      {evt.isActive ? (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleVisibility(evt, false)}
+                          disabled={visibilityBusy}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <EyeOff className="h-3.5 w-3.5" />
+                          Ẩn
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleVisibility(evt, true)}
+                          disabled={visibilityBusy}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-jade/40 bg-jade/5 px-3 py-1.5 text-xs font-semibold text-jade transition hover:bg-jade/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Hiện
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -510,15 +660,69 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
       )}
 
       <ConfirmModal
-        open={!!deleteTarget}
-        title="Xóa sự kiện"
-        message={`Sự kiện "${deleteTarget?.name}" sẽ bị tắt (xóa mềm). Đề xuất đã sinh vẫn giữ nguyên. Tiếp tục?`}
-        confirmLabel="Xóa"
+        open={!!hideTarget}
+        title="Ẩn sự kiện"
+        message={`Sự kiện "${hideTarget?.name}" sẽ được ẩn . Bạn có thể bật lại bằng nút "Hiện" ở mục "Hiện sự kiện đã tắt". Đề xuất đã duyệt vẫn giữ nguyên. Tiếp tục?`}
+        confirmLabel="Ẩn"
         cancelLabel="Hủy"
-        danger
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleHide}
+        onCancel={() => setHideTarget(null)}
       />
+
+      {pendingBlock && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-xl border border-sand bg-white p-6 shadow-xl">
+            <h3 className="font-display text-2xl text-ink">Không thể ẩn sự kiện</h3>
+            <p className="mt-1 text-sm text-stone-600">
+              Sự kiện <strong>{pendingBlock.event.name}</strong> còn{" "}
+              <strong className="text-red-600">{pendingBlock.total} đề xuất chờ duyệt</strong> cần
+              từ chối trước khi ẩn.
+            </p>
+
+            <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-sand bg-stone-50 p-2">
+              {pendingBlock.items.map((s) => (
+                <div
+                  key={s.id}
+                  className="rounded-md bg-white px-3 py-2 text-xs text-stone-600 shadow-sm"
+                >
+                  <div className="font-semibold text-stone-700">
+                    {s.garmentName ?? "Không rõ sản phẩm"}
+                    {s.sizeLabel ? ` · size ${s.sizeLabel}` : ""}
+                  </div>
+                  <div className="text-stone-400">
+                    {formatDateRange(s.fromDate, s.toDate)} · {formatVND(s.validPrice)}
+                  </div>
+                </div>
+              ))}
+              {pendingBlock.total > pendingBlock.items.length && (
+                <p className="px-1 text-xs text-stone-500">
+                  … và {pendingBlock.total - pendingBlock.items.length} đề xuất khác.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingBlock(null)}
+                disabled={visibilityBusy}
+                className="rounded-lg border border-sand px-4 py-2.5 text-sm font-semibold text-stone-600 transition hover:border-lotus hover:text-lotus disabled:opacity-50"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={handleRejectAllAndHide}
+                disabled={visibilityBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lotus px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-oxblood disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+                {visibilityBusy ? "Đang xử lý..." : "Từ chối tất cả rồi ẩn"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {generateResult && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -566,6 +770,48 @@ function CalendarTab({ showToast }: { showToast: (k: "success" | "error", m: str
 
 // ── Form sự kiện (create / edit) ──────────────────────────────────────────────
 
+function ScopeCheckboxList({
+  title,
+  emptyLabel,
+  items,
+  selected,
+  onToggle,
+}: {
+  title: string;
+  emptyLabel: string;
+  items: Array<{ value: string; label: string }>;
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-stone-500">
+        {title}
+      </p>
+      {items.length === 0 ? (
+        <p className="text-xs text-stone-400">{emptyLabel}</p>
+      ) : (
+        <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded-lg border border-sand bg-white p-2 sm:grid-cols-2">
+          {items.map((item) => (
+            <label
+              key={item.value}
+              className="flex cursor-pointer items-start gap-2 rounded px-2 py-1 text-sm hover:bg-stone-50"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(item.value)}
+                onChange={() => onToggle(item.value)}
+                className="mt-0.5 h-4 w-4 rounded border-sand text-lotus focus:ring-lotus"
+              />
+              <span className="min-w-0 truncate text-stone-700">{item.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CalendarFormModal({
   editing,
   onClose,
@@ -584,14 +830,108 @@ function CalendarFormModal({
     toDate: editing?.toDate ?? "",
     adjustmentPercent: editing?.adjustmentPercent?.toString() ?? "0",
     priority: editing?.priority?.toString() ?? "0",
-    garmentKeywords: editing?.garmentKeywords.join(", ") ?? "",
+    applyAll: editing?.applyAll ?? true,
     isActive: editing?.isActive ?? true,
     note: editing?.note ?? "",
   });
+  // Danh mục / dịp chỉ là bộ lọc để tự tick sản phẩm, KHÔNG lưu vào sự kiện.
+  const [filterCategoryIds, setFilterCategoryIds] = useState<string[]>([]);
+  const [filterOccasions, setFilterOccasions] = useState<string[]>([]);
+  // Sản phẩm cuối cùng được chọn = phạm vi điều chỉnh giá (nguồn chân lý duy nhất).
+  const [manualAdds, setManualAdds] = useState<string[]>(
+    editing?.targetGarmentIds ?? [],
+  );
+  const [manualRemoves, setManualRemoves] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [options, setOptions] = useState<PricingCalendarTargetOptions | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  const [optionsError, setOptionsError] = useState("");
+  const [garmentQuery, setGarmentQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    getPricingCalendarTargetOptions()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data) {
+          setOptions(res.data);
+        } else {
+          setOptionsError(res.message || "Không thể tải danh sách sản phẩm.");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOptionsError("Không thể tải danh sách sản phẩm.");
+      })
+      .finally(() => {
+        if (!cancelled) setOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const set = (key: string, value: string | boolean) => setForm((f) => ({ ...f, [key]: value }));
+
+  const toggleFilter = (
+    key: "category" | "occasion",
+    value: string,
+  ) => {
+    const updater = (list: string[]) =>
+      list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+    if (key === "category") setFilterCategoryIds(updater);
+    else setFilterOccasions(updater);
+  };
+
+  const allGarments = options?.garments ?? [];
+  const normalizedQuery = garmentQuery.trim().toLowerCase();
+  const filteredGarments = normalizedQuery
+    ? allGarments.filter((g) =>
+      [g.name, g.categoryName ?? "", ...g.occasions]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery),
+    )
+    : allGarments;
+
+  // Bộ lọc nào cũng rỗng → chưa tự tick gì. Có ít nhất 1 bộ lọc → AND giữa
+  // (các danh mục đã tích) và (các dịp đã tích).
+  const hasFilter = filterCategoryIds.length > 0 || filterOccasions.length > 0;
+  const autoMatchedGarments = hasFilter
+    ? allGarments.filter((g) => {
+      const categoryOk =
+        filterCategoryIds.length === 0 ||
+        (g.categoryId ? filterCategoryIds.includes(g.categoryId) : false);
+      const occasionOk =
+        filterOccasions.length === 0 ||
+        g.occasions.some((o) =>
+          filterOccasions.some(
+            (t) => t.trim().toLowerCase() === o.trim().toLowerCase(),
+          ),
+        );
+      return categoryOk && occasionOk;
+    })
+    : [];
+
+  // Sản phẩm cuối = (autoMatched \ manualRemoves) ∪ manualAdds.
+  const selectedGarments = allGarments.filter((g) => {
+    const auto = autoMatchedGarments.some((a) => a.id === g.id);
+    if (manualRemoves.includes(g.id)) return false;
+    return auto || manualAdds.includes(g.id);
+  });
+  const selectedGarmentIds = selectedGarments.map((g) => g.id);
+  const matchedSizeCount = selectedGarments.reduce((sum, g) => sum + g.sizeCount, 0);
+
+  const toggleGarment = (id: string) => {
+    const isSelected = selectedGarmentIds.includes(id);
+    if (isSelected) {
+      setManualAdds((prev) => prev.filter((v) => v !== id));
+      setManualRemoves((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    } else {
+      setManualRemoves((prev) => prev.filter((v) => v !== id));
+      setManualAdds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -602,6 +942,9 @@ function CalendarFormModal({
     if (form.fromDate && form.toDate && form.toDate < form.fromDate) newErrors.toDate = "Ngày kết thúc phải sau ngày bắt đầu.";
     const pct = Number(form.adjustmentPercent);
     if (Number.isNaN(pct) || pct < -100) newErrors.adjustmentPercent = "Phần trăm không hợp lệ (tối thiểu -100).";
+    if (!form.applyAll && selectedGarmentIds.length === 0) {
+      newErrors.scope = "Chọn ít nhất một sản phẩm — hoặc bật “Tất cả sản phẩm”.";
+    }
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
@@ -616,7 +959,8 @@ function CalendarFormModal({
       toDate: form.toDate,
       adjustmentPercent: pct,
       priority: Number(form.priority) || 0,
-      garmentKeywords: form.garmentKeywords.split(",").map((k) => k.trim()).filter(Boolean),
+      applyAll: form.applyAll,
+      targetGarmentIds: form.applyAll ? [] : selectedGarmentIds,
       isActive: form.isActive,
       note: form.note.trim() || undefined,
     };
@@ -644,7 +988,7 @@ function CalendarFormModal({
             <X className="h-5 w-5" />
           </button>
         </header>
-        <form onSubmit={handleSubmit} className="space-y-4 p-6">
+        <form onSubmit={handleSubmit} className="max-h-[85vh] space-y-4 overflow-y-auto p-6">
           <div>
             <label className="mb-1 block text-sm font-semibold text-stone-700">Tên sự kiện *</label>
             <input
@@ -705,28 +1049,150 @@ function CalendarFormModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-stone-700">Ưu tiên</label>
-              <input
-                type="number"
-                value={form.priority}
-                onChange={(e) => set("priority", e.target.value)}
-                className={inputClass(false)}
-              />
-              <p className="mt-1 text-xs text-stone-400">Số càng lớn ưu tiên càng cao.</p>
+          <div>
+            <label className="mb-1 block text-sm font-semibold text-stone-700">Ưu tiên</label>
+            <input
+              type="number"
+              value={form.priority}
+              onChange={(e) => set("priority", e.target.value)}
+              className={inputClass(false)}
+            />
+            <p className="mt-1 text-xs text-stone-400">Số càng lớn ưu tiên càng cao.</p>
+          </div>
+
+          <div className="rounded-xl border border-sand bg-stone-50/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-stone-700">Phạm vi áp dụng *</p>
+              <span className="text-xs text-stone-500">
+                {form.applyAll
+                  ? "Tất cả sản phẩm đang hoạt động"
+                  : `${selectedGarments.length} sản phẩm · ${matchedSizeCount} size`}
+              </span>
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-stone-700">Từ khóa áp dụng</label>
-              <input
-                type="text"
-                value={form.garmentKeywords}
-                onChange={(e) => set("garmentKeywords", e.target.value)}
-                placeholder="VD: áo dài thêu, kỷ yếu (phân tách bằng dấu phẩy)"
-                className={inputClass(false)}
-              />
-              <p className="mt-1 text-xs text-stone-400">Chỉ garment có từ khóa trong mô tả mới được điều chỉnh. Để trống = áp dụng toàn bộ.</p>
+
+            <div className="mt-2 space-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-700">
+                <input
+                  type="radio"
+                  checked={form.applyAll}
+                  onChange={() => set("applyAll", true)}
+                  className="h-4 w-4 border-sand text-lotus focus:ring-lotus"
+                />
+                Tất cả sản phẩm
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-700">
+                <input
+                  type="radio"
+                  checked={!form.applyAll}
+                  onChange={() => set("applyAll", false)}
+                  className="h-4 w-4 border-sand text-lotus focus:ring-lotus"
+                />
+                Chọn theo danh mục, dịp hoặc sản phẩm cụ thể
+              </label>
             </div>
+
+            {!form.applyAll && (
+              <div className="mt-3 space-y-3">
+                {optionsError && (
+                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                    {optionsError}
+                  </p>
+                )}
+
+                <p className="text-xs text-stone-500">
+                  Tích danh mục và/hoặc dịp để tự động tick sản phẩm phù hợp (danh mục
+                  và dịp kết hợp theo kiểu VÀ). Sau đó có thể tick thêm hoặc bỏ tick
+                  từng sản phẩm bên dưới.
+                </p>
+
+                <ScopeCheckboxList
+                  title="Lọc theo danh mục"
+                  emptyLabel="Chưa có danh mục nào."
+                  items={(options?.categories ?? []).map((c) => ({
+                    value: c.id,
+                    label: c.name,
+                  }))}
+                  selected={filterCategoryIds}
+                  onToggle={(v) => toggleFilter("category", v)}
+                />
+
+                <ScopeCheckboxList
+                  title="Lọc theo dịp"
+                  emptyLabel="Chưa có dịp nào."
+                  items={(options?.occasions ?? []).map((o) => ({
+                    value: o,
+                    label: o,
+                  }))}
+                  selected={filterOccasions}
+                  onToggle={(v) => toggleFilter("occasion", v)}
+                />
+
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                      Sản phẩm cụ thể
+                    </p>
+                    {selectedGarmentIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualAdds([]);
+                          setManualRemoves(allGarments.map((g) => g.id));
+                          setFilterCategoryIds([]);
+                          setFilterOccasions([]);
+                        }}
+                        className="text-xs font-semibold text-lotus hover:underline"
+                      >
+                        Bỏ chọn toàn bộ
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    value={garmentQuery}
+                    onChange={(e) => setGarmentQuery(e.target.value)}
+                    placeholder="Tìm theo tên, danh mục, dịp..."
+                    className="mb-1.5 w-full rounded-lg border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-lotus"
+                  />
+                  {optionsLoading ? (
+                    <p className="text-xs text-stone-400">Đang tải sản phẩm...</p>
+                  ) : filteredGarments.length === 0 ? (
+                    <p className="text-xs text-stone-400">
+                      Không tìm thấy sản phẩm phù hợp.
+                    </p>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-sand bg-white p-2">
+                      {filteredGarments.map((g) => (
+                        <label
+                          key={g.id}
+                          className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-stone-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedGarmentIds.includes(g.id)}
+                            onChange={() => toggleGarment(g.id)}
+                            className="mt-0.5 h-4 w-4 rounded border-sand text-lotus focus:ring-lotus"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate text-stone-700">
+                              {g.sizeLabels.length === 1
+                                ? `${g.name} size ${g.sizeLabels[0]}`
+                                : g.sizeLabels.length > 1
+                                  ? `${g.name} · ${g.sizeCount} size`
+                                  : g.name}
+                            </span>
+                            <span className="block text-[11px] text-stone-400">
+                              {[g.categoryName ?? "Chưa phân loại", ...g.occasions].join(" · ")}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {errors.scope && <p className="text-xs text-red-500">{errors.scope}</p>}
+              </div>
+            )}
           </div>
 
           <div>
@@ -888,9 +1354,8 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
               key={f.key}
               type="button"
               onClick={() => { setFilter(f.key); setPage(1); clearSelection(); }}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                filter === f.key ? "bg-lotus text-white" : "bg-white border border-sand text-stone-600 hover:border-lotus"
-              }`}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${filter === f.key ? "bg-lotus text-white" : "bg-white border border-sand text-stone-600 hover:border-lotus"
+                }`}
             >
               {f.label}
             </button>
@@ -921,7 +1386,7 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
         setDraft={setDraftFilter}
         onApply={() => { setDateFilter(draftFilter); setPage(1); clearSelection(); }}
         onClear={() => { setDraftFilter(EMPTY_FILTER); setDateFilter(EMPTY_FILTER); setPage(1); clearSelection(); }}
-        placeholder="Tìm sản phẩm / size..."
+        placeholder="Tìm sản phẩm / size / tên sự kiện..."
       />
 
       {selected.size > 0 && (
@@ -997,9 +1462,8 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
                   <td className="py-3 px-4">
                     <div className="font-semibold text-ink">{s.garmentName ?? s.garmentId}</div>
                     <div className="text-xs text-stone-500">Size {s.sizeLabel ?? "—"} {s.calendarName ? `· ${s.calendarName}` : ""}</div>
-                    <span className={`mt-1 inline-block text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${
-                      s.source === "owner" ? "bg-amber-100 text-amber-700" : "bg-sky-50 text-sky-700"
-                    }`}>
+                    <span className={`mt-1 inline-block text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded ${s.source === "owner" ? "bg-amber-100 text-amber-700" : "bg-sky-50 text-sky-700"
+                      }`}>
                       {s.source === "owner" ? "Chủ shop" : "AI đề xuất"}
                     </span>
                     {s.reason && reasonSummary(s.reason) && (
@@ -1018,7 +1482,6 @@ function SuggestionsTab({ showToast }: { showToast: (k: "success" | "error", m: 
                   </td>
                   <td className="py-3 px-4 text-right whitespace-nowrap">
                     <div className="text-xs text-stone-500">{formatVND(s.minPrice)} → {formatVND(s.maxPrice)}</div>
-                    <div className="text-xs text-stone-400">Giá nhập {formatVND(s.purchaseCost)} / {s.targetRentalDays} ngày</div>
                   </td>
                   <td className="py-3 px-4">
                     <div className="text-xs text-stone-600">

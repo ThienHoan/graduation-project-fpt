@@ -2,6 +2,21 @@ import { AppRole } from "@prisma/client";
 
 export type AdminSettingKind = "number" | "text" | "json";
 
+export interface DamageFeeEntry {
+  /** Tên loại lỗi, hiển thị cho staff khi chọn, e.g. "Rách nhẹ", "Mất khuy" */
+  label: string;
+  /** Tiền phạt cố định (VND). Nếu set, penalty = amount bất kể giá trị đồ */
+  amount?: number | null;
+  /** Phần trăm giá trị đồ (0-100). Dùng khi amount không set */
+  pct?: number | null;
+  /** Các nấc % định sẵn cho nhân viên chọn nhanh (VD: [30, 40, 50, 60]) */
+  tiers?: number[] | null;
+  /** Phân loại mức độ nặng */
+  severity: "low" | "medium" | "high" | "severe";
+}
+
+export type DamageFeeTable = DamageFeeEntry[];
+
 export type AdminSettingDefinition = {
   key: string;
   label: string;
@@ -157,6 +172,27 @@ export const ADMIN_SETTING_DEFINITIONS: AdminSettingDefinition[] = [
     description: "Khi bật, nếu một size lỗi (sàn > trần, thiếu giá nhập...) sẽ dừng cả lượt sinh thay vì bỏ qua size đó.",
     kind: "json",
     defaultValue: { value: false },
+  },
+  {
+    key: "laundry_buffer_days",
+    label: "Ngày đệm giặt sau trả đồ",
+    description: "Số ngày khoá lịch sau ngày trả để có thời gian giặt hấp trước khi cho thuê tiếp. Mặc định 1.",
+    kind: "number",
+    defaultValue: { value: 1 },
+  },
+  {
+    key: "damage_fee_table",
+    label: "Bảng định mức lỗi kiểm tra",
+    description: "Danh sách loại lỗi và mức tiền phạt. Admin chỉnh sửa JSON. Staff chọn loại lỗi → hệ thống điền tiền tự động.",
+    kind: "json",
+    defaultValue: [
+      { label: "Rách nhỏ / sờn vải nhẹ", amount: 50000, severity: "low" },
+      { label: "Mất khuy / tuột chỉ", amount: 30000, severity: "low" },
+      { label: "Vết bẩn không giặt sạch", amount: 80000, severity: "medium" },
+      { label: "Rách to / mất phụ kiện đính", pct: 20, tiers: [15, 20, 25, 30], severity: "medium" },
+      { label: "Biến dạng / ố vàng nghiêm trọng", pct: 40, tiers: [30, 40, 50, 60], severity: "high" },
+      { label: "Hư hỏng không phục hồi / mất đồ", pct: 100, severity: "severe" },
+    ],
   },
 ];
 

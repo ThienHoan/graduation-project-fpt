@@ -683,7 +683,8 @@ model price_calendar {
   to_date            DateTime            @db.Date
   adjustment_percent Int                 @default(0)
   priority           Int                 @default(0)
-  garment_keywords   String[]            @default([])
+  apply_all          Boolean             @default(true)
+  target_garment_ids String[]            @default([])
   is_active          Boolean             @default(true)
   note               String?
   created_at         DateTime            @default(now()) @db.Timestamptz(6)
@@ -757,7 +758,6 @@ model accessories {
   material            String?               @db.VarChar(100)
   color               String?               @db.VarChar(100)
   image_url           String?
-  replacement_value   Decimal               @default(0) @db.Decimal(12, 2)
   is_active           Boolean               @default(true)
   created_at          DateTime              @default(now()) @db.Timestamptz(6)
   updated_at          DateTime              @default(now()) @db.Timestamptz(6)
@@ -789,6 +789,7 @@ model accessory_assets {
   asset_code              String                    @unique @db.VarChar(100)
   status                  AssetStatus               @default(available)
   condition_note          String?
+  purchase_cost           Decimal?                  @map("purchase_cost") @db.Decimal(12, 2)
   created_at              DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
   accessory_asset_history accessory_asset_history[]
@@ -828,7 +829,7 @@ model BookingAccessoryItem {
   rentalTotal      Decimal           @default(0) @map("rental_total") @db.Decimal(12, 2)
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   // Kết quả kiểm tra khi khách trả đồ (staff/inspection).
-  // good | laundry | maintenance | damaged | lost (mất → đền theo replacement_value).
+  // good | laundry | maintenance | damaged | lost (mất → đền theo purchase_cost của asset).
   conditionStatus  String?           @map("condition_status")
   conditionNote    String?           @map("condition_note")
   inspectedAt      DateTime?         @map("inspected_at") @db.Timestamptz(6)

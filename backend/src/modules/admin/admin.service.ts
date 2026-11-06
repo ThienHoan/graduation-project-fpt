@@ -592,6 +592,23 @@ export class AdminService {
       if (typeof this.extractValueField(value) !== "boolean") {
         throw new BadRequestException("Thiết lập 'pricing_fail_fast_per_round' cần giá trị bật/tắt.");
       }
+      return;
+    }
+
+    if (definition.key === "damage_fee_table") {
+      const candidate = value;
+      if (!Array.isArray(candidate)) {
+        throw new BadRequestException("Thiết lập 'damage_fee_table' cần một danh sách (mảng JSON).");
+      }
+      for (const item of candidate) {
+        if (!item || typeof item !== "object" || typeof (item as any).label !== "string" || !(item as any).label.trim()) {
+          throw new BadRequestException("Mỗi định mức lỗi phải có tên loại lỗi (label).");
+        }
+        if (!["low", "medium", "high", "severe"].includes((item as any).severity)) {
+          throw new BadRequestException("Mức độ lỗi phải là: low, medium, high hoặc severe.");
+        }
+      }
+      return;
     }
   }
 

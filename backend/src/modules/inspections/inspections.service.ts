@@ -4,6 +4,8 @@ import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { AiService } from "../ai/ai.service";
+import { ADMIN_SETTING_DEFINITIONS, type DamageFeeEntry } from "../admin/admin.constants";
+import { resolvePenaltyFromTable, entryToSeverity } from "./damage-fee";
 import type { CompleteInspectionDto } from "./dto/complete-inspection.dto";
 import type { CreateFindingDto } from "./dto/create-finding.dto";
 import type { CreateInspectionDto } from "./dto/create-inspection.dto";
@@ -182,20 +184,128 @@ export class InspectionsService {
     return ok(this.serialize(session));
   }
 
+  async getDamageFeeTable() {
+    const table = await this.loadDamageFeeTable(this.prisma);
+    return ok(table);
+  }
+
+  async updateDamageFeeTable(userId: string, entries: DamageFeeEntry[]) {
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException("Bảng định mức lỗi phải là một mảng.");
+    }
+    for (const item of entries) {
+      if (!item || typeof item !== "object" || !item.label || !item.label.trim()) {
+        throw new BadRequestException("Mỗi định mức lỗi phải có tên loại lỗi (label).");
+      }
+      if (!["low", "medium", "high", "severe"].includes(item.severity)) {
+        throw new BadRequestException("Mức độ lỗi phải là: low, medium, high hoặc severe.");
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const setting = await tx.systemSetting.upsert({
+        where: { key: "damage_fee_table" },
+        create: {
+          key: "damage_fee_table",
+          value: entries as unknown as Prisma.InputJsonValue,
+        },
+        update: {
+          value: entries as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: userId,
+          action: "UPDATE_DAMAGE_FEE_TABLE",
+          entityType: "system_setting",
+          entityId: null,
+          metadata: {
+            key: "damage_fee_table",
+            count: entries.length,
+          },
+        },
+      });
+
+      return setting;
+    });
+
+    return ok(updated.value as unknown as DamageFeeEntry[]);
+  }
+
+  private async loadDamageFeeTable(client: Prisma.TransactionClient | PrismaService): Promise<DamageFeeEntry[]> {
+    const setting = await client.systemSetting.findUnique({
+      where: { key: "damage_fee_table" },
+    });
+    if (!setting || !Array.isArray(setting.value)) {
+      const def = ADMIN_SETTING_DEFINITIONS.find((d) => d.key === "damage_fee_table");
+      return (def?.defaultValue as unknown as DamageFeeEntry[]) ?? [];
+    }
+    return setting.value as unknown as DamageFeeEntry[];
+  }
+
   async addFinding(sessionId: string, dto: CreateFindingDto) {
     const finding = await this.prisma.runSerializable(async (tx) => {
-      const session = await tx.inspectionSession.findUnique({ where: { id: sessionId } });
+      const session = await tx.inspectionSession.findUnique({
+        where: { id: sessionId },
+        include: {
+          booking: { include: { items: true } },
+          garmentAsset: { include: { garment_sizes: { include: { garments: true } } } },
+        },
+      });
       if (!session) throw new NotFoundException("Inspection session not found.");
       if (!MUTABLE_INSPECTION_STATUSES.includes(session.status)) {
         throw new BadRequestException("Cannot add finding to a completed inspection.");
       }
+
+      let resolvedPenalty = dto.penaltyAmount;
+      let resolvedSeverity = dto.severity;
+
+      // Nếu staff không chỉ định tiền phạt, tự động tra cứu bảng định mức
+      if (resolvedPenalty === undefined || resolvedPenalty === null) {
+        const feeTable = await this.loadDamageFeeTable(tx);
+        if (feeTable.length > 0) {
+          const matchedItem = (session.booking as any)?.items?.find(
+            (it: any) => it.garmentAssetId === session.garmentAssetId,
+          );
+          const purchaseCost = Number(session.garmentAsset?.purchaseCost ?? 0);
+          const depositAmount = Number(
+            matchedItem?.depositAmount ??
+            (session.garmentAsset as any)?.garment_sizes?.deposit_amount ??
+            0,
+          );
+          const dailyPrice = Number(
+            matchedItem?.dailyPrice ??
+            matchedItem?.basePrice ??
+            (session.garmentAsset as any)?.garment_sizes?.garments?.rentalPrice ??
+            0,
+          );
+          const garmentValue =
+            purchaseCost > 0
+              ? purchaseCost
+              : depositAmount > 0
+              ? depositAmount
+              : dailyPrice > 0
+              ? dailyPrice * 4
+              : 400000;
+
+          const autoPenalty = resolvePenaltyFromTable(dto.findingType, feeTable, garmentValue);
+          if (autoPenalty !== undefined) {
+            resolvedPenalty = autoPenalty;
+            if (!resolvedSeverity) {
+              resolvedSeverity = entryToSeverity(dto.findingType, feeTable);
+            }
+          }
+        }
+      }
+
       return tx.inspectionFinding.create({
         data: {
           inspectionSessionId: sessionId,
           findingType: dto.findingType,
-          severity: dto.severity ?? "low",
+          severity: resolvedSeverity ?? "low",
           description: dto.description ?? null,
-          penaltyAmount: dto.penaltyAmount ?? 0,
+          penaltyAmount: resolvedPenalty ?? 0,
         },
       });
     });

@@ -25,6 +25,9 @@ function createMockPrisma() {
       findMany: vi.fn(),
       create: vi.fn(),
     },
+    bookingAccessoryItem: {
+      findFirst: vi.fn(),
+    },
   };
 }
 
@@ -39,7 +42,6 @@ const ACCESSORY_ROW = {
   material: null,
   color: "Vàng",
   image_url: null,
-  replacement_value: 500000,
   is_active: true,
   created_at: new Date("2026-01-01T00:00:00.000Z"),
   updated_at: new Date("2026-01-01T00:00:00.000Z"),
@@ -165,6 +167,108 @@ describe("AccessoriesService", () => {
       }),
     );
     expect(result.data).toMatchObject({ assetCode: "PKA-002", status: "available" });
+  });
+
+  it("saves purchase cost when creating an asset", async () => {
+    prisma.accessories.findUnique.mockResolvedValue(ACCESSORY_ROW);
+    prisma.accessory_assets.findUnique.mockResolvedValue(null);
+    prisma.accessory_assets.create.mockImplementation(async (args: any) => ({
+      id: "asset-1",
+      ...args.data,
+      created_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-01T00:00:00.000Z"),
+    }));
+
+    const result = await service.createAsset(
+      { accessoryId: ACCESSORY_ID, assetCode: "PKA-003", purchaseCost: 450000 },
+      "user-1",
+    );
+
+    expect(prisma.accessory_assets.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ purchase_cost: 450000 }),
+      }),
+    );
+    expect(result.data).toMatchObject({ purchaseCost: 450000 });
+  });
+
+  it("blocks purchase cost changes while the asset is in an unfinished booking", async () => {
+    prisma.accessory_assets.findUnique.mockResolvedValue({
+      id: "asset-1",
+      accessory_id: ACCESSORY_ID,
+      purchase_cost: 500000,
+    });
+    prisma.bookingAccessoryItem.findFirst.mockResolvedValue({ bookingId: "booking-1" });
+
+    await expect(
+      service.updateAsset("asset-1", { purchaseCost: 600000 }, "user-1"),
+    ).rejects.toThrow("Không thể sửa giá vốn");
+    expect(prisma.accessory_assets.update).not.toHaveBeenCalled();
+  });
+
+  it("locks purchase cost for all in-flight booking statuses", async () => {
+    prisma.accessory_assets.findUnique.mockResolvedValue({
+      id: "asset-1",
+      accessory_id: ACCESSORY_ID,
+      purchase_cost: 500000,
+    });
+    prisma.bookingAccessoryItem.findFirst.mockResolvedValue({ bookingId: "booking-1" });
+
+    await expect(
+      service.updateAsset("asset-1", { purchaseCost: 600000 }, "user-1"),
+    ).rejects.toThrow("Không thể sửa giá vốn");
+
+    const arg = prisma.bookingAccessoryItem.findFirst.mock.calls[0][0] as {
+      where: { booking: { status: { in: string[] } } };
+    };
+    expect(arg.where.booking.status.in).toEqual(
+      expect.arrayContaining([
+        "delivering",
+        "renting",
+        "returned",
+        "inspection_pending",
+        "overdue",
+        "refund_pending",
+      ]),
+    );
+  });
+
+  it("updates purchase cost and logs history when the asset is free", async () => {
+    prisma.accessory_assets.findUnique.mockResolvedValue({
+      id: "asset-1",
+      accessory_id: ACCESSORY_ID,
+      purchase_cost: 500000,
+    });
+    prisma.bookingAccessoryItem.findFirst.mockResolvedValue(null);
+    prisma.accessory_assets.update.mockImplementation(async (args: any) => ({
+      id: "asset-1",
+      accessory_id: ACCESSORY_ID,
+      status: "available",
+      condition_note: null,
+      purchase_cost: 500000,
+      created_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-01T00:00:00.000Z"),
+      ...args.data,
+    }));
+    prisma.accessories.findUnique.mockResolvedValue(ACCESSORY_ROW);
+
+    const result = await service.updateAsset("asset-1", { purchaseCost: 600000 }, "user-1");
+
+    expect(prisma.accessory_assets.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "asset-1" },
+        data: expect.objectContaining({ purchase_cost: 600000 }),
+      }),
+    );
+    expect(prisma.accessory_asset_history.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "purchase_cost_change",
+          created_by: "user-1",
+        }),
+      }),
+    );
+    expect(result.data).toMatchObject({ purchaseCost: 600000 });
   });
 
   it("logs history only when asset status actually changes", async () => {

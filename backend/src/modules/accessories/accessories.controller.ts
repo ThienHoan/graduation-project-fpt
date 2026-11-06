@@ -19,6 +19,7 @@ import { CreateAccessoryDto } from "./dto/create-accessory.dto";
 import { UpdateAccessoryDto } from "./dto/update-accessory.dto";
 import { CreateAccessoryAssetDto } from "./dto/create-accessory-asset.dto";
 import { UpdateAccessoryAssetStatusDto } from "./dto/update-accessory-asset-status.dto";
+import { UpdateAccessoryAssetDto } from "./dto/update-accessory-asset.dto";
 
 @Controller("accessories")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -76,6 +77,16 @@ export class AccessoriesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.accessoriesService.createAsset(dto, user.id);
+  }
+
+  @Patch("assets/:id")
+  @Roles("manager_owner", "admin")
+  updateAsset(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: UpdateAccessoryAssetDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.accessoriesService.updateAsset(id, dto, user.id);
   }
 
   @Patch("assets/:id/status")

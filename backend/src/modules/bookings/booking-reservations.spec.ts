@@ -16,9 +16,21 @@ function client(overrides: Record<string, unknown> = {}) {
 }
 
 describe("booking reservation helper", () => {
-  it("allows a non-overlapping scheduled assignment", async () => {
+  it("allows a scheduled assignment after the laundry buffer window", async () => {
     const tx = client({ bookingItem: { findMany: vi.fn().mockResolvedValue([{ id: "i1", bookingId: "b1", garmentAssetId: ID, booking: booking("b1", BookingStatus.confirmed, "2026-01-01", "2026-01-03") }]) } });
-    await expect(assertAssetScheduleAvailable(tx, { assetId: ID, bookingId: "b2", startDay: day("2026-01-04"), endDay: day("2026-01-05") })).resolves.toBeUndefined();
+    // b1 trả ngày 03/01 + 1 ngày đệm giặt (04/01) => b2 bắt đầu 05/01 thành công
+    await expect(assertAssetScheduleAvailable(tx, { assetId: ID, bookingId: "b2", startDay: day("2026-01-05"), endDay: day("2026-01-06") })).resolves.toBeUndefined();
+  });
+
+  it("rejects a scheduled assignment within the laundry buffer window", async () => {
+    const tx = client({ bookingItem: { findMany: vi.fn().mockResolvedValue([{ id: "i1", bookingId: "b1", garmentAssetId: ID, booking: booking("b1", BookingStatus.confirmed, "2026-01-01", "2026-01-03") }]) } });
+    // b1 trả ngày 03/01 + 1 ngày đệm giặt (04/01) => b2 bắt đầu 04/01 bị từ chối do trùng ngày đệm giặt
+    await expect(assertAssetScheduleAvailable(tx, { assetId: ID, bookingId: "b2", startDay: day("2026-01-04"), endDay: day("2026-01-05") })).rejects.toThrow("trùng ngày");
+  });
+
+  it("allows a contiguous scheduled assignment when laundryBufferDays is explicitly 0", async () => {
+    const tx = client({ bookingItem: { findMany: vi.fn().mockResolvedValue([{ id: "i1", bookingId: "b1", garmentAssetId: ID, booking: booking("b1", BookingStatus.confirmed, "2026-01-01", "2026-01-03") }]) } });
+    await expect(assertAssetScheduleAvailable(tx, { assetId: ID, bookingId: "b2", startDay: day("2026-01-04"), endDay: day("2026-01-05"), laundryBufferDays: 0 })).resolves.toBeUndefined();
   });
 
   it("rejects an inclusive same-day schedule conflict", async () => {
