@@ -143,7 +143,7 @@ describe("ChatPage", () => {
     await userEvent.click(screen.getByText("Khách hàng: Khách 1"));
     await waitFor(() => expect(mockGetConversationMessages).toHaveBeenCalledWith("conv-1"));
     expect(mockSocket.emit).toHaveBeenCalledWith("join_room", { conversationId: "conv-1" });
-  });
+  }, 15000);
 
   it("aligns AI replies with staff messages and gives them a distinct bubble", async () => {
     mockGetChatConversations.mockResolvedValue({

@@ -25,6 +25,12 @@ import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabi
 import { AUTO_ASSIGN_LEAD_DAYS, AUTO_ASSIGNABLE_STATUSES, rankAssetCandidates } from "./booking-auto-assign";
 import { assertAccessoryAssetScheduleAvailable, assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
 import { readBookingDeliverySnapshot, serializeAddressSnapshot } from "./booking-delivery";
+import { BookingPickupReminderBuilder, type PickupStoreConfig } from "./booking-pickup-reminder.builder";
+import { BookingReturnReminderBuilder, type ReturnStoreConfig } from "./booking-return-reminder.builder";
+import { PickupReminderIdempotencyService } from "./pickup-reminder-idempotency.service";
+import { ReturnReminderIdempotencyService } from "./return-reminder-idempotency.service";
+import { BookingEmailAdapter } from "./email/booking-email.adapter";
+import { EmailTemplateBuilder } from "./email/email-templates.builder";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import { assertOwnedEvidenceUrls } from "../../common/validation/evidence-url";
 
@@ -183,7 +189,32 @@ export class BookingsService {
     private readonly realtime: RealtimeService,
     @Optional() private readonly vouchers?: VouchersService,
     @Optional() private readonly inspections?: InspectionsService,
+    @Optional() private readonly pickupReminderBuilder?: BookingPickupReminderBuilder,
+    @Optional() private readonly pickupReminderIdempotency?: PickupReminderIdempotencyService,
+    @Optional() private readonly returnReminderBuilder?: BookingReturnReminderBuilder,
+    @Optional() private readonly returnReminderIdempotency?: ReturnReminderIdempotencyService,
+    @Optional() private readonly emailAdapter?: BookingEmailAdapter,
   ) { }
+
+  private get reminderBuilder(): BookingPickupReminderBuilder {
+    return this.pickupReminderBuilder ?? new BookingPickupReminderBuilder();
+  }
+
+  private get returnBuilder(): BookingReturnReminderBuilder {
+    return this.returnReminderBuilder ?? new BookingReturnReminderBuilder();
+  }
+
+  private get idempotencyService(): PickupReminderIdempotencyService {
+    return this.pickupReminderIdempotency ?? new PickupReminderIdempotencyService(this.prisma);
+  }
+
+  private get returnIdempotencyService(): ReturnReminderIdempotencyService {
+    return this.returnReminderIdempotency ?? new ReturnReminderIdempotencyService(this.prisma);
+  }
+
+  private get emailAdapterService(): BookingEmailAdapter {
+    return this.emailAdapter ?? new BookingEmailAdapter(new EmailTemplateBuilder());
+  }
 
   // Ngày hiện tại theo giờ Việt Nam, dạng "YYYY-MM-DD"
   private vnTodayStr(): string {
@@ -2994,48 +3025,195 @@ export class BookingsService {
       include: { items: { include: { garment_sizes: { include: { garments: true } } } } },
     });
 
-    for (const booking of bookings) {
-      const unpaid = booking.status === BookingStatus.confirmed || booking.status === BookingStatus.awaiting_payment;
-      const note = [
-        booking.pickupMethod === "delivery"
-          ? "Trang phục sẽ được giao đến địa chỉ của bạn, vui lòng để ý điện thoại."
-          : "Vui lòng đến cửa hàng để nhận trang phục.",
-        unpaid ? "Đơn chưa thanh toán — vui lòng thanh toán khi nhận đồ." : null,
-      ].filter(Boolean).join(" ");
-      await this.notificationsService.sendBookingNotification({
-        userId: booking.customerId,
-        templateKey: "booking.pickup_reminder",
-        bookingId: booking.id,
-        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
-        startDate: booking.rentalStartDate.toISOString().slice(0, 10),
-        endDate: booking.rentalEndDate.toISOString().slice(0, 10),
-        note,
-      });
+    const storeAddress = (await this.settingValue("store_address")) as string | null | undefined;
+    const storePhone = (await this.settingValue("store_phone")) as string | null | undefined;
+    const hoursRaw = await this.settingValue("business_hours");
+    let businessHours: string | null = null;
+    if (hoursRaw && typeof hoursRaw === "object" && !Array.isArray(hoursRaw)) {
+      const bh = hoursRaw as Record<string, unknown>;
+      if (typeof bh.open === "string" && typeof bh.close === "string") {
+        businessHours = `${bh.open} - ${bh.close}`;
+      }
+    } else if (typeof hoursRaw === "string") {
+      businessHours = hoursRaw;
     }
 
-    return ok({ remindedCount: bookings.length, bookings: bookings.map((b) => b.id) });
+    const storeConfig: PickupStoreConfig = { storeAddress, storePhone, businessHours };
+    const remindedBookings: string[] = [];
+
+    for (const booking of bookings) {
+      if (!PICKUP_REMINDER_STATUSES.includes(booking.status)) {
+        continue;
+      }
+
+      const claim = await this.idempotencyService.acquireClaim(booking.id, booking.rentalStartDate);
+      if (!claim.claimed) {
+        continue;
+      }
+
+      let sendSuccess = false;
+      try {
+        const unpaid = booking.status === BookingStatus.confirmed || booking.status === BookingStatus.awaiting_payment;
+        const note = this.reminderBuilder.buildNote(
+          {
+            bookingId: booking.id,
+            pickupMethod: booking.pickupMethod,
+            rentalStartDate: booking.rentalStartDate,
+            isUnpaid: unpaid,
+            garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          },
+          storeConfig,
+        );
+
+        const emailRender = this.emailAdapterService.preparePickupReminderEmail({
+          bookingId: booking.id,
+          bookingCode: (booking as any).bookingCode ?? booking.id.slice(0, 8).toUpperCase(),
+          garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          pickupMethod: booking.pickupMethod,
+          pickupDate: booking.rentalStartDate,
+          storeAddress: storeConfig.storeAddress,
+          storePhone: storeConfig.storePhone,
+          businessHours: storeConfig.businessHours,
+        });
+        await this.notificationsService.sendBookingNotification({
+          userId: booking.customerId,
+          templateKey: "booking.pickup_reminder",
+          bookingId: booking.id,
+          garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          startDate: booking.rentalStartDate.toISOString().slice(0, 10),
+          endDate: booking.rentalEndDate.toISOString().slice(0, 10),
+          note,
+          html: emailRender.html,
+        });
+
+        sendSuccess = true;
+        remindedBookings.push(booking.id);
+      } finally {
+        await this.idempotencyService.finalizeClaim(
+          booking.id,
+          booking.rentalStartDate,
+          sendSuccess,
+          claim.ownerToken,
+        );
+      }
+    }
+
+    return ok({ remindedCount: remindedBookings.length, bookings: remindedBookings });
   }
 
-  // Chạy lúc 12h00 ngày cuối của kỳ thuê: nhắc khách trả đồ trước 00h00 hôm sau.
-  async sendReturnReminders() {
+  // Chạy lúc 12h00 (daily) hoặc 17h00 (before_close) ngày cuối của kỳ thuê: nhắc khách hoàn trả đồ và cảnh báo quá hạn sau 00h00.
+  async sendReturnReminders(scheduleType: "daily" | "before_close" = "daily") {
     const today = new Date(this.vnTodayStr());
     const bookings = await this.prisma.booking.findMany({
       where: { status: BookingStatus.renting, rentalEndDate: today },
-      include: { items: { include: { garment_sizes: { include: { garments: true } } } } },
+      include: {
+        items: { include: { garment_sizes: { include: { garments: true } } } },
+        accessoryItems: true,
+        extensions: {
+          where: { status: "pending" },
+          take: 1,
+        },
+      },
     });
 
-    for (const booking of bookings) {
-      await this.notificationsService.sendBookingNotification({
-        userId: booking.customerId,
-        templateKey: "booking.return_reminder",
-        bookingId: booking.id,
-        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
-        startDate: booking.rentalStartDate.toISOString().slice(0, 10),
-        endDate: booking.rentalEndDate.toISOString().slice(0, 10),
-      });
+    const storeAddress = (await this.settingValue("store_address")) as string | null | undefined;
+    const storePhone = (await this.settingValue("store_phone")) as string | null | undefined;
+    const hoursRaw = await this.settingValue("business_hours");
+    let businessHours: string | null = null;
+    if (hoursRaw && typeof hoursRaw === "object" && !Array.isArray(hoursRaw)) {
+      const bh = hoursRaw as Record<string, unknown>;
+      if (typeof bh.open === "string" && typeof bh.close === "string") {
+        businessHours = `${bh.open} - ${bh.close}`;
+      }
+    } else if (typeof hoursRaw === "string") {
+      businessHours = hoursRaw;
     }
 
-    return ok({ remindedCount: bookings.length, bookings: bookings.map((b) => b.id) });
+    const storeConfig: ReturnStoreConfig = {
+      storeAddress,
+      storePhone,
+      businessHours,
+      overdueFeePerDay: OVERDUE_FEE_PER_DAY,
+    };
+    const remindedBookings: string[] = [];
+
+    for (const booking of bookings) {
+      if (booking.status !== BookingStatus.renting) {
+        continue;
+      }
+
+      const claim = await this.returnIdempotencyService.acquireClaim(
+        booking.id,
+        booking.rentalEndDate,
+        scheduleType,
+      );
+      if (!claim.claimed) {
+        continue;
+      }
+
+      let sendSuccess = false;
+      try {
+        const accessoryRows = (booking as any).accessoryItems ?? (booking as any).booking_accessory_items ?? [];
+        const accessoryCount = accessoryRows.length;
+        const hasPendingExtension = Array.isArray((booking as any).extensions) && (booking as any).extensions.length > 0;
+
+        const note = this.returnBuilder.buildNote(
+          {
+            bookingId: booking.id,
+            bookingCode: (booking as any).bookingCode ?? booking.id.slice(0, 8).toUpperCase(),
+            pickupMethod: booking.pickupMethod,
+            rentalEndDate: booking.rentalEndDate,
+            garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+            hasAccessories: accessoryCount > 0,
+            accessoryCount,
+            hasPendingExtension,
+            scheduleType,
+          },
+          storeConfig,
+        );
+
+        const emailRender = this.emailAdapterService.prepareReturnReminderEmail({
+          bookingId: booking.id,
+          bookingCode: (booking as any).bookingCode ?? booking.id.slice(0, 8).toUpperCase(),
+          garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          pickupMethod: booking.pickupMethod,
+          returnDate: booking.rentalEndDate,
+          scheduleType,
+          storeAddress: storeConfig.storeAddress,
+          storePhone: storeConfig.storePhone,
+          businessHours: storeConfig.businessHours,
+          accessoryCount,
+          hasPendingExtension,
+          overdueFeePerDay: storeConfig.overdueFeePerDay,
+        });
+
+        await this.notificationsService.sendBookingNotification({
+          userId: booking.customerId,
+          templateKey: "booking.return_reminder",
+          bookingId: booking.id,
+          garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          startDate: booking.rentalStartDate.toISOString().slice(0, 10),
+          endDate: booking.rentalEndDate.toISOString().slice(0, 10),
+          note,
+          html: emailRender.html,
+        });
+
+        sendSuccess = true;
+        remindedBookings.push(booking.id);
+      } catch (err) {
+        this.logger.error(`Lỗi khi gửi nhắc trả đồ cho booking ${booking.id}: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        await this.returnIdempotencyService.finalizeClaim(
+          booking.id,
+          booking.rentalEndDate,
+          sendSuccess,
+          claim.ownerToken,
+          scheduleType,
+        );
+      }
+    }
+
+    return ok({ remindedCount: remindedBookings.length, bookings: remindedBookings, scheduleType });
   }
 
   // Chạy lúc 00h00 hằng ngày: đánh dấu quá hạn các đơn đang thuê đã qua ngày trả,

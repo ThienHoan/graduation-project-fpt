@@ -262,4 +262,202 @@ describe("NotificationsService", () => {
     expect(result.data?.emailEnabled).toBe(false);
     expect(result.data?.inAppEnabled).toBe(true);
   });
+
+  it("ưu tiên sử dụng HTML custom chuyên nghiệp khi truyền qua sendBookingNotification (SMTP)", async () => {
+    const sendMailMock = vi.fn().mockResolvedValue(undefined);
+    const nodemailer = await import("nodemailer");
+    vi.mocked(nodemailer.createTransport).mockReturnValueOnce({
+      sendMail: sendMailMock,
+    } as any);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) => {
+          if (where.key === "notification:settings") {
+            return {
+              value: {
+                provider: "smtp",
+                smtp: {
+                  service: "gmail",
+                  host: null,
+                  port: null,
+                  secure: false,
+                  user: "mailer@example.com",
+                  password: "mailer-password",
+                  fromEmail: "mailer@example.com",
+                  fromName: "Cổ Phục ERP",
+                },
+              },
+            };
+          }
+          return null;
+        }),
+        upsert: vi.fn(),
+      },
+      auditLog: { create: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+      notification: {
+        create: vi.fn().mockResolvedValue({ id: "notif-1" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      userAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-1",
+          email: "customer@example.com",
+          profile: { fullName: "Nguyễn Văn A" },
+        }),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "SMTP_EMAIL") return "mailer@example.com";
+        if (key === "SMTP_PASSWORD") return "mailer-password";
+        return undefined;
+      }),
+    };
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+
+    const customRoyalHtml = "<!DOCTYPE html><html><body><h1>Royal Layout</h1></body></html>";
+    await service.sendBookingNotification({
+      userId: "user-1",
+      templateKey: "booking.pickup_reminder",
+      bookingId: "00000000-0000-4000-8000-000000000001",
+      garmentName: "Nhật Bình",
+      startDate: "2026-11-08",
+      note: "Hướng dẫn nhận đồ",
+      html: customRoyalHtml,
+    });
+
+    expect(sendMailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "customer@example.com",
+        html: customRoyalHtml,
+      }),
+    );
+  });
+
+  it("ưu tiên sử dụng HTML custom chuyên nghiệp khi truyền qua Resend", async () => {
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "msg_resend_123" }),
+    } as Response);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) => {
+          if (where.key === "notification:settings") {
+            return {
+              value: {
+                provider: "resend",
+                resend: {
+                  apiKey: "re_test_123",
+                  fromEmail: "resend@example.com",
+                  fromName: "Cổ Phục ERP",
+                },
+              },
+            };
+          }
+          return null;
+        }),
+      },
+      auditLog: { create: vi.fn() },
+      notification: {
+        create: vi.fn().mockResolvedValue({ id: "notif-resend" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      userAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-resend",
+          email: "customer-resend@example.com",
+          profile: { fullName: "Lê Thị B" },
+        }),
+      },
+    };
+    const configService = { get: vi.fn(() => undefined) };
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+
+    const customHtml = "<div>Custom Resend Royal Template</div>";
+    await service.sendBookingNotification({
+      userId: "user-resend",
+      templateKey: "booking.pickup_reminder",
+      bookingId: "00000000-0000-4000-8000-000000000002",
+      garmentName: "Áo Dài Ngũ Thân",
+      html: customHtml,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.resend.com/emails",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining(customHtml),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("sử dụng wrapEmailHtml làm fallback an toàn khi html không được truyền", async () => {
+    const sendMailMock = vi.fn().mockResolvedValue(undefined);
+    const nodemailer = await import("nodemailer");
+    vi.mocked(nodemailer.createTransport).mockReturnValueOnce({
+      sendMail: sendMailMock,
+    } as any);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) => {
+          if (where.key === "notification:settings") {
+            return {
+              value: {
+                provider: "smtp",
+                smtp: {
+                  user: "mailer@example.com",
+                  password: "mailer-password",
+                  fromEmail: "mailer@example.com",
+                  fromName: "Cổ Phục ERP",
+                },
+              },
+            };
+          }
+          return null;
+        }),
+      },
+      auditLog: { create: vi.fn() },
+      notification: {
+        create: vi.fn().mockResolvedValue({ id: "notif-fallback" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      userAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-fb",
+          email: "fb@example.com",
+          profile: { fullName: "User Fallback" },
+        }),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "SMTP_EMAIL") return "mailer@example.com";
+        if (key === "SMTP_PASSWORD") return "mailer-password";
+        return undefined;
+      }),
+    };
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+
+    await service.sendBookingNotification({
+      userId: "user-fb",
+      templateKey: "booking.pickup_reminder",
+      bookingId: "00000000-0000-4000-8000-000000000003",
+      garmentName: "Áo Tấc",
+      // Không truyền html
+    });
+
+    expect(sendMailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "fb@example.com",
+        html: expect.stringContaining("Cổ Phục ERP"),
+      }),
+    );
+  });
 });

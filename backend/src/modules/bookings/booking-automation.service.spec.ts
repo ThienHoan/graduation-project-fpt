@@ -255,4 +255,38 @@ describe("BookingAutomationService.sendReviewInvitations", () => {
     }));
     expect(result.data?.invitedCount).toBe(1);
   });
+
+  it("delegates to thankYouVouchers service when available to enrich review invitation with voucher", async () => {
+    const completed = {
+      id: BOOKING_ID,
+      customerId: CUSTOMER_ID,
+      rentalStartDate: new Date("2026-10-01T00:00:00.000Z"),
+      rentalEndDate: new Date("2026-10-03T00:00:00.000Z"),
+      items: [{ garment_sizes: { garments: { name: "Áo dài mẫu" } } }],
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([completed]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyRoles: vi.fn(), notifyStaffBooking: vi.fn() };
+    const thankYouVouchers = {
+      processCompletedBookingThankYou: vi.fn().mockResolvedValue({
+        success: true,
+        status: "issued_and_notified",
+        voucherCode: "TRIAN-00000000",
+        notificationSent: true,
+      }),
+    };
+    const service = new BookingAutomationService(
+      prisma as never,
+      {} as never,
+      notifications as never,
+      undefined,
+      undefined,
+      thankYouVouchers as never,
+    );
+
+    const result = await service.sendReviewInvitations(NOW);
+
+    expect(thankYouVouchers.processCompletedBookingThankYou).toHaveBeenCalledWith(BOOKING_ID);
+    expect(notifications.sendBookingNotification).not.toHaveBeenCalled();
+    expect(result.data?.invitedCount).toBe(1);
+  });
 });

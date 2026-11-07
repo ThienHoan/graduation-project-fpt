@@ -170,6 +170,105 @@ export class BookingExtensionsService {
     return ok(rows.map((row) => this.serialize(row)));
   }
 
+  /**
+   * WORKSTREAM A: Lịch sử toàn bộ yêu cầu gia hạn của khách hàng qua tất cả các đơn.
+   * - Xác thực quyền sở hữu nghiêm ngặt theo customerId từ session.
+   * - Trả về đầy đủ ngày trả cũ, ngày trả mới, tình trạng giữ lịch, thanh toán, tên cổ phục.
+   */
+  async listAllForCustomer(
+    customerId: string,
+    query?: { page?: number; limit?: number; status?: string; bookingId?: string },
+  ) {
+    const page = Math.max(1, query?.page ?? 1);
+    const limit = Math.min(Math.max(1, query?.limit ?? 10), 50);
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.BookingExtensionWhereInput = {
+      booking: { customerId },
+    };
+
+    if (query?.status && query.status !== "all") {
+      where.status = query.status;
+    }
+
+    if (query?.bookingId) {
+      where.bookingId = query.bookingId;
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.bookingExtension.findMany({
+        where,
+        include: {
+          booking: {
+            select: {
+              id: true,
+              customerId: true,
+              status: true,
+              rentalStartDate: true,
+              rentalEndDate: true,
+              items: {
+                take: 1,
+                include: {
+                  garment: { select: { name: true } },
+                  garment_sizes: { include: { garments: { select: { name: true } } } },
+                },
+              },
+            },
+          },
+          payment: {
+            select: {
+              id: true,
+              status: true,
+              amount: true,
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.bookingExtension.count({ where }),
+    ]);
+
+    const items = rows.map((row) => {
+      const garmentName =
+        row.booking?.items[0]?.garment?.name ??
+        row.booking?.items[0]?.garment_sizes?.garments?.name ??
+        "Cổ phục Hoàng thành";
+      const isHoldActive =
+        row.status === EXTENSION_STATUS.pending && new Date(row.expiresAt).getTime() > Date.now();
+
+      return {
+        id: row.id,
+        bookingId: row.bookingId,
+        bookingCode: (row.booking as any)?.bookingCode ?? row.bookingId.slice(0, 8).toUpperCase(),
+        customerId,
+        garmentName,
+        previousEndDate: iso(row.previousEndDate),
+        newEndDate: iso(row.newEndDate),
+        extraDays: row.extraDays,
+        amount: Number(row.amount),
+        status: row.status as "pending" | "applied" | "expired" | "cancelled" | "failed",
+        paymentStatus: row.payment?.status ?? (row.status === "applied" ? "paid" : "pending"),
+        paymentId: row.paymentId,
+        checkoutUrl: isHoldActive ? row.checkoutUrl : null,
+        expiresAt: row.expiresAt.toISOString(),
+        appliedAt: row.appliedAt?.toISOString() ?? null,
+        note: row.note,
+        createdAt: row.createdAt.toISOString(),
+        isHoldActive,
+      };
+    });
+
+    return ok({
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 1,
+    });
+  }
+
   async findForCustomer(customerId: string, extensionId: string) {
     const extension = await this.prisma.bookingExtension.findUnique({
       where: { id: extensionId },

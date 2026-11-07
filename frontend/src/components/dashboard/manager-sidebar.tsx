@@ -98,6 +98,7 @@ export const MANAGER_NAV_GROUPS: NavGroupConfig[] = [
     title: "Dịch vụ & Khách hàng",
     icon: MessageSquare,
     items: [
+      { key: "customer-care", label: "Chăm sóc & Nhắc lịch", icon: Headphones, href: "/dashboard/manager/customer-care" },
       { key: "reviews", label: "Đánh giá", icon: Star, href: "/dashboard/manager/reviews", badge: "reviews" },
       { key: "faq", label: "Cấu hình FAQ", icon: BookOpen, href: "/dashboard/manager/faq" },
       { key: "chat", label: "CSKH & Tin nhắn", icon: MessageSquare, href: "/chat", badge: "chat" },

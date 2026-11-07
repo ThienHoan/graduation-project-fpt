@@ -80,6 +80,7 @@ function createService(options: {
         return { count: 1 };
       }),
       findMany: vi.fn().mockImplementation(async () => (extension ? [extension] : [])),
+      count: vi.fn().mockImplementation(async () => (extension ? 1 : 0)),
     },
     bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
     userAccount: { findUnique: vi.fn().mockResolvedValue({ id: CUSTOMER_ID, loyaltyTier: options.loyaltyTier ?? "basic" }) },
@@ -357,5 +358,79 @@ describe("BookingExtensionsService payment handling", () => {
 
     await expect(service.cancelPending(CUSTOMER_ID, BOOKING_ID)).rejects.toThrow("đã được thanh toán");
     expect(getExtension()?.status).toBe("applied");
+  });
+
+  describe("listAllForCustomer (Workstream A - Lịch sử gia hạn khách hàng)", () => {
+    it("trả về danh sách lịch sử gia hạn đầy đủ thông tin ngày trả cũ và mới", async () => {
+      const { service, prisma } = createService({
+        booking: { id: BOOKING_ID, customerId: CUSTOMER_ID },
+      });
+
+      prisma.bookingExtension.findMany = vi.fn().mockResolvedValue([
+        {
+          id: EXTENSION_ID,
+          bookingId: BOOKING_ID,
+          previousEndDate: day("2026-10-12"),
+          newEndDate: day("2026-10-14"),
+          extraDays: 2,
+          amount: 240000,
+          status: "applied",
+          checkoutUrl: null,
+          expiresAt: new Date(NOW.getTime() + 1800000),
+          appliedAt: new Date(NOW.getTime() + 600000),
+          note: null,
+          createdAt: NOW,
+          booking: {
+            id: BOOKING_ID,
+            customerId: CUSTOMER_ID,
+            status: "renting",
+            items: [
+              {
+                garment_sizes: {
+                  garments: { name: "Nhật Bình Hoàng Gia" },
+                },
+              },
+            ],
+          },
+          payment: {
+            id: PAYMENT_ID,
+            status: "paid",
+            amount: 240000,
+          },
+        },
+      ]);
+      prisma.bookingExtension.count = vi.fn().mockResolvedValue(1);
+
+      const res = await service.listAllForCustomer(CUSTOMER_ID, { page: 1, limit: 10 });
+
+      expect(res.data?.items).toHaveLength(1);
+      const item = res.data?.items[0];
+      expect(item?.bookingId).toBe(BOOKING_ID);
+      expect(item?.garmentName).toBe("Nhật Bình Hoàng Gia");
+      expect(item?.previousEndDate).toBe("2026-10-12");
+      expect(item?.newEndDate).toBe("2026-10-14");
+      expect(item?.extraDays).toBe(2);
+      expect(item?.amount).toBe(240000);
+      expect(item?.status).toBe("applied");
+      expect(item?.paymentStatus).toBe("paid");
+      expect(item?.appliedAt).toBeDefined();
+    });
+
+    it("lọc theo status khi được yêu cầu", async () => {
+      const { service, prisma } = createService();
+      prisma.bookingExtension.findMany = vi.fn().mockResolvedValue([]);
+      prisma.bookingExtension.count = vi.fn().mockResolvedValue(0);
+
+      await service.listAllForCustomer(CUSTOMER_ID, { status: "pending" });
+
+      expect(prisma.bookingExtension.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            booking: { customerId: CUSTOMER_ID },
+            status: "pending",
+          }),
+        }),
+      );
+    });
   });
 });

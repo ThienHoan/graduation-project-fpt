@@ -1621,9 +1621,106 @@ describe("BookingsService fulfillment automation", () => {
     expect(prisma.booking.findMany.mock.calls[0][0].where.rentalStartDate).toEqual(new Date("2026-10-09T00:00:00.000Z"));
     expect(result.data?.remindedCount).toBe(2);
     const [storeCall, deliveryCall] = notifications.sendBookingNotification.mock.calls.map((call) => call[0]);
-    expect(storeCall).toMatchObject({ templateKey: "booking.pickup_reminder", note: "Vui lòng đến cửa hàng để nhận trang phục." });
+    expect(storeCall).toMatchObject({ templateKey: "booking.pickup_reminder" });
+    expect(storeCall.note).toContain("Vui lòng đến cửa hàng để nhận trang phục.");
+    expect(storeCall.note).toContain("Địa chỉ nhận:");
+    expect(storeCall.note).toContain("Hướng dẫn bảo quản cổ phục:");
     expect(deliveryCall.note).toContain("giao đến địa chỉ");
     expect(deliveryCall.note).toContain("chưa thanh toán");
+    expect(deliveryCall.note).toContain("Hướng dẫn bảo quản cổ phục:");
+  });
+
+  it("reminds customers on the final rental day with enriched return instructions, store details, and accessory counts", async () => {
+    const storeBooking = {
+      ...makeBooking("2026-10-06", "2026-10-08", { status: "renting" }),
+      id: "00000000-0000-4000-8000-0000000000e1",
+      pickupMethod: "store_pickup",
+      accessoryItems: [{ id: "acc-1" }, { id: "acc-2" }],
+      extensions: [],
+    };
+    const deliveryBooking = {
+      ...makeBooking("2026-10-06", "2026-10-08", { status: "renting" }),
+      id: "00000000-0000-4000-8000-0000000000e2",
+      pickupMethod: "delivery",
+      accessoryItems: [],
+      extensions: [],
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([storeBooking, deliveryBooking]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtimeMock() as never);
+
+    const result = await service.sendReturnReminders();
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where.rentalEndDate).toEqual(new Date("2026-10-08T00:00:00.000Z"));
+    expect(result.data?.remindedCount).toBe(2);
+    const [storeCall, deliveryCall] = notifications.sendBookingNotification.mock.calls.map((call) => call[0]);
+
+    expect(storeCall).toMatchObject({ templateKey: "booking.return_reminder" });
+    expect(storeCall.note).toContain("Địa điểm nhận trả trang phục: Showroom");
+    expect(storeCall.note).toContain("Giờ mở cửa đón khách");
+    expect(storeCall.note).toContain("Lưu ý: Đơn hàng có kèm theo 2 món phụ kiện");
+    expect(storeCall.note).toContain("Hướng dẫn chuẩn bị hoàn trả:");
+    expect(storeCall.note).toContain("Sau 00h00, hệ thống sẽ tự động chuyển trạng thái đơn sang quá hạn");
+    expect(storeCall.note).toContain("/dashboard/customer");
+
+    expect(deliveryCall).toMatchObject({ templateKey: "booking.return_reminder" });
+    expect(deliveryCall.note).toContain("đơn giao nhận tận nơi");
+    expect(deliveryCall.note).toContain("Hotline điều phối lấy hàng");
+  });
+
+  it("handles pending extension safely by warning customer about payment hold instead of claiming extension succeeded", async () => {
+    const pendingExtBooking = {
+      ...makeBooking("2026-10-06", "2026-10-08", { status: "renting" }),
+      id: "00000000-0000-4000-8000-0000000000e3",
+      pickupMethod: "store_pickup",
+      extensions: [{ id: "ext-1", status: "pending" }],
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([pendingExtBooking]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtimeMock() as never);
+
+    const result = await service.sendReturnReminders();
+
+    expect(result.data?.remindedCount).toBe(1);
+    const [call] = notifications.sendBookingNotification.mock.calls.map((c) => c[0]);
+    expect(call.note).toContain("Lưu ý gia hạn: Đơn hàng đang có một yêu cầu gia hạn thuê chờ thanh toán (giữ lịch trong 30 phút)");
+    expect(call.note).toContain("nếu không thanh toán kịp, yêu cầu gia hạn sẽ tự động bị huỷ");
+  });
+
+  it("skips return reminders if booking is no longer in renting status", async () => {
+    const nonRentingBooking = {
+      ...makeBooking("2026-10-06", "2026-10-08", { status: "completed" }),
+      id: "00000000-0000-4000-8000-0000000000e4",
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([nonRentingBooking]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtimeMock() as never);
+
+    const result = await service.sendReturnReminders();
+
+    expect(result.data?.remindedCount).toBe(0);
+    expect(notifications.sendBookingNotification).not.toHaveBeenCalled();
+  });
+
+  it("sends before_close return reminders at 17:00 with 3-hour warning and appropriate notes", async () => {
+    const storeBooking = {
+      ...makeBooking("2026-10-06", "2026-10-08", { status: "renting" }),
+      id: "00000000-0000-4000-8000-0000000000e1",
+      pickupMethod: "store_pickup",
+      accessoryItems: [],
+      extensions: [],
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([storeBooking]) } };
+    const notifications = { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() };
+    const service = new BookingsService(prisma as never, notifications as never, {} as never, {} as never, realtimeMock() as never);
+
+    const result = await service.sendReturnReminders("before_close");
+
+    expect(result.data?.remindedCount).toBe(1);
+    expect(result.data?.scheduleType).toBe("before_close");
+    const [call] = notifications.sendBookingNotification.mock.calls.map((c) => c[0]);
+    expect(call.note).toContain("[Nhắc lần 2 - 17h00]");
+    expect(call.note).toContain("Hiện còn khoảng 3 giờ (trước 20:00)");
   });
 });
 

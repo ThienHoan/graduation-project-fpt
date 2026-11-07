@@ -493,6 +493,7 @@ export class NotificationsService {
     note?: string | null;
     amount?: string | number;
     overdueDays?: number;
+    html?: string | null;
   }) {
     const bookingCode = input.bookingId.slice(0, 8).toUpperCase();
     return this.notifyUser({
@@ -508,6 +509,7 @@ export class NotificationsService {
         note: input.note ?? null,
         amount: input.amount ?? null,
         overdueDays: input.overdueDays ?? null,
+        html: input.html ?? null,
       },
     });
   }
@@ -625,7 +627,10 @@ export class NotificationsService {
 
     const fromHeader = `"${fromName}" <${fromEmail}>`;
     const subject = this.render(template.subject, data);
-    const html = this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
+    const html =
+      typeof data.html === "string" && data.html.trim().length > 0
+        ? data.html
+        : this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
     const replyTo = settings.smtp.replyTo || undefined;
 
     try {
@@ -704,7 +709,10 @@ export class NotificationsService {
       "Cổ Phục ERP";
 
     const subject = this.render(template.subject, data);
-    const htmlContent = this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
+    const htmlContent =
+      typeof data.html === "string" && data.html.trim().length > 0
+        ? data.html
+        : this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
     const replyTo = settings.smtp.replyTo ? { email: settings.smtp.replyTo } : undefined;
 
     try {
@@ -823,7 +831,10 @@ export class NotificationsService {
         from: `"${settings.smtp.fromName ?? "Cổ Phục ERP"}" <${settings.smtp.fromEmail ?? username}>`,
         to: email,
         subject: this.render(template.subject, data),
-        html: this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />")),
+        html:
+          typeof data.html === "string" && data.html.trim().length > 0
+            ? data.html
+            : this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />")),
         replyTo: settings.smtp.replyTo ?? undefined,
       });
 

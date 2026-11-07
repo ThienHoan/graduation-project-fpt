@@ -9,6 +9,7 @@ import { BookingAutomationService } from "./booking-automation.service";
 import { BookingExtensionsService } from "./booking-extensions.service";
 import { BookingsService } from "./bookings.service";
 import { AssignAssetDto } from "./dto/assign-asset.dto";
+import { CustomerExtensionHistoryQueryDto } from "./customer-care/customer-care.dto";
 import { AssignAccessoryAssetDto } from "./dto/assign-accessory-asset.dto";
 import { CheckAccessoryAvailabilityDto } from "./dto/check-accessory-availability.dto";
 import { InspectBookingAccessoryDto } from "./dto/inspect-booking-accessory.dto";
@@ -54,6 +55,16 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard)
   findMine(@CurrentUser() user: AuthenticatedUser) {
     return this.bookingsService.findMine(user.id);
+  }
+
+  /** Khách xem toàn bộ lịch sử gia hạn các đơn thuê của mình. */
+  @Get("my-extensions")
+  @UseGuards(JwtAuthGuard)
+  findMyExtensions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: CustomerExtensionHistoryQueryDto,
+  ) {
+    return this.extensions.listAllForCustomer(user.id, query);
   }
 
   @Get(":id")

@@ -25,12 +25,25 @@ export class BookingsScheduler implements OnApplicationBootstrap {
   @Cron("0 0 12 * * *", { timeZone: "Asia/Ho_Chi_Minh" })
   async runReturnReminders() {
     try {
-      const result = await this.bookingsService.sendReturnReminders();
+      const result = await this.bookingsService.sendReturnReminders("daily");
       if (result.data?.remindedCount) {
         this.logger.log(`Đã nhắc trả đồ ${result.data.remindedCount} đơn.`);
       }
     } catch (error) {
       this.logger.error("Lỗi khi gửi nhắc trả đồ", error instanceof Error ? error.stack : String(error));
+    }
+  }
+
+  // 17h00 (giờ VN) mỗi ngày: nhắc lần 2 trước giờ đóng cửa (T-3 tiếng trước 20h00).
+  @Cron("0 0 17 * * *", { timeZone: "Asia/Ho_Chi_Minh" })
+  async runBeforeCloseReturnReminders() {
+    try {
+      const result = await this.bookingsService.sendReturnReminders("before_close");
+      if (result.data?.remindedCount) {
+        this.logger.log(`Đã nhắc trả đồ trước giờ đóng cửa (17h00) cho ${result.data.remindedCount} đơn.`);
+      }
+    } catch (error) {
+      this.logger.error("Lỗi khi gửi nhắc trả đồ 17h00", error instanceof Error ? error.stack : String(error));
     }
   }
 
