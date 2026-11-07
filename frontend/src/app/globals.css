@@ -5,6 +5,8 @@
 @tailwind utilities;
 
 :root {
+  --font-manrope: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-cormorant: "Cormorant Garamond", Georgia, serif;
   color-scheme: light;
   background: #fcfaf7;
   color: #251917;
