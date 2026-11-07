@@ -16,7 +16,7 @@ import {
 } from "@/lib/api";
 
 type NotificationSettingsForm = {
-  provider: "mock" | "smtp";
+  provider: "mock" | "smtp" | "resend" | "brevo";
   smtpService: string;
   smtpHost: string;
   smtpPort: string;
@@ -285,6 +285,8 @@ export function NotificationConfigPanel() {
                 >
                   <option value="mock">Mock</option>
                   <option value="smtp">SMTP</option>
+                  <option value="resend">Resend (REST API)</option>
+                  <option value="brevo">Brevo (REST API)</option>
                 </select>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">

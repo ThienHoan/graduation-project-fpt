@@ -75,6 +75,104 @@ describe("NotificationsService", () => {
     );
   });
 
+  it("sends emails via Resend when configured", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "resend-123" }),
+    } as Response);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn(),
+      },
+      auditLog: {
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      notification: {
+        create: vi.fn(),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "RESEND_API_KEY") return "re_test_123456";
+        if (key === "RESEND_FROM_EMAIL") return "onboarding@resend.dev";
+        return undefined;
+      }),
+    };
+
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+    const result = await service.sendPasswordResetEmail({
+      email: "user@example.com",
+      code: "654321",
+      expiresIn: 10,
+    });
+
+    expect(result.status).toBe("sent");
+    expect(result.provider).toBe("resend");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.resend.com/emails",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer re_test_123456",
+        }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it("sends emails via Brevo when configured", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ messageId: "<brevo-123>" }),
+    } as Response);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn(),
+      },
+      auditLog: {
+        create: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      notification: {
+        create: vi.fn(),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "BREVO_API_KEY") return "xkeysib-test-123";
+        if (key === "BREVO_SENDER_EMAIL") return "sender@example.com";
+        return undefined;
+      }),
+    };
+
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+    const result = await service.sendPasswordResetEmail({
+      email: "user@example.com",
+      code: "654321",
+      expiresIn: 10,
+    });
+
+    expect(result.status).toBe("sent");
+    expect(result.provider).toBe("brevo");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.brevo.com/v3/smtp/email",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "api-key": "xkeysib-test-123",
+        }),
+      }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it("creates an in-app notification and log entry for a user", async () => {
     const prisma = {
       systemSetting: {
