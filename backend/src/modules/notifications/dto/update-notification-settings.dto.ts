@@ -2,8 +2,8 @@ import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min } from 
 
 export class UpdateNotificationSettingsDto {
   @IsOptional()
-  @IsIn(["mock", "smtp"])
-  provider?: "mock" | "smtp";
+  @IsIn(["mock", "smtp", "resend", "brevo"])
+  provider?: "mock" | "smtp" | "resend" | "brevo";
 
   @IsOptional()
   @IsString()
@@ -42,4 +42,12 @@ export class UpdateNotificationSettingsDto {
   @IsOptional()
   @IsString()
   replyTo?: string;
+
+  @IsOptional()
+  @IsString()
+  resendApiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  brevoApiKey?: string;
 }

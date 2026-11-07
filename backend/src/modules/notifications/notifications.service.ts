@@ -21,7 +21,7 @@ export type NotificationTemplate = {
 export type NotificationTemplateMap = Record<string, NotificationTemplate>;
 
 export type NotificationSettings = {
-  provider: "mock" | "smtp";
+  provider: "mock" | "smtp" | "resend" | "brevo";
   smtp: {
     service: string | null;
     host: string | null;
@@ -32,6 +32,16 @@ export type NotificationSettings = {
     fromEmail: string | null;
     fromName: string | null;
     replyTo: string | null;
+  };
+  resend?: {
+    apiKey: string | null;
+    fromEmail: string | null;
+    fromName: string | null;
+  };
+  brevo?: {
+    apiKey: string | null;
+    senderEmail: string | null;
+    senderName: string | null;
   };
 };
 
@@ -46,7 +56,7 @@ export type NotificationPreferences = {
 
 export type NotificationSendStatus = {
   status: "sent" | "skipped" | "failed";
-  provider: "smtp" | "mock";
+  provider: "smtp" | "mock" | "resend" | "brevo";
   reason?: string;
 };
 
@@ -324,6 +334,16 @@ export class NotificationsService {
         fromName: dto.fromName ?? current.smtp.fromName,
         replyTo: dto.replyTo ?? current.smtp.replyTo,
       },
+      resend: {
+        apiKey: dto.resendApiKey ?? current.resend?.apiKey ?? null,
+        fromEmail: dto.fromEmail ?? current.resend?.fromEmail ?? null,
+        fromName: dto.fromName ?? current.resend?.fromName ?? null,
+      },
+      brevo: {
+        apiKey: dto.brevoApiKey ?? current.brevo?.apiKey ?? null,
+        senderEmail: dto.fromEmail ?? current.brevo?.senderEmail ?? null,
+        senderName: dto.fromName ?? current.brevo?.senderName ?? null,
+      },
     };
 
     await this.saveSetting(SETTINGS_KEY, next);
@@ -434,7 +454,8 @@ export class NotificationsService {
     // request API của khách (Vercel proxy sẽ trả 502). sendEmail tự ghi log khi thất bại.
     let emailStatus: NotificationSendStatus | null = null;
     if (activeChannels.includes("email") && email) {
-      emailStatus = { status: "skipped", provider: "smtp", reason: "queued-background" };
+      const currentSettings = await this.loadSettings();
+      emailStatus = { status: "skipped", provider: currentSettings.provider, reason: "queued-background" };
       void this.sendEmail(template, email, data, input.templateKey).catch((error) => {
         this.logger.warn(`Background email failed (${input.templateKey}): ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -574,6 +595,165 @@ export class NotificationsService {
     return this.sendTemplateEmail(input);
   }
 
+  private async sendViaResend(
+    template: NotificationTemplate,
+    email: string,
+    data: Record<string, unknown>,
+    templateKey: string,
+    settings: NotificationSettings,
+  ): Promise<NotificationSendStatus> {
+    const apiKey =
+      settings.resend?.apiKey ||
+      this.configService.get<string>("RESEND_API_KEY")?.trim() ||
+      "";
+
+    if (!apiKey) {
+      return { status: "skipped", provider: "resend", reason: "resend-api-key-missing" };
+    }
+
+    const fromEmail =
+      settings.resend?.fromEmail ||
+      this.configService.get<string>("RESEND_FROM_EMAIL")?.trim() ||
+      settings.smtp.fromEmail ||
+      "onboarding@resend.dev";
+
+    const fromName =
+      settings.resend?.fromName ||
+      this.configService.get<string>("RESEND_FROM_NAME")?.trim() ||
+      settings.smtp.fromName ||
+      "Cổ Phục ERP";
+
+    const fromHeader = `"${fromName}" <${fromEmail}>`;
+    const subject = this.render(template.subject, data);
+    const html = this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
+    const replyTo = settings.smtp.replyTo || undefined;
+
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: fromHeader,
+          to: [email],
+          subject,
+          html,
+          ...(replyTo ? { reply_to: replyTo } : {}),
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+
+      if (!response.ok) {
+        const errorMsg =
+          (typeof responseBody.message === "string" ? responseBody.message : null) ||
+          `Resend HTTP error ${response.status}: ${response.statusText}`;
+        throw new Error(errorMsg);
+      }
+
+      this.logger.log(`Email đã gửi thành công qua Resend đến: ${email} (template: ${templateKey})`);
+      return { status: "sent", provider: "resend" };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Resend gửi email thất bại (${templateKey} đến ${email}): ${errorMsg}`);
+      await this.recordLog("notification.failed", "notification", null, {
+        templateKey,
+        email,
+        provider: "resend",
+        error: errorMsg,
+      });
+
+      return {
+        status: "failed",
+        provider: "resend",
+        reason: errorMsg,
+      };
+    }
+  }
+
+  private async sendViaBrevo(
+    template: NotificationTemplate,
+    email: string,
+    data: Record<string, unknown>,
+    templateKey: string,
+    settings: NotificationSettings,
+  ): Promise<NotificationSendStatus> {
+    const apiKey =
+      settings.brevo?.apiKey ||
+      this.configService.get<string>("BREVO_API_KEY")?.trim() ||
+      "";
+
+    if (!apiKey) {
+      return { status: "skipped", provider: "brevo", reason: "brevo-api-key-missing" };
+    }
+
+    const senderEmail =
+      settings.brevo?.senderEmail ||
+      this.configService.get<string>("BREVO_SENDER_EMAIL")?.trim() ||
+      settings.smtp.fromEmail ||
+      settings.smtp.user ||
+      "cophuctruyenthong@gmail.com";
+
+    const senderName =
+      settings.brevo?.senderName ||
+      this.configService.get<string>("BREVO_SENDER_NAME")?.trim() ||
+      settings.smtp.fromName ||
+      "Cổ Phục ERP";
+
+    const subject = this.render(template.subject, data);
+    const htmlContent = this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
+    const replyTo = settings.smtp.replyTo ? { email: settings.smtp.replyTo } : undefined;
+
+    try {
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          "api-key": apiKey,
+          "Content-Type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          sender: { name: senderName, email: senderEmail },
+          to: [{ email }],
+          subject,
+          htmlContent,
+          ...(replyTo ? { replyTo } : {}),
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+
+      if (!response.ok) {
+        const errorMsg =
+          (typeof responseBody.message === "string" ? responseBody.message : null) ||
+          `Brevo HTTP error ${response.status}: ${response.statusText}`;
+        throw new Error(errorMsg);
+      }
+
+      this.logger.log(`Email đã gửi thành công qua Brevo đến: ${email} (template: ${templateKey})`);
+      return { status: "sent", provider: "brevo" };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Brevo gửi email thất bại (${templateKey} đến ${email}): ${errorMsg}`);
+      await this.recordLog("notification.failed", "notification", null, {
+        templateKey,
+        email,
+        provider: "brevo",
+        error: errorMsg,
+      });
+
+      return {
+        status: "failed",
+        provider: "brevo",
+        reason: errorMsg,
+      };
+    }
+  }
+
   private async sendEmail(
     template: NotificationTemplate,
     email: string,
@@ -581,6 +761,14 @@ export class NotificationsService {
     templateKey: string,
   ): Promise<NotificationSendStatus> {
     const settings = await this.loadSettings();
+
+    if (settings.provider === "resend") {
+      return this.sendViaResend(template, email, data, templateKey, settings);
+    }
+
+    if (settings.provider === "brevo") {
+      return this.sendViaBrevo(template, email, data, templateKey, settings);
+    }
 
     if (settings.provider !== "smtp") {
       return { status: "skipped", provider: "mock", reason: "provider-mock" };
@@ -669,6 +857,10 @@ export class NotificationsService {
     const envFromEmail = this.configService.get<string>("SMTP_FROM_EMAIL")?.trim() || null;
     const envReplyTo = this.configService.get<string>("SMTP_REPLY_TO")?.trim() || null;
 
+    const envProvider = this.configService.get<string>("EMAIL_PROVIDER")?.trim().toLowerCase();
+    const resendApiKey = stored?.resend?.apiKey || this.configService.get<string>("RESEND_API_KEY")?.trim() || null;
+    const brevoApiKey = stored?.brevo?.apiKey || this.configService.get<string>("BREVO_API_KEY")?.trim() || null;
+
     const user = stored?.smtp?.user || envUser;
     const isGmail =
       stored?.smtp?.service === "gmail" ||
@@ -680,8 +872,21 @@ export class NotificationsService {
     const port = stored?.smtp?.port ?? (service ? null : (envPort ?? (isGmail ? 465 : 587)));
     const secure = Boolean(stored?.smtp?.secure ?? (service ? true : (envSecure ?? (port === 465 || isGmail))));
 
+    let activeProvider: "mock" | "smtp" | "resend" | "brevo" = "mock";
+    if (envProvider === "resend" || envProvider === "brevo" || envProvider === "smtp" || envProvider === "mock") {
+      activeProvider = envProvider;
+    } else if (stored?.provider) {
+      activeProvider = stored.provider;
+    } else if (resendApiKey) {
+      activeProvider = "resend";
+    } else if (brevoApiKey) {
+      activeProvider = "brevo";
+    } else if (this.hasSmtpEnv() || Boolean(stored?.smtp?.user && stored?.smtp?.password)) {
+      activeProvider = "smtp";
+    }
+
     return {
-      provider: stored?.provider ?? (this.hasSmtpEnv() || Boolean(stored?.smtp?.user && stored?.smtp?.password) ? "smtp" : "mock"),
+      provider: activeProvider,
       smtp: {
         service,
         host: stored?.smtp?.host ?? (service ? null : (envHost ?? (isGmail ? null : "smtp.gmail.com"))),
@@ -692,6 +897,16 @@ export class NotificationsService {
         fromEmail: stored?.smtp?.fromEmail || envFromEmail || user,
         fromName: stored?.smtp?.fromName || envFromName || "Cổ Phục ERP",
         replyTo: stored?.smtp?.replyTo || envReplyTo,
+      },
+      resend: {
+        apiKey: resendApiKey,
+        fromEmail: stored?.resend?.fromEmail || this.configService.get<string>("RESEND_FROM_EMAIL")?.trim() || null,
+        fromName: stored?.resend?.fromName || this.configService.get<string>("RESEND_FROM_NAME")?.trim() || null,
+      },
+      brevo: {
+        apiKey: brevoApiKey,
+        senderEmail: stored?.brevo?.senderEmail || this.configService.get<string>("BREVO_SENDER_EMAIL")?.trim() || null,
+        senderName: stored?.brevo?.senderName || this.configService.get<string>("BREVO_SENDER_NAME")?.trim() || null,
       },
     };
   }
@@ -709,6 +924,16 @@ export class NotificationsService {
         fromName: settings.smtp.fromName,
         replyTo: settings.smtp.replyTo,
         passwordConfigured: Boolean(settings.smtp.password),
+      },
+      resend: {
+        fromEmail: settings.resend?.fromEmail ?? null,
+        fromName: settings.resend?.fromName ?? null,
+        apiKeyConfigured: Boolean(settings.resend?.apiKey || this.configService.get<string>("RESEND_API_KEY")),
+      },
+      brevo: {
+        senderEmail: settings.brevo?.senderEmail ?? null,
+        senderName: settings.brevo?.senderName ?? null,
+        apiKeyConfigured: Boolean(settings.brevo?.apiKey || this.configService.get<string>("BREVO_API_KEY")),
       },
     };
   }

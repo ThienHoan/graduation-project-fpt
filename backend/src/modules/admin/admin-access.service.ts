@@ -103,13 +103,22 @@ export class AdminAccessService {
       },
       {
         key: "smtp",
-        label: "Email (SMTP)",
+        label: "Email (SMTP / REST API)",
         description: "Dùng để gửi email xác minh tài khoản và thông báo đơn thuê.",
-        configured: has("SMTP_EMAIL") && has("SMTP_PASSWORD"),
+        configured: has("RESEND_API_KEY") || has("BREVO_API_KEY") || (has("SMTP_EMAIL") && has("SMTP_PASSWORD")),
         details: [
-          { label: "Dịch vụ", value: text("SMTP_SERVICE") },
-          { label: "Tài khoản gửi", value: text("SMTP_EMAIL") },
-          { label: "Mật khẩu", value: status("SMTP_PASSWORD") },
+          {
+            label: "Dịch vụ",
+            value: has("RESEND_API_KEY") ? "Resend API" : has("BREVO_API_KEY") ? "Brevo API" : text("SMTP_SERVICE") || "SMTP",
+          },
+          {
+            label: "Tài khoản gửi",
+            value: text("RESEND_FROM_EMAIL") || text("BREVO_SENDER_EMAIL") || text("SMTP_EMAIL"),
+          },
+          {
+            label: "Trạng thái",
+            value: has("RESEND_API_KEY") ? "Đã cấu hình Resend" : has("BREVO_API_KEY") ? "Đã cấu hình Brevo" : status("SMTP_PASSWORD"),
+          },
         ],
       },
     ];

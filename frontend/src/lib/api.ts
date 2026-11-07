@@ -2549,7 +2549,7 @@ export type NotificationPreferences = {
 };
 
 export type NotificationSettings = {
-  provider: "mock" | "smtp";
+  provider: "mock" | "smtp" | "resend" | "brevo";
   smtp: {
     service: string | null;
     host: string | null;
@@ -2560,6 +2560,16 @@ export type NotificationSettings = {
     fromName: string | null;
     replyTo: string | null;
     passwordConfigured: boolean;
+  };
+  resend?: {
+    fromEmail: string | null;
+    fromName: string | null;
+    apiKeyConfigured: boolean;
+  };
+  brevo?: {
+    senderEmail: string | null;
+    senderName: string | null;
+    apiKeyConfigured: boolean;
   };
 };
 
@@ -2612,7 +2622,7 @@ export async function getNotificationSettings() {
 }
 
 export async function updateNotificationSettings(payload: {
-  provider?: "mock" | "smtp";
+  provider?: "mock" | "smtp" | "resend" | "brevo";
   smtpService?: string;
   smtpHost?: string;
   smtpPort?: number;
@@ -2622,6 +2632,8 @@ export async function updateNotificationSettings(payload: {
   fromEmail?: string;
   fromName?: string;
   replyTo?: string;
+  resendApiKey?: string;
+  brevoApiKey?: string;
 }) {
   return apiRequest<NotificationSettings>("/notifications/admin/settings", {
     method: "PUT",
