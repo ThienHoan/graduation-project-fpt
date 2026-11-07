@@ -1,111 +1,67 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { ReplyReviewDto } from './dto/reply-review.dto';
 import { ReportReviewDto } from './dto/report-review.dto';
+import { ReviewQueryDto } from './dto/review-query.dto';
 import { ok } from '../../common/api-response';
-import { moderateReviewContent, extractFitFeedback, embedFitFeedback } from './utils/content-moderator';
+import { ReviewPermissionService } from './services/review-permission.service';
+import { ReviewStatisticsService } from './services/review-statistics.service';
+import { ReviewModerationService } from './services/review-moderation.service';
+import { ReviewQueryService } from './services/review-query.service';
+import { REVIEW_ERROR_MESSAGES } from './utils/review-constants';
 
-export type ReviewFilterOptions = {
-  rating?: number;
-  hasMedia?: boolean;
-  fit?: string;
-  page?: number;
-  limit?: number;
-};
+export type ReviewFilterOptions = ReviewQueryDto;
 
 @Injectable()
 export class ReviewsService {
+  private readonly permissionService: ReviewPermissionService;
+  private readonly statisticsService: ReviewStatisticsService;
+  private readonly moderationService: ReviewModerationService;
+  private readonly queryService: ReviewQueryService;
+
   constructor(
-    private prisma: PrismaService,
-    private notificationsService: NotificationsService,
-  ) {}
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+    permissionService?: ReviewPermissionService,
+    statisticsService?: ReviewStatisticsService,
+    moderationService?: ReviewModerationService,
+    queryService?: ReviewQueryService,
+  ) {
+    this.statisticsService = statisticsService || new ReviewStatisticsService(prisma);
+    this.permissionService = permissionService || new ReviewPermissionService(prisma);
+    this.moderationService = moderationService || new ReviewModerationService();
+    this.queryService = queryService || new ReviewQueryService(prisma, this.statisticsService);
+  }
 
+  /**
+   * Tạo mới một đánh giá trang phục từ khách hàng
+   */
   async create(customerId: string, createReviewDto: CreateReviewDto) {
-    const { garmentId, rating } = createReviewDto;
-    let { bookingId } = createReviewDto;
+    const { garmentId, rating, images, video } = createReviewDto;
 
-    // 1. AI Content Moderation
-    const moderation = moderateReviewContent(createReviewDto.comment);
-    if (moderation.shouldBlock) {
-      throw new BadRequestException(
-        `Bình luận vi phạm tiêu chuẩn cộng đồng: ${moderation.flaggedReason}. Vui lòng sử dụng ngôn từ phù hợp.`
-      );
-    }
+    // 1. Kiểm duyệt nội dung bằng AI Content Moderation
+    const moderation = this.moderationService.assertContentAllowed(createReviewDto.comment);
 
-    // Gắn tag fitFeedback nếu có vào comment
-    const finalComment = embedFitFeedback(createReviewDto.comment, createReviewDto.fitFeedback);
+    // 2. Kiểm tra quyền và tính hợp lệ của đơn đặt đồ
+    const bookingId = await this.permissionService.validateCanCreateReview(
+      customerId,
+      garmentId,
+      createReviewDto.bookingId,
+    );
 
-    // If bookingId is not provided, try to find an eligible one
-    if (!bookingId) {
-      // Find all completed/returned bookings by this customer containing this garment
-      const eligibleBookings = await this.prisma.booking.findMany({
-        where: {
-          customerId,
-          status: { in: ['completed', 'returned'] },
-          items: {
-            some: { garmentId }
-          }
-        },
-        include: { reviews: true },
-        orderBy: { createdAt: 'desc' }
-      });
+    // 3. Gắn tag fitFeedback nếu có vào nội dung lưu trữ
+    const finalComment = this.moderationService.embedFitFeedback(
+      createReviewDto.comment,
+      createReviewDto.fitFeedback,
+    );
 
-      // Find the first booking that doesn't have a review for this garment
-      const availableBooking = eligibleBookings.find(
-        (b) => !b.reviews.some((r) => r.garmentId === garmentId)
-      );
-
-      if (!availableBooking) {
-        throw new BadRequestException('Bạn chưa từng thuê hoặc đã đánh giá tất cả các đơn hàng cho sản phẩm này');
-      }
-
-      bookingId = availableBooking.id;
-    }
-
-    // Check if the booking exists and belongs to the customer
-    const booking = await this.prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { items: true },
-    });
-
-    if (!booking) {
-      throw new NotFoundException('Booking not found');
-    }
-
-    if (booking.customerId !== customerId) {
-      throw new ForbiddenException('You can only review your own bookings');
-    }
-
-    // Check if the booking contains the garment
-    const hasGarment = booking.items.some((item) => item.garmentId === garmentId);
-    if (!hasGarment) {
-      throw new BadRequestException('This garment is not part of the specified booking');
-    }
-    
-    // Check if booking is completed/returned
-    if (booking.status !== 'completed' && booking.status !== 'returned') {
-      throw new BadRequestException('You can only review a garment after the booking is returned or completed');
-    }
-
-    // Check if review already exists for this booking/garment combo
-    const existingReview = await this.prisma.review.findUnique({
-      where: {
-        customerId_garmentId_bookingId: {
-          customerId,
-          garmentId,
-          bookingId,
-        },
-      },
-    });
-
-    if (existingReview) {
-      throw new BadRequestException('You have already reviewed this garment for this booking');
-    }
-
-    // Create review
+    // 4. Lưu đánh giá vào Database
     const review = await this.prisma.review.create({
       data: {
         customerId,
@@ -113,14 +69,14 @@ export class ReviewsService {
         bookingId,
         rating,
         comment: finalComment,
-        images: createReviewDto.images || [],
-        video: createReviewDto.video || null,
+        images: images || [],
+        video: video || null,
         isReported: !moderation.isClean,
         reportedReason: moderation.flaggedReason ?? null,
       },
     });
 
-    const parsed = extractFitFeedback(review.comment);
+    const parsed = this.moderationService.extractFitFeedback(review.comment);
     return ok({
       ...review,
       comment: parsed.cleanComment,
@@ -128,94 +84,25 @@ export class ReviewsService {
     });
   }
 
-  async findAllByGarment(garmentId: string, filterOptions?: ReviewFilterOptions) {
-    const rawReviews = await this.prisma.review.findMany({
-      where: { garmentId, status: 'public' },
-      include: {
-        customer: {
-          select: {
-            id: true,
-            email: true,
-            profile: {
-              select: {
-                fullName: true,
-              }
-            }
-          },
-        },
-        repliedByUser: {
-          select: {
-            id: true,
-            profile: {
-              select: {
-                fullName: true,
-              }
-            }
-          }
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    // Tính toán thống kê toàn bộ (Rating breakdown & Fit counts)
-    const ratingCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    const fitCounts: Record<string, number> = { tight: 0, true_to_size: 0, loose: 0 };
-    let mediaCount = 0;
-
-    const parsedReviews = rawReviews.map((r) => {
-      ratingCounts[r.rating] = (ratingCounts[r.rating] || 0) + 1;
-      const hasMedia = (r.images && r.images.length > 0) || Boolean(r.video);
-      if (hasMedia) mediaCount++;
-
-      const { cleanComment, fitFeedback } = extractFitFeedback(r.comment);
-      if (fitFeedback) {
-        fitCounts[fitFeedback] = (fitCounts[fitFeedback] || 0) + 1;
-      }
-
-      return {
-        ...r,
-        comment: cleanComment,
-        fitFeedback,
-        hasMedia,
-      };
-    });
-
-    const averageRating = parsedReviews.length > 0 
-      ? parsedReviews.reduce((sum: number, review) => sum + review.rating, 0) / parsedReviews.length 
-      : 0;
-
-    // Áp dụng bộ lọc
-    let filtered = parsedReviews;
-    if (filterOptions?.rating) {
-      filtered = filtered.filter((r) => r.rating === filterOptions.rating);
-    }
-    if (filterOptions?.hasMedia !== undefined) {
-      filtered = filtered.filter((r) => r.hasMedia === filterOptions.hasMedia);
-    }
-    if (filterOptions?.fit) {
-      filtered = filtered.filter((r) => r.fitFeedback === filterOptions.fit);
-    }
-
-    // Phân trang
-    const page = filterOptions?.page || 1;
-    const limit = filterOptions?.limit || 10;
-    const totalPages = Math.ceil(filtered.length / limit) || 1;
-    const paginatedReviews = filtered.slice((page - 1) * limit, page * limit);
-
-    return ok({
-      reviews: paginatedReviews,
-      total: parsedReviews.length,
-      filteredTotal: filtered.length,
-      averageRating: Number(averageRating.toFixed(1)),
-      ratingCounts,
-      mediaCount,
-      fitCounts,
-      page,
-      totalPages,
-      limit,
-    });
+  /**
+   * Truy vấn danh sách đánh giá của trang phục (kèm thống kê, lọc, sắp xếp, phân trang)
+   */
+  async findAllByGarment(garmentId: string, filterOptions?: ReviewQueryDto) {
+    const result = await this.queryService.findGarmentReviews(garmentId, filterOptions);
+    return ok(result);
   }
 
+  /**
+   * Lấy riêng dữ liệu thống kê đánh giá của trang phục
+   */
+  async getGarmentStatistics(garmentId: string) {
+    const stats = await this.statisticsService.getGarmentStatistics(garmentId);
+    return ok(stats);
+  }
+
+  /**
+   * Lấy danh sách đánh giá do chính khách hàng đã tạo
+   */
   async findAllByCustomer(customerId: string) {
     const reviews = await this.prisma.review.findMany({
       where: { customerId },
@@ -234,7 +121,7 @@ export class ReviewsService {
     });
 
     const parsed = reviews.map((r) => {
-      const { cleanComment, fitFeedback } = extractFitFeedback(r.comment);
+      const { cleanComment, fitFeedback } = this.moderationService.extractFitFeedback(r.comment);
       return {
         ...r,
         comment: cleanComment,
@@ -245,29 +132,23 @@ export class ReviewsService {
     return ok(parsed);
   }
 
+  /**
+   * Cập nhật đánh giá của khách hàng
+   */
   async update(id: string, customerId: string, updateReviewDto: UpdateReviewDto) {
     const review = await this.prisma.review.findUnique({ where: { id } });
     if (!review) {
-      throw new NotFoundException('Review not found');
-    }
-    if (review.customerId !== customerId) {
-      throw new ForbiddenException('You can only update your own reviews');
+      throw new NotFoundException(REVIEW_ERROR_MESSAGES.NOT_FOUND);
     }
 
-    if (review.isLocked) {
-      throw new ForbiddenException('Đánh giá này đã bị khóa vĩnh viễn và không thể chỉnh sửa');
-    }
+    // Kiểm tra quyền chỉnh sửa và trạng thái khóa
+    this.permissionService.validateCanUpdateReview(review, customerId);
 
-    // AI Content Moderation khi sửa
+    // AI Content Moderation khi chỉnh sửa comment
     let moderationFlagged = false;
     let moderationReason: string | null = null;
     if (updateReviewDto.comment !== undefined) {
-      const moderation = moderateReviewContent(updateReviewDto.comment);
-      if (moderation.shouldBlock) {
-        throw new BadRequestException(
-          `Bình luận vi phạm tiêu chuẩn cộng đồng: ${moderation.flaggedReason}. Vui lòng sử dụng ngôn từ phù hợp.`
-        );
-      }
+      const moderation = this.moderationService.assertContentAllowed(updateReviewDto.comment);
       moderationFlagged = !moderation.isClean;
       moderationReason = moderation.flaggedReason ?? null;
     }
@@ -275,10 +156,10 @@ export class ReviewsService {
     const { fitFeedback, ...restDto } = updateReviewDto;
     let finalComment = restDto.comment;
     if (finalComment !== undefined || fitFeedback !== undefined) {
-      const existing = extractFitFeedback(review.comment);
+      const existing = this.moderationService.extractFitFeedback(review.comment);
       const chosenFit = fitFeedback !== undefined ? fitFeedback : existing.fitFeedback;
       const chosenComment = finalComment !== undefined ? finalComment : existing.cleanComment;
-      finalComment = embedFitFeedback(chosenComment, chosenFit) ?? undefined;
+      finalComment = this.moderationService.embedFitFeedback(chosenComment, chosenFit) ?? undefined;
     }
 
     const isCurrentlyHidden = review.status === 'hidden';
@@ -296,7 +177,7 @@ export class ReviewsService {
       },
     });
 
-    const parsed = extractFitFeedback(updated.comment);
+    const parsed = this.moderationService.extractFitFeedback(updated.comment);
     return ok({
       ...updated,
       comment: parsed.cleanComment,
@@ -304,14 +185,16 @@ export class ReviewsService {
     });
   }
 
+  /**
+   * Xóa đánh giá (khách hàng xóa đánh giá của mình hoặc Admin xóa)
+   */
   async remove(id: string, customerId: string, isAdmin = false) {
     const review = await this.prisma.review.findUnique({ where: { id } });
     if (!review) {
-      throw new NotFoundException('Review not found');
+      throw new NotFoundException(REVIEW_ERROR_MESSAGES.NOT_FOUND);
     }
-    if (review.customerId !== customerId && !isAdmin) {
-      throw new ForbiddenException('You do not have permission to delete this review');
-    }
+
+    this.permissionService.validateCanDeleteReview(review, customerId, isAdmin);
 
     const deleted = await this.prisma.review.delete({
       where: { id },
@@ -321,6 +204,9 @@ export class ReviewsService {
 
   // --- Staff & Manager Methods ---
 
+  /**
+   * Lấy toàn bộ danh sách đánh giá cho màn hình quản trị Staff/Manager
+   */
   async findAllStaff() {
     const reviews = await this.prisma.review.findMany({
       include: {
@@ -334,6 +220,9 @@ export class ReviewsService {
     return ok(reviews);
   }
 
+  /**
+   * Staff phản hồi đánh giá của khách hàng
+   */
   async replyToReview(id: string, staffId: string, replyReviewDto: ReplyReviewDto) {
     const updated = await this.prisma.review.update({
       where: { id },
@@ -357,6 +246,9 @@ export class ReviewsService {
     return ok(updated);
   }
 
+  /**
+   * Staff báo cáo đánh giá có nghi vấn vi phạm
+   */
   async reportReview(id: string, staffId: string, reportReviewDto: ReportReviewDto) {
     const updated = await this.prisma.review.update({
       where: { id },
@@ -370,6 +262,9 @@ export class ReviewsService {
     return ok(updated);
   }
 
+  /**
+   * Manager / Admin ẩn đánh giá và khóa vĩnh viễn nếu vi phạm quá số lần quy định
+   */
   async hideReview(id: string, reason?: string) {
     const review = await this.prisma.review.findUnique({
       where: { id },
@@ -377,7 +272,7 @@ export class ReviewsService {
     });
 
     if (!review) {
-      throw new NotFoundException('Review not found');
+      throw new NotFoundException(REVIEW_ERROR_MESSAGES.NOT_FOUND);
     }
 
     const hideReason = reason || 'Vi phạm tiêu chuẩn cộng đồng';
@@ -385,14 +280,13 @@ export class ReviewsService {
 
     const updated = await this.prisma.review.update({
       where: { id },
-      data: { 
+      data: {
         status: 'hidden',
         isLocked: willLock,
       },
     });
 
-    // Notify customer
-    const message = willLock 
+    const message = willLock
       ? `Đánh giá của bạn cho sản phẩm "${review.garment.name}" đã bị KHÓA vĩnh viễn.\nLý do: ${hideReason}`
       : `Đánh giá của bạn cho sản phẩm "${review.garment.name}" đã bị ẩn.\nLý do: ${hideReason}\nBạn có thể chỉnh sửa và gửi lại (còn ${3 - review.editCount} lần thử).`;
 

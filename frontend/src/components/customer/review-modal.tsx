@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { createReview, updateReview, getMyReviews, ReviewResponse } from "@/lib/api";
 import { uploadFile } from "@/lib/upload";
-import { X, Star, Play, Loader2, ImagePlus } from "lucide-react";
+import { X, Play, Loader2, ImagePlus } from "lucide-react";
+import { RatingStars } from "@/components/reviews";
 
 type ReviewModalProps = {
   bookingId?: string;
@@ -239,23 +240,14 @@ export function ReviewModal({ bookingId, garmentId, garmentName, onClose, onSucc
               <label className="mb-3 block text-sm font-semibold uppercase tracking-wider text-ink">
                 Mức độ hài lòng
               </label>
-            <div className="flex gap-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  onClick={() => setRating(star)}
-                  className="rounded-lg p-1 transition hover:bg-sand/30 focus:outline-none"
-                >
-                  <Star
-                    className={`h-8 w-8 transition ${
-                      star <= rating ? "text-amber-400 fill-amber-400" : "text-stone-300 fill-transparent"
-                    }`}
-                  />
-                </button>
-              ))}
+              <RatingStars
+                value={rating}
+                size="lg"
+                interactive={!existingReview?.isLocked}
+                showTooltip
+                onChange={(val) => setRating(val)}
+              />
             </div>
-          </div>
 
           {/* Fit Feedback */}
           <div>

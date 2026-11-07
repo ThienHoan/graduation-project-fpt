@@ -36,7 +36,7 @@ function LoginPageContent() {
   const [email, setEmail] = useState(searchParams.get("email") ?? "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,7 +77,7 @@ function LoginPageContent() {
           return;
         }
 
-        signIn({ accessToken: result.data.accessToken, user: toAuthenticatedUser(result.data.user), persist: rememberMe });
+        signIn({ accessToken: result.data.accessToken, user: toAuthenticatedUser(result.data.user), persist: true });
         router.push(getSafeRedirectPath(searchParams.get("next"), result.data.user.role));
       } catch {
         setError("Không thể kết nối đến hệ thống đăng nhập.");

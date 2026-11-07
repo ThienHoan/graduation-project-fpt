@@ -87,6 +87,37 @@ export async function resetPassword(email: string, otp: string, password: string
   });
 }
 
+export async function changePassword(payload: { currentPassword: string; newPassword: string }) {
+  return apiRequest<{ email: string }>("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function logoutUser() {
+  return apiRequest<{ loggedOut: boolean }>("/auth/logout", {
+    method: "POST",
+  });
+}
+
+export type SecurityActivityItem = {
+  id: string;
+  action: string;
+  actionLabel: string;
+  ip: string;
+  browser: string;
+  os: string;
+  deviceType: string;
+  createdAt: string;
+  details?: Record<string, unknown>;
+};
+
+export async function getSecurityActivity(limit = 10) {
+  return apiRequest<SecurityActivityItem[]>(`/auth/me/security-activity?limit=${limit}`, {
+    cache: "no-store",
+  });
+}
+
 // ---------- Garment types ----------
 
 export type GarmentSummary = {
@@ -2669,18 +2700,36 @@ export type GarmentReviewsQuery = {
   rating?: number;
   hasMedia?: boolean;
   fit?: string;
+  search?: string;
+  sortBy?: "newest" | "oldest" | "highest_rating" | "lowest_rating" | "media_first";
   page?: number;
   limit?: number;
+};
+
+export type GarmentReviewStatistics = {
+  total: number;
+  averageRating: number;
+  recommendPercentage: number;
+  ratingCounts: Record<number, number>;
+  ratingPercentages: Record<number, number>;
+  fitCounts: Record<string, number>;
+  fitPercentages: Record<string, number>;
+  mediaCount: number;
+  mediaPercentage: number;
 };
 
 export type GarmentReviewsData = {
   reviews: ReviewResponse[];
   averageRating: number;
+  recommendPercentage?: number;
   total: number;
   filteredTotal: number;
   ratingCounts: Record<number, number>;
+  ratingPercentages?: Record<number, number>;
   mediaCount: number;
+  mediaPercentage?: number;
   fitCounts: Record<string, number>;
+  fitPercentages?: Record<string, number>;
   page: number;
   totalPages: number;
   limit: number;
@@ -2706,10 +2755,16 @@ export async function getGarmentReviews(garmentId: string, query?: GarmentReview
   if (query?.rating) params.set("rating", String(query.rating));
   if (query?.hasMedia !== undefined) params.set("hasMedia", String(query.hasMedia));
   if (query?.fit) params.set("fit", query.fit);
+  if (query?.search) params.set("search", query.search);
+  if (query?.sortBy) params.set("sortBy", query.sortBy);
   if (query?.page) params.set("page", String(query.page));
   if (query?.limit) params.set("limit", String(query.limit));
   const q = params.toString() ? `?${params.toString()}` : "";
   return apiRequest<GarmentReviewsData>(`/reviews/garment/${garmentId}${q}`);
+}
+
+export async function getGarmentReviewStatistics(garmentId: string) {
+  return apiRequest<GarmentReviewStatistics>(`/reviews/garment/${garmentId}/statistics`);
 }
 
 export async function getMyReviews() {
@@ -2761,6 +2816,12 @@ export async function updateReview(
   return apiRequest<ReviewResponse>(`/reviews/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteReview(id: string) {
+  return apiRequest<{ id: string }>(`/reviews/${id}`, {
+    method: "DELETE",
   });
 }
 

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useAuth } from "@/components/auth/auth-provider";
+import { logoutUser } from "@/lib/api";
 
 type LogoutButtonProps = {
   className?: string;
@@ -17,7 +18,13 @@ export function LogoutButton({ className, children = "Đăng xuất" }: LogoutBu
     <button
       type="button"
       className={className}
-      onClick={() => {
+      onClick={async () => {
+        try {
+          // Inform the server to blacklist the active JWT token
+          void logoutUser();
+        } catch {
+          // Non-blocking
+        }
         signOut();
         router.push("/login");
       }}
