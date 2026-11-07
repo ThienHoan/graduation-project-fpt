@@ -31,6 +31,7 @@ import {
 } from "@/lib/status-labels";
 import { ReviewModal } from "@/components/customer/review-modal";
 import { ExtendRentalModal } from "@/components/customer/extend-rental-modal";
+import { CustomerExtensionHistoryModal } from "@/components/customer/customer-extension-history-modal";
 import { BookingStatusStepper } from "@/components/customer/booking-status-stepper";
 import { ConfirmModal } from "@/components/heritage/ui";
 import { HandoverSummary } from "@/components/customer/handover-summary";
@@ -68,6 +69,7 @@ import {
   PhoneCall,
   RotateCcw,
   CalendarPlus,
+  History,
 } from "lucide-react";
 
 const HISTORY_PAGE_SIZE = 5;
@@ -249,6 +251,7 @@ export default function CustomerDashboardPage() {
   // Review modal & confirm modal & toast
   const [reviewingItem, setReviewingItem] = useState<{ bookingId: string; garmentId: string; garmentName: string } | null>(null);
   const [extendingBooking, setExtendingBooking] = useState<{ id: string; rentalEndDate: string } | null>(null);
+  const [viewingExtensionHistory, setViewingExtensionHistory] = useState<{ id?: string; bookingCode?: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; danger?: boolean; onConfirm: () => void } | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1094,14 +1097,25 @@ export default function CustomerDashboardPage() {
                       )}
 
                       {EXTENDABLE_STATUSES.has(activeBooking.status) && (
-                        <button
-                          type="button"
-                          onClick={() => setExtendingBooking({ id: activeBooking.id, rentalEndDate: activeBooking.rentalEndDate })}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-lotus/40 bg-white px-4 py-2 text-xs font-semibold text-lotus shadow-2xs transition hover:bg-[#fff0ee] active:scale-[0.98]"
-                        >
-                          <CalendarPlus className="h-3.5 w-3.5" />
-                          <span>Gia hạn thuê</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setExtendingBooking({ id: activeBooking.id, rentalEndDate: activeBooking.rentalEndDate })}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-lotus/40 bg-white px-4 py-2 text-xs font-semibold text-lotus shadow-2xs transition hover:bg-[#fff0ee] active:scale-[0.98]"
+                          >
+                            <CalendarPlus className="h-3.5 w-3.5" />
+                            <span>Gia hạn thuê</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setViewingExtensionHistory({ id: activeBooking.id, bookingCode: (activeBooking as any).bookingCode ?? activeBooking.id.slice(0, 8).toUpperCase() })}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-2xs transition hover:bg-stone-50 active:scale-[0.98]"
+                          >
+                            <History className="h-3.5 w-3.5 text-stone-500" />
+                            <span>Lịch sử gia hạn</span>
+                          </button>
+                        </>
                       )}
 
                       {CANCELLABLE_STATUSES.has(activeBooking.status) && (
@@ -1670,6 +1684,14 @@ export default function CustomerDashboardPage() {
             showToast("success", message);
             refreshBookings();
           }}
+        />
+      )}
+
+      {viewingExtensionHistory && (
+        <CustomerExtensionHistoryModal
+          bookingId={viewingExtensionHistory.id}
+          bookingCode={viewingExtensionHistory.bookingCode}
+          onClose={() => setViewingExtensionHistory(null)}
         />
       )}
 

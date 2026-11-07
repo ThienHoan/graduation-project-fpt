@@ -10,6 +10,7 @@ import type { CheckAvailabilityDto } from "./dto/check-availability.dto";
 import { AUTO_ASSIGN_LEAD_DAYS, AUTO_ASSIGNABLE_STATUSES } from "./booking-auto-assign";
 import { vietnamToday } from "./booking-inventory";
 import { BookingsService } from "./bookings.service";
+import { BookingThankYouVoucherService } from "./booking-thank-you-voucher.service";
 
 const DAY_MS = 86_400_000;
 
@@ -49,6 +50,7 @@ export class BookingAutomationService {
     private readonly notifications: NotificationsService,
     @Optional() private readonly garments?: GarmentsService,
     @Optional() private readonly vouchers?: VouchersService,
+    @Optional() private readonly thankYouVouchers?: BookingThankYouVoucherService,
   ) {}
 
   /**
@@ -354,14 +356,28 @@ export class BookingAutomationService {
     });
 
     for (const booking of bookings) {
-      await this.notifications.sendBookingNotification({
-        userId: booking.customerId,
-        templateKey: "booking.review_invite",
-        bookingId: booking.id,
-        garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
-        startDate: booking.rentalStartDate.toISOString().slice(0, 10),
-        endDate: booking.rentalEndDate.toISOString().slice(0, 10),
-      });
+      let handledByThankYou = false;
+      if (this.thankYouVouchers) {
+        try {
+          const res = await this.thankYouVouchers.processCompletedBookingThankYou(booking.id);
+          if (res.notificationSent) {
+            handledByThankYou = true;
+          }
+        } catch (err) {
+          this.logger.warn(`Lỗi khi xử lý thank you voucher cho booking ${booking.id}: ${err}`);
+        }
+      }
+
+      if (!handledByThankYou) {
+        await this.notifications.sendBookingNotification({
+          userId: booking.customerId,
+          templateKey: "booking.review_invite",
+          bookingId: booking.id,
+          garmentName: booking.items[0]?.garment_sizes?.garments?.name ?? null,
+          startDate: booking.rentalStartDate.toISOString().slice(0, 10),
+          endDate: booking.rentalEndDate.toISOString().slice(0, 10),
+        });
+      }
     }
     return ok({ invitedCount: bookings.length, bookings: bookings.map((b) => b.id) });
   }
