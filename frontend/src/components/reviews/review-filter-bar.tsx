@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, X, SlidersHorizontal, Image, Check } from "lucide-react";
+import { Search, X, SlidersHorizontal, ImageIcon, Check } from "lucide-react";
 
 export type ReviewFilterBarProps = {
   activeRating?: number;
@@ -150,7 +150,7 @@ export function ReviewFilterBar({
               : "bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-50"
           }`}
         >
-          <Image className="w-3.5 h-3.5" />
+          <ImageIcon className="w-3.5 h-3.5" />
           <span>Có ảnh / Video</span>
           {mediaCount !== undefined && (
             <span className={`text-[10px] ${hasMedia ? "text-sky-100" : "text-neutral-400"}`}>
