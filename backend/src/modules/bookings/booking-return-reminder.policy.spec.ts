@@ -3,7 +3,6 @@ import {
   evaluateReturnReminderPolicy,
   extractVnDateString,
   createVnDateTime,
-  DEFAULT_RETURN_REMINDER_OFFSET_HOURS,
 } from "./booking-return-reminder.policy";
 
 describe("BookingReturnReminderPolicy (Pure Business Logic)", () => {

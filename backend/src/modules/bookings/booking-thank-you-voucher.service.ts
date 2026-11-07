@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -11,7 +10,6 @@ import { VouchersService } from "../vouchers/vouchers.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import {
   evaluateThankYouVoucherPolicy,
-  buildThankYouVoucherCode,
   type ThankYouVoucherProgramConfig,
 } from "./booking-thank-you-voucher.policy";
 import { BookingEmailAdapter } from "./email/booking-email.adapter";

@@ -4,19 +4,6 @@
  * 2. Phân loại lỗi xem có đủ điều kiện thử lại (retryable) hay không.
  */
 
-const SENSITIVE_PATTERNS = [
-  // Bearer tokens & JWTs
-  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
-  // Resend API keys
-  /re_[A-Za-z0-9_-]+/gi,
-  // Brevo API keys
-  /xkeysib-[A-Za-z0-9_-]+/gi,
-  // Database connection passwords: postgresql://user:pass@host...
-  /:\/\/([^:]+):([^@]+)@/g,
-  // Common key-value secrets
-  /(password|token|key|secret|apiKey|smtp_password)\s*[:=]\s*["']?([^\s,"']+)["']?/gi,
-];
-
 const NON_RETRYABLE_PATTERNS = [
   /invalid\s+email/i,
   /invalid\s+recipient/i,

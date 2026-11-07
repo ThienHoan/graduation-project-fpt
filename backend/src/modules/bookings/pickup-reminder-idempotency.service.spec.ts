@@ -8,7 +8,6 @@ import { BookingsService } from "./bookings.service";
 
 describe("PickupReminderIdempotencyService (Hardened distributed locking & idempotency)", () => {
   const BOOKING_A = "00000000-0000-4000-8000-0000000000a1";
-  const BOOKING_B = "00000000-0000-4000-8000-0000000000b2";
   const DATE_1 = "2026-10-10";
   const DATE_2 = "2026-10-15";
 

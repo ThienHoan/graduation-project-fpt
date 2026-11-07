@@ -6,7 +6,6 @@ import {
   DEFAULT_STORE_PHONE,
   DEFAULT_BUSINESS_HOURS,
   DEFAULT_CUSTOMER_DASHBOARD_URL,
-  escapeHtml,
   sanitizeUrl,
 } from "./email-layout";
 

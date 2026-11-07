@@ -4,8 +4,6 @@ import {
   DEFAULT_RETURN_STORE_ADDRESS,
   DEFAULT_RETURN_STORE_PHONE,
   DEFAULT_RETURN_BUSINESS_HOURS,
-  DEFAULT_OVERDUE_FEE_PER_DAY,
-  DEFAULT_CUSTOMER_DASHBOARD_PATH,
 } from "./booking-return-reminder.builder";
 import { BookingPickupReminderBuilder } from "./booking-pickup-reminder.builder";
 

@@ -18,7 +18,6 @@ import type {
   CustomerCareKpis,
   DailyTrendPoint,
   ExtensionHistoryItem,
-  ExtensionHistoryResult,
   ManagerExtensionMonitoringData,
   NotificationDeliveryStatus,
   NotificationHistoryItem,
@@ -31,7 +30,6 @@ import type {
 import { isRetryableNotificationError, sanitizeNotificationError } from "./notification-sanitizer";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const THANK_YOU_VOUCHER_SETTING_KEY = "thank_you_voucher_program";
 const THANK_YOU_VOUCHER_ACTION = "voucher.thank_you_issued";
 
 @Injectable()
