@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { getStaffReviews, replyToReview, reportReview, hideReview, StaffReviewResponse } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
-import { Star, AlertTriangle, MessageSquare } from "lucide-react";
+import { AlertTriangle, MessageSquare } from "lucide-react";
+import { RatingStars } from "@/components/reviews";
 import { Pagination } from "@/components/common/pagination";
 
 export function StaffReviewsClient() {
@@ -120,15 +121,8 @@ export function StaffReviewsClient() {
                   {review.garment?.name || review.garmentId}
                 </td>
                 <td className="px-4 py-3 align-top max-w-xs">
-                  <div className="flex items-center gap-0.5 text-amber-500 mb-1">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <Star
-                        key={i}
-                        className={`h-3.5 w-3.5 ${
-                          i < review.rating ? "text-amber-400 fill-amber-400" : "text-stone-300 fill-transparent"
-                        }`}
-                      />
-                    ))}
+                  <div className="mb-1">
+                    <RatingStars value={review.rating} size="xs" />
                   </div>
                   <p className="text-stone-700 whitespace-pre-wrap text-sm leading-relaxed">{review.comment || "Không có nội dung"}</p>
                   

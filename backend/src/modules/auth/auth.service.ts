@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { randomUUID, webcrypto } from "node:crypto";
 import * as bcrypt from "bcryptjs";
@@ -6,6 +6,12 @@ import { ok } from "../../common/api-response";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { toAuthenticatedUser, type UserWithProfile } from "./auth-user";
+import { AuthTokenService } from "./services/auth-token.service";
+import { AuthLockoutService } from "./services/auth-lockout.service";
+import { AuthOtpService } from "./services/auth-otp.service";
+import { AuthPasswordService } from "./services/auth-password.service";
+import { AuthAuditService } from "./services/auth-audit.service";
+import type { ClientInfo } from "./utils/client-info.util";
 
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISSUERS = new Set(["accounts.google.com", "https://accounts.google.com"]);
@@ -19,6 +25,11 @@ type RegisterInput = {
 type LoginInput = {
   email: string;
   password: string;
+};
+
+type ChangePasswordInput = {
+  currentPassword: string;
+  newPassword: string;
 };
 
 type GoogleLoginInput = {
@@ -69,9 +80,14 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly authTokenService?: AuthTokenService,
+    @Optional() private readonly authLockoutService?: AuthLockoutService,
+    @Optional() private readonly authOtpService?: AuthOtpService,
+    @Optional() private readonly authPasswordService?: AuthPasswordService,
+    @Optional() private readonly authAuditService?: AuthAuditService,
   ) {}
 
-  async register(input: RegisterInput) {
+  async register(input: RegisterInput, clientInfo?: ClientInfo) {
     const normalizedEmail = input.email.trim().toLowerCase();
     const existingUser = await this.prisma.userAccount.findUnique({ where: { email: normalizedEmail } });
 
@@ -84,7 +100,14 @@ export class AuthService {
       throw new BadRequestException("Email này đã được đăng ký.");
     }
 
-    const passwordHash = await bcrypt.hash(input.password, 12);
+    if (this.authPasswordService) {
+      this.authPasswordService.assertPasswordStrength(input.password, normalizedEmail);
+    }
+
+    const passwordHash = this.authPasswordService
+      ? await this.authPasswordService.hashPassword(input.password)
+      : await bcrypt.hash(input.password, 12);
+
     const user = await this.prisma.userAccount.create({
       data: {
         email: normalizedEmail,
@@ -103,13 +126,22 @@ export class AuthService {
 
     await this.sendVerificationCode(user.id, normalizedEmail);
 
+    if (this.authAuditService) {
+      await this.authAuditService.logAuthEvent({
+        actorId: user.id,
+        action: "AUTH_REGISTER",
+        clientInfo,
+        details: { email: user.email },
+      });
+    }
+
     return ok(
       { email: user.email, requiresVerification: true },
       "Đăng ký thành công! Vui lòng kiểm tra email (hoặc terminal backend) để lấy mã OTP xác thực.",
     );
   }
 
-  async verifyEmail(input: VerifyEmailInput) {
+  async verifyEmail(input: VerifyEmailInput, clientInfo?: ClientInfo) {
     const normalizedEmail = input.email.trim().toLowerCase();
     const user = await this.prisma.userAccount.findUnique({ where: { email: normalizedEmail } });
 
@@ -144,6 +176,15 @@ export class AuthService {
       }),
     ]);
 
+    if (this.authAuditService) {
+      await this.authAuditService.logAuthEvent({
+        actorId: user.id,
+        action: "AUTH_EMAIL_VERIFIED",
+        clientInfo,
+        details: { email: user.email },
+      });
+    }
+
     return ok({ email: user.email }, "Xác thực email thành công! Bạn có thể đăng nhập ngay.");
   }
 
@@ -159,9 +200,20 @@ export class AuthService {
       throw new BadRequestException("Email này đã được xác thực rồi.");
     }
 
-    await this.sendVerificationCode(user.id, normalizedEmail);
-    return ok({ email: normalizedEmail }, "Mã OTP mới đã được gửi. Vui lòng kiểm tra email.");
+    if (this.authOtpService) {
+      const cooldown = await this.authOtpService.checkResendCooldown(user.id);
+      if (!cooldown.canResend) {
+        throw new BadRequestException(`Vui lòng đợi ${cooldown.remainingSeconds} giây trước khi yêu cầu mã OTP mới.`);
+      }
+    }
 
+    await this.sendVerificationCode(user.id, normalizedEmail);
+
+    if (this.authOtpService) {
+      await this.authOtpService.setResendCooldown(user.id);
+    }
+
+    return ok({ email: normalizedEmail }, "Mã OTP mới đã được gửi. Vui lòng kiểm tra email.");
   }
   async forgotPassword(input: ForgotPasswordInput) {
     const normalizedEmail = input.email.trim().toLowerCase();
@@ -216,14 +268,36 @@ export class AuthService {
     return ok({ email: user.email }, "Mật khẩu đã được đặt lại thành công. Bạn có thể đăng nhập lại.");
   }
 
-  async login(input: LoginInput) {
+  async login(input: LoginInput, clientInfo?: ClientInfo) {
     const normalizedEmail = input.email.trim().toLowerCase();
+
+    // Check account lockout status before attempting authentication
+    if (this.authLockoutService) {
+      const lockout = await this.authLockoutService.isLocked(normalizedEmail);
+      if (lockout.isLocked) {
+        const minutes = Math.max(1, Math.ceil(lockout.remainingSeconds / 60));
+        throw new UnauthorizedException(
+          `Tài khoản tạm thời bị khóa do nhập sai mật khẩu nhiều lần. Vui lòng thử lại sau ${minutes} phút.`,
+        );
+      }
+    }
+
     const user = await this.prisma.userAccount.findUnique({
       where: { email: normalizedEmail },
       include: { profile: true },
     });
 
     if (!user) {
+      if (this.authLockoutService) {
+        await this.authLockoutService.recordFailedAttempt(normalizedEmail);
+      }
+      if (this.authAuditService) {
+        await this.authAuditService.logAuthEvent({
+          action: "AUTH_LOGIN_FAILED",
+          clientInfo,
+          details: { email: normalizedEmail, reason: "USER_NOT_FOUND" },
+        });
+      }
       throw new UnauthorizedException("Email hoặc mật khẩu không đúng.");
     }
 
@@ -235,20 +309,143 @@ export class AuthService {
       throw new UnauthorizedException("Tài khoản đã bị khoá. Vui lòng liên hệ hỗ trợ.");
     }
 
-    const passwordMatches = await bcrypt.compare(input.password, user.passwordHash);
+    const passwordMatches = this.authPasswordService
+      ? await this.authPasswordService.comparePassword(input.password, user.passwordHash)
+      : await bcrypt.compare(input.password, user.passwordHash);
+
     if (!passwordMatches) {
+      if (this.authLockoutService) {
+        const lockoutResult = await this.authLockoutService.recordFailedAttempt(normalizedEmail);
+        if (lockoutResult.isLocked) {
+          if (this.authAuditService) {
+            await this.authAuditService.logAuthEvent({
+              actorId: user.id,
+              action: "AUTH_ACCOUNT_LOCKED",
+              clientInfo,
+              details: { email: normalizedEmail, attempts: lockoutResult.attempts },
+            });
+          }
+          throw new UnauthorizedException(
+            `Tài khoản đã bị tạm khóa 15 phút do nhập sai mật khẩu quá ${lockoutResult.maxAttempts} lần.`,
+          );
+        }
+      }
+
+      if (this.authAuditService) {
+        await this.authAuditService.logAuthEvent({
+          actorId: user.id,
+          action: "AUTH_LOGIN_FAILED",
+          clientInfo,
+          details: { email: normalizedEmail, reason: "INVALID_PASSWORD" },
+        });
+      }
       throw new UnauthorizedException("Email hoặc mật khẩu không đúng.");
+    }
+
+    // Reset lockout counters upon successful authentication
+    if (this.authLockoutService) {
+      await this.authLockoutService.clearFailedAttempts(normalizedEmail);
+    }
+
+    if (this.authAuditService) {
+      await this.authAuditService.logAuthEvent({
+        actorId: user.id,
+        action: "AUTH_LOGIN_SUCCESS",
+        clientInfo,
+        details: { loginMethod: "password" },
+      });
     }
 
     return ok(await this.buildLoginSession(user));
   }
 
-  async loginWithGoogle(input: GoogleLoginInput) {
+  async loginWithGoogle(input: GoogleLoginInput, clientInfo?: ClientInfo) {
     const googleToken = await this.verifyGoogleIdToken(input.idToken);
     const normalizedEmail = googleToken.email!.trim().toLowerCase();
     const { user, isNewUser } = await this.findOrProvisionGoogleUser(googleToken, normalizedEmail);
 
+    if (this.authAuditService) {
+      await this.authAuditService.logAuthEvent({
+        actorId: user.id,
+        action: "AUTH_LOGIN_SUCCESS",
+        clientInfo,
+        details: { loginMethod: "google", isNewUser },
+      });
+    }
+
     return ok({ ...(await this.buildLoginSession(user)), isNewUser });
+  }
+
+  async changePassword(userId: string, input: ChangePasswordInput, clientInfo?: ClientInfo) {
+    const user = await this.prisma.userAccount.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException("Tài khoản không tồn tại hoặc đã bị vô hiệu hóa.");
+    }
+
+    const currentMatches = this.authPasswordService
+      ? await this.authPasswordService.comparePassword(input.currentPassword, user.passwordHash)
+      : await bcrypt.compare(input.currentPassword, user.passwordHash);
+
+    if (!currentMatches) {
+      throw new BadRequestException("Mật khẩu hiện tại không chính xác.");
+    }
+
+    if (input.newPassword === input.currentPassword) {
+      throw new BadRequestException("Mật khẩu mới không được trùng với mật khẩu hiện tại.");
+    }
+
+    if (this.authPasswordService) {
+      this.authPasswordService.assertPasswordStrength(input.newPassword, user.email);
+    }
+
+    const passwordHash = this.authPasswordService
+      ? await this.authPasswordService.hashPassword(input.newPassword)
+      : await bcrypt.hash(input.newPassword, 12);
+
+    await this.prisma.userAccount.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        updatedAt: new Date(),
+      },
+    });
+
+    if (this.authAuditService) {
+      await this.authAuditService.logAuthEvent({
+        actorId: user.id,
+        action: "AUTH_PASSWORD_CHANGED",
+        clientInfo,
+      });
+    }
+
+    return ok({ email: user.email }, "Mật khẩu đã được thay đổi thành công.");
+  }
+
+  async logout(token: string, userId?: string, clientInfo?: ClientInfo) {
+    if (this.authTokenService && token) {
+      await this.authTokenService.blacklistToken(token);
+    }
+
+    if (this.authAuditService && userId) {
+      await this.authAuditService.logAuthEvent({
+        actorId: userId,
+        action: "AUTH_LOGOUT",
+        clientInfo,
+      });
+    }
+
+    return ok({ loggedOut: true }, "Đăng xuất thành công.");
+  }
+
+  async getSecurityActivity(userId: string, limit = 10) {
+    if (this.authAuditService) {
+      const logs = await this.authAuditService.getUserSecurityActivity(userId, limit);
+      return ok(logs);
+    }
+    return ok([]);
   }
 
   async me(userId: string) {

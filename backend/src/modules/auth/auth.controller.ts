@@ -1,5 +1,5 @@
 import { AppRole } from "@prisma/client";
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Headers, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { AuthenticatedUser } from "./auth-user";
 import { CurrentUser } from "./decorators/current-user.decorator";
@@ -11,9 +11,11 @@ import { ResendOtpDto } from "./dto/resend-otp.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { VerifyEmailDto } from "./dto/verify-email.dto";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { RolesGuard } from "./guards/roles.guard";
 import { AuthService } from "./auth.service";
+import { extractClientInfo, type RequestLike } from "./utils/client-info.util";
 
 // [SECURITY FIX] Giới hạn nghiêm ngặt cho toàn bộ AuthController:
 // 5 requests / 1 phút / IP — ngăn brute-force mật khẩu và spam OTP
@@ -25,14 +27,14 @@ export class AuthController {
 
   @Post("register")
   @Throttle(AUTH_THROTTLE)
-  register(@Body() body: RegisterDto) {
-    return this.authService.register(body);
+  register(@Body() body: RegisterDto, @Req() req: RequestLike) {
+    return this.authService.register(body, extractClientInfo(req));
   }
 
   @Post("verify-email")
   @Throttle(AUTH_THROTTLE)
-  verifyEmail(@Body() body: VerifyEmailDto) {
-    return this.authService.verifyEmail(body);
+  verifyEmail(@Body() body: VerifyEmailDto, @Req() req: RequestLike) {
+    return this.authService.verifyEmail(body, extractClientInfo(req));
   }
 
   @Post("resend-otp")
@@ -55,14 +57,14 @@ export class AuthController {
 
   @Post("google")
   @Throttle(AUTH_THROTTLE)
-  google(@Body() body: GoogleLoginDto) {
-    return this.authService.loginWithGoogle(body);
+  google(@Body() body: GoogleLoginDto, @Req() req: RequestLike) {
+    return this.authService.loginWithGoogle(body, extractClientInfo(req));
   }
 
   @Post("login")
   @Throttle(AUTH_THROTTLE)
-  login(@Body() body: LoginDto) {
-    return this.authService.login(body);
+  login(@Body() body: LoginDto, @Req() req: RequestLike) {
+    return this.authService.login(body, extractClientInfo(req));
   }
 
   @Get("me")
@@ -70,5 +72,39 @@ export class AuthController {
   @Roles(AppRole.customer, AppRole.staff, AppRole.manager_owner, AppRole.admin)
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.me(user.id);
+  }
+
+  @Post("change-password")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(AppRole.customer, AppRole.staff, AppRole.manager_owner, AppRole.admin)
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: ChangePasswordDto,
+    @Req() req: RequestLike,
+  ) {
+    return this.authService.changePassword(user.id, body, extractClientInfo(req));
+  }
+
+  @Post("logout")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(AppRole.customer, AppRole.staff, AppRole.manager_owner, AppRole.admin)
+  logout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Headers("authorization") authHeader: string,
+    @Req() req: RequestLike,
+  ) {
+    const token = authHeader?.trim().split(" ")[1] ?? "";
+    return this.authService.logout(token, user.id, extractClientInfo(req));
+  }
+
+  @Get("me/security-activity")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(AppRole.customer, AppRole.staff, AppRole.manager_owner, AppRole.admin)
+  getSecurityActivity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query("limit") limit?: string,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) : 10;
+    return this.authService.getSecurityActivity(user.id, isNaN(parsedLimit) ? 10 : parsedLimit);
   }
 }

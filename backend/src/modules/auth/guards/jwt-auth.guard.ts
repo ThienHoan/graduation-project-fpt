@@ -1,8 +1,9 @@
-import { CanActivate, Injectable, UnauthorizedException, type ExecutionContext } from "@nestjs/common";
+import { CanActivate, Injectable, Optional, UnauthorizedException, type ExecutionContext } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import type { AppRole } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { toAuthenticatedUser, type AuthenticatedUser } from "../auth-user";
+import { AuthTokenService } from "../services/auth-token.service";
 
 type JwtPayload = {
   sub?: string;
@@ -17,6 +18,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly tokenService?: AuthTokenService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -25,6 +27,11 @@ export class JwtAuthGuard implements CanActivate {
       user?: AuthenticatedUser;
     }>();
     const token = this.extractBearerToken(request.headers.authorization);
+
+    // [SECURITY] Check server-side token blacklist (e.g. after explicit logout)
+    if (this.tokenService && (await this.tokenService.isTokenBlacklisted(token))) {
+      throw new UnauthorizedException("Token has been revoked.");
+    }
 
     let payload: JwtPayload;
     try {
@@ -54,7 +61,15 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException("User is inactive or no longer exists.");
     }
 
-    if (payload.iat * 1000 < user.updatedAt.getTime()) {
+    // [SECURITY & RELIABILITY] Invalidate stale tokens if updatedAt is significantly
+    // newer than token issuance (e.g. after password reset).
+    // We add a 5000ms grace window because:
+    // 1. JWT iat is truncated to integer seconds.
+    // 2. DB updatedAt has millisecond precision and trigger updates on user_accounts.
+    // 3. Application server and database server clocks can drift slightly in production.
+    // Without this grace period, any token issued at or near an update is immediately
+    // rejected on tab reload, causing the production logout issue.
+    if (payload.iat * 1000 + 5000 < user.updatedAt.getTime()) {
       throw new UnauthorizedException("Token has been invalidated.");
     }
 

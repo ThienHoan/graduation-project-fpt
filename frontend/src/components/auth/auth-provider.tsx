@@ -81,8 +81,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!result.success || !result.data) {
-      signOut();
-      return null;
+      const isAuthError =
+        result.error === "UNAUTHORIZED" ||
+        result.message?.includes("401") ||
+        result.message?.includes("token") ||
+        result.message?.includes("Invalid") ||
+        result.message?.includes("expired") ||
+        result.message?.includes("invalidated") ||
+        result.message?.includes("Unauthorized") ||
+        result.message?.includes("inactive");
+
+      if (isAuthError) {
+        signOut();
+        return null;
+      }
+
+      // If it's a transient network issue or server restart, preserve current session
+      setStatus("authenticated");
+      return currentSession.user;
     }
 
     const nextSession = {
