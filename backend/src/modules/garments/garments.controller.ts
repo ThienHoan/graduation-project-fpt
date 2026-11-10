@@ -8,6 +8,8 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -19,6 +21,11 @@ import { UpdateGarmentDto } from "./dto/update-garment.dto";
 import { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.dto";
 import { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { GarmentsService } from "./garments.service";
+
+interface RawResponse {
+  setHeader(name: string, value: string): void;
+  send(body: Buffer): void;
+}
 
 @Controller("garments")
 export class GarmentsController {
@@ -86,6 +93,26 @@ export class GarmentsController {
     @Param("accessoryId", ParseUUIDPipe) accessoryId: string,
   ) {
     return this.garmentsService.removeGarmentAccessory(id, accessoryId);
+  }
+
+  @Get("export-assets")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  async exportAssetsExcel(
+    @Req() req: { user?: { name?: string; email?: string } },
+    @Res() res: RawResponse,
+  ) {
+    const actorName = req.user?.name ?? req.user?.email ?? "Quản lý Cổ Phục";
+    const result = await this.garmentsService.exportAssetsExcel(actorName);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    return res.send(result.buffer);
   }
 
   @Get(":id")

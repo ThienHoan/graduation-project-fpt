@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { InspectionsExportService, type InspectionSlipData } from "./inspections-export.service";
 import { AssetStatus, BookingStatus, InspectionStatus, MaintenanceStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -58,6 +59,7 @@ export class InspectionsService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     @Optional() private readonly aiService?: AiService,
+    @Optional() private readonly inspectionsExportService?: InspectionsExportService,
   ) {}
 
   async createOrGet(dto: CreateInspectionDto, staffId: string) {
@@ -1989,5 +1991,99 @@ export class InspectionsService {
         createdAt: p.createdAt?.toISOString() ?? new Date().toISOString(),
       })) ?? [],
     };
+  }
+
+  async exportInspectionSlip(id: string) {
+    const includeQuery = {
+      booking: {
+        include: {
+          customer: {
+            select: {
+              email: true,
+              profile: { select: { fullName: true, phone: true } },
+            },
+          },
+        },
+      },
+      garmentAsset: {
+        include: {
+          garment: true,
+          garment_sizes: true,
+        },
+      },
+      inspector: {
+        select: {
+          email: true,
+          profile: { select: { fullName: true } },
+        },
+      },
+      findings: true,
+    };
+
+    let session = await this.prisma.inspectionSession.findUnique({
+      where: { id },
+      include: includeQuery,
+    });
+
+    if (!session) {
+      session = await this.prisma.inspectionSession.findFirst({
+        where: { bookingId: id },
+        include: includeQuery,
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
+    if (!session) {
+      throw new NotFoundException("Biên bản kiểm tra không tồn tại.");
+    }
+
+    const exportService = this.inspectionsExportService ?? new InspectionsExportService();
+    const slipData: InspectionSlipData = {
+      id: session.id,
+      bookingId: session.bookingId,
+      status: session.status,
+      inspectedAt: session.completedAt ?? session.createdAt,
+      inspectorName: session.inspector?.profile?.fullName ?? session.inspector?.email ?? "Nhân viên kiểm tra",
+      customer: {
+        fullName: session.booking.customer.profile?.fullName,
+        phone: session.booking.customer.profile?.phone,
+        email: session.booking.customer.email,
+      },
+      garmentAsset: {
+        assetCode: session.garmentAsset.assetCode,
+        garmentName: session.garmentAsset.garment.name,
+        sizeLabel: session.garmentAsset.garment_sizes?.size_label,
+      },
+      booking: {
+        rentalStartDate: session.booking.rentalStartDate,
+        rentalEndDate: session.booking.rentalEndDate,
+        depositTotal: Number(session.booking.depositTotal),
+        rentalTotal: Number(session.booking.rentalTotal),
+      },
+      findings: (() => {
+        // Kiểm tra xem có bản ghi [Quản lý phê duyệt] nào không.
+        // Nếu có → Manager đã override → đánh dấu isStaffDraft=true cho các bản ghi [Staff thẩm định]
+        //          để PDF hiển thị gạch ngang và chỉ tính tổng bản ghi của Manager.
+        // Nếu không → Chưa qua Manager, dùng tất cả findings bình thường.
+        const hasManagerApproval = session.findings.some((f) =>
+          f.findingType.startsWith("[Quản lý"),
+        );
+
+        return session.findings.map((f) => ({
+          id: f.id,
+          findingType: f.findingType,
+          severity: f.severity,
+          description: f.description,
+          penaltyAmount: Number(f.penaltyAmount),
+          // isStaffDraft=true: hàng bị gạch ngang, không tính vào tổng quyết toán cọc
+          isStaffDraft: hasManagerApproval && f.findingType.startsWith("[Staff"),
+        }));
+      })(),
+      note: session.note,
+    };
+
+    const buffer = await exportService.generateInspectionSlip(slipData);
+    const filename = `bien-ban-kiem-tra-${session.id.slice(0, 8)}.pdf`;
+    return { buffer, filename };
   }
 }

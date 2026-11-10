@@ -19,6 +19,7 @@ import {
   completeInspection,
   inspectBookingAccessory,
   finalizeBookingInspection,
+  downloadInspectionSlip,
   type StaffBookingResponse,
   type InspectionSessionResponse,
   type BookingItem,
@@ -69,6 +70,7 @@ import {
   SwitchCamera,
   ChevronDown,
   BarChart3,
+  Printer,
   type LucideIcon,
 } from "lucide-react";
 
@@ -236,6 +238,24 @@ export default function StaffInspectionPage() {
 
   // Modal to view detailed inspection report
   const [viewingModalSessionId, setViewingModalSessionId] = useState<string | null>(null);
+  const [printingInspectionSessionId, setPrintingInspectionSessionId] = useState<string | null>(null);
+
+  const handleDirectPrintInspection = async (sessionId: string) => {
+    setPrintingInspectionSessionId(sessionId);
+    try {
+      const res = await downloadInspectionSlip(sessionId);
+      if (!res.success) {
+        setErrorMsg(res.error ?? "Không thể in biên bản kiểm tra.");
+      } else {
+        setFinalizeMsg({ type: "success", text: `Đã tải xuống biên bản kiểm tra: ${res.filename}` });
+      }
+    } catch (err) {
+      console.error("Print inspection error:", err);
+      setErrorMsg("Lỗi khi tải biên bản kiểm tra.");
+    } finally {
+      setPrintingInspectionSessionId(null);
+    }
+  };
 
   // Collapsible sections
   const [sectionOpen, setSectionOpen] = useState({
@@ -1912,6 +1932,81 @@ async function handleComplete(finalAssetStatus: string) {
 
           {/* ── Main content ── */}
           <div className="space-y-6 lg:col-span-8">
+            {/* Top Action Toolbar — Đặt ở vị trí trên cùng trang trọng & thoáng đãng, đồng bộ phong cách như Quản lý */}
+            {booking && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white px-5 py-3.5 shadow-2xs">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-lotus/10 text-lotus">
+                    <ClipboardCheck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-bold text-ink">
+                        {selectedItem?.garmentName ?? "Kiểm tra hiện vật"}
+                      </h2>
+                      {selectedItem?.sizeLabel && (
+                        <span className="rounded bg-sand/40 px-2 py-0.5 text-[11px] font-semibold text-stone-700">
+                          Size {selectedItem.sizeLabel}
+                        </span>
+                      )}
+                      {selectedItem?.assetCode && (
+                        <span className="rounded bg-mist px-2 py-0.5 text-[11px] font-mono font-medium text-stone-600">
+                          {selectedItem.assetCode}
+                        </span>
+                      )}
+                      {isPendingApproval && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                          Chờ Quản lý duyệt
+                        </span>
+                      )}
+                      {selectedItemSession?.status === "completed" && (
+                        <span className="rounded-full bg-jade/10 px-2.5 py-0.5 text-[11px] font-semibold text-jade">
+                          Đã kiểm tra xong
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-stone-500">
+                      Đơn #{booking.id.slice(0, 8).toUpperCase()} · Khách hàng: {booking.customerName ?? "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {(activeSession || selectedItemSession || booking.allAssignedAssetsInspected || Number(booking.penaltyTotal ?? 0) > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDirectPrintInspection(activeSession?.id || selectedItemSession?.id || booking.id)}
+                      disabled={printingInspectionSessionId === (activeSession?.id || selectedItemSession?.id || booking.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-lotus/30 bg-lotus/5 px-3.5 py-2 text-xs font-semibold text-lotus shadow-2xs hover:bg-lotus/10 disabled:opacity-50 transition"
+                      title="Xuất biên bản kiểm tra & quyết toán cọc (PDF)"
+                    >
+                      {printingInspectionSessionId === (activeSession?.id || selectedItemSession?.id || booking.id) ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Printer className="h-3.5 w-3.5" />
+                      )}
+                      <span>
+                        {printingInspectionSessionId === (activeSession?.id || selectedItemSession?.id || booking.id)
+                          ? "Đang xuất PDF..."
+                          : "Xuất Biên Bản (PDF)"}
+                      </span>
+                    </button>
+                  )}
+                  {(activeSession || selectedItemSession) && (
+                    <button
+                      type="button"
+                      onClick={() => setViewingModalSessionId(activeSession?.id || selectedItemSession?.id || null)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-xs font-semibold text-stone-700 shadow-2xs hover:bg-sand/30 transition"
+                      title="Xem toàn bộ thông tin biên bản kiểm tra"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-stone-500" />
+                      <span>Xem chi tiết</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {loadingSessions ? (
               <section className="flex h-80 flex-col items-center justify-center rounded-xl border border-sand bg-white p-10 text-center shadow-sm">
                 <Loader2 className="h-8 w-8 animate-spin text-lotus" />
@@ -1925,7 +2020,7 @@ async function handleComplete(finalAssetStatus: string) {
                     <CheckCircle2 className="mx-auto h-12 w-12 text-jade" />
                     <h3 className="mt-4 text-2xl font-bold text-ink">Món này đã kiểm tra xong</h3>
                     <p className="mt-2 text-stone-500">
-                      Chọn món khác trong danh sách tài sản để tiếp tục kiểm tra đơn trả.
+                      Đã hoàn tất kiểm tra hiện vật và quyết toán cọc. Bạn có thể xuất lại biên bản bằng nút trên thanh công cụ phía trên.
                     </p>
                   </>
                 ) : (
@@ -3192,19 +3287,9 @@ async function handleComplete(finalAssetStatus: string) {
                               👉 Đề xuất truy thu bù thêm từ khách: +{additionalPayRequired.toLocaleString("vi-VN")}đ.
                             </strong>
                           )}
-                          Biên bản đã được chuyển tự động sang danh sách chờ duyệt của Quản lý. Hệ thống chưa trừ cọc của khách hàng.
+                          Biên bản đã được chuyển tự động sang danh sách chờ duyệt của Quản lý. Hệ thống chưa trừ cọc của khách hàng. Bạn có thể xuất bản thảo biên bản kiểm tra bằng nút trên thanh công cụ phía trên.
                         </p>
                       </div>
-                    </div>
-                    <div className="flex justify-end pt-2 border-t border-amber-200/80">
-                      <button
-                        type="button"
-                        onClick={() => setViewingModalSessionId(activeSession.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-amber-900 shadow-2xs hover:bg-amber-100"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                        Xem chi tiết biên bản kiểm tra
-                      </button>
                     </div>
                   </div>
                 ) : (
@@ -3570,6 +3655,15 @@ async function handleComplete(finalAssetStatus: string) {
           </p>
         </div>
       )}
+
+      {/* Chi tiết biên bản kiểm tra & In PDF */}
+      <InspectionDetailModal
+        isOpen={Boolean(viewingModalSessionId)}
+        bookingId={selectedBookingId || booking?.id || null}
+        sessionId={viewingModalSessionId}
+        initialSessions={sessions}
+        onClose={() => setViewingModalSessionId(null)}
+      />
     </StaffPortalShell>
   );
 }

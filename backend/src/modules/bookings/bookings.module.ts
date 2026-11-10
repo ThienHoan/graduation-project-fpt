@@ -23,12 +23,14 @@ import { NotificationRetryService } from "./customer-care/notification-retry.ser
 import { BookingsController } from "./bookings.controller";
 import { BookingsScheduler } from "./bookings.scheduler";
 import { BookingsService } from "./bookings.service";
+import { BookingsExportService } from "./bookings-export.service";
 
 @Module({
   imports: [AuthModule, NotificationsModule, LocationsModule, PricingModule, RealtimeModule, VouchersModule, InspectionsModule, GarmentsModule],
   controllers: [BookingsController, CustomerCareController],
   providers: [
     BookingsService,
+    BookingsExportService,
     BookingAutomationService,
     BookingExtensionsService,
     BookingsScheduler,
@@ -44,6 +46,8 @@ import { BookingsService } from "./bookings.service";
     NotificationRetryService,
   ],
   exports: [
+    BookingsService,
+    BookingsExportService,
     BookingExtensionsService,
     BookingPickupReminderBuilder,
     BookingReturnReminderBuilder,

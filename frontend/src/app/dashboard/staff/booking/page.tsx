@@ -15,6 +15,8 @@ import {
   createRefund,
   updateRefundDetails,
   closeBookingWithoutRefund,
+  downloadHandoverSlip,
+  downloadInspectionSlip,
   type BookingResponse,
   type StaffBookingResponse,
   type StaffRefundSummary,
@@ -46,6 +48,8 @@ import {
   RotateCcw,
   Shirt,
   Loader2,
+  Printer,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -223,6 +227,47 @@ export default function StaffBookingManagementPage() {
   const [paymentDialog, setPaymentDialog] = useState<PaymentDialog>(null);
   const [handoverBooking, setHandoverBooking] = useState<StaffBookingResponse | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cash");
+  const [printingBookingId, setPrintingBookingId] = useState<string | null>(null);
+  const [printingInspectionId, setPrintingInspectionId] = useState<string | null>(null);
+
+  const handlePrintSlip = async (bookingId: string, pickupMethod?: string | null) => {
+    setPrintingBookingId(bookingId);
+    try {
+      const res = await downloadHandoverSlip(bookingId);
+      if (!res.success) {
+        setErrorDialog(res.error ?? "Không thể tải phiếu vận hành đơn hàng.");
+      } else {
+        showSuccess(
+          bookingId,
+          pickupMethod === "delivery"
+            ? `Đã tải phiếu đóng gói & vận đơn giao hàng: ${res.filename}`
+            : `Đã tải biên bản bàn giao & thu hộ tiền cọc: ${res.filename}`,
+        );
+      }
+    } catch (err) {
+      console.error("Print slip error:", err);
+      setErrorDialog(err instanceof Error ? err.message : "Lỗi khi tải phiếu.");
+    } finally {
+      setPrintingBookingId(null);
+    }
+  };
+
+  const handlePrintInspection = async (bookingId: string) => {
+    setPrintingInspectionId(bookingId);
+    try {
+      const res = await downloadInspectionSlip(bookingId);
+      if (!res.success) {
+        setErrorDialog(res.error ?? "Không thể tải biên bản kiểm tra.");
+      } else {
+        showSuccess(bookingId, `Đã tải biên bản kiểm tra: ${res.filename}`);
+      }
+    } catch (err) {
+      console.error("Print inspection slip error:", err);
+      setErrorDialog(err instanceof Error ? err.message : "Lỗi khi tải biên bản.");
+    } finally {
+      setPrintingInspectionId(null);
+    }
+  };
 
   // Refund form state
   const [refundDialog, setRefundDialog] = useState<{
@@ -718,6 +763,31 @@ export default function StaffBookingManagementPage() {
             const recency = getOrderRecency(booking.createdAt);
             const isNew = recency?.isNew;
 
+            const canPrintSlip =
+              booking.pickupMethod === "delivery"
+                ? [
+                    "ready_for_pickup",
+                    "delivering",
+                    "renting",
+                    "returned",
+                    "inspection_pending",
+                    "refund_pending",
+                    "completed",
+                  ].includes(booking.status)
+                : [
+                    "renting",
+                    "returned",
+                    "inspection_pending",
+                    "refund_pending",
+                    "completed",
+                  ].includes(booking.status) ||
+                  booking.handover?.status === "CONFIRMED";
+
+            const canPrintInspection =
+              ["inspection_pending", "refund_pending", "completed"].includes(booking.status) ||
+              Boolean(booking.allAssignedAssetsInspected) ||
+              Number(booking.penaltyTotal ?? 0) > 0;
+
             return (
               <div key={booking.id}>
                 {successId === booking.id && (
@@ -876,6 +946,52 @@ export default function StaffBookingManagementPage() {
 
                 {/* Actions bar — luôn hiện "Xem chi tiết" cho mọi booking */}
                 <div className="flex flex-wrap justify-end gap-2 border-t border-sand px-6 py-4">
+                  {canPrintSlip && (
+                    <button
+                      type="button"
+                      disabled={printingBookingId === booking.id}
+                      onClick={() => handlePrintSlip(booking.id, booking.pickupMethod)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3.5 py-2 text-sm font-semibold text-stone-700 shadow-xs hover:bg-stone-50 hover:text-ink disabled:opacity-50 transition"
+                      title={
+                        booking.pickupMethod === "delivery"
+                          ? "In phiếu đóng gói & vận đơn giao hàng (PDF)"
+                          : "In biên bản bàn giao & thu hộ tiền cọc (PDF)"
+                      }
+                    >
+                      {printingBookingId === booking.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-lotus" />
+                      ) : (
+                        <Printer className="h-4 w-4 text-lotus" />
+                      )}
+                      <span>
+                        {printingBookingId === booking.id
+                          ? "Đang xuất..."
+                          : booking.pickupMethod === "delivery"
+                          ? "In Phiếu Vận Đơn"
+                          : "In Phiếu Bàn Giao"}
+                      </span>
+                    </button>
+                  )}
+                  {canPrintInspection && (
+                    <button
+                      type="button"
+                      disabled={printingInspectionId === booking.id}
+                      onClick={() => handlePrintInspection(booking.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2 text-sm font-semibold text-amber-900 shadow-xs hover:bg-amber-100 disabled:opacity-50 transition"
+                      title="In biên bản kiểm định & khấu trừ bồi thường hư hại (PDF)"
+                    >
+                      {printingInspectionId === booking.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-amber-700" />
+                      ) : (
+                        <ClipboardCheck className="h-4 w-4 text-amber-700" />
+                      )}
+                      <span>
+                        {printingInspectionId === booking.id
+                          ? "Đang xuất..."
+                          : "In Biên Bản Kiểm Tra"}
+                      </span>
+                    </button>
+                  )}
                   <Link
                     href={`/dashboard/staff/booking/${booking.id}`}
                     className="rounded-lg border border-sand px-4 py-2 text-sm font-semibold text-stone-600 transition hover:bg-stone-50"

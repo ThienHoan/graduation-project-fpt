@@ -15,9 +15,12 @@ import {
   Save,
   Clock,
   ArrowRight,
+  Printer,
 } from "lucide-react";
 import {
   getBookingInspections,
+  getInspectionSession,
+  downloadInspectionSlip,
   type InspectionSessionResponse,
   type InspectionFindingResponse,
 } from "@/lib/api";
@@ -57,6 +60,7 @@ interface InspectionDetailModalProps {
   onClose: () => void;
   bookingId?: string | null;
   sessionId?: string | null;
+  initialSessions?: InspectionSessionResponse[] | null;
   isManager?: boolean;
   onUpdated?: () => void;
   showToast?: (type: "success" | "error", message: string) => void;
@@ -67,6 +71,7 @@ export function InspectionDetailModal({
   onClose,
   bookingId,
   sessionId,
+  initialSessions,
   isManager = false,
   onUpdated,
   showToast,
@@ -75,6 +80,21 @@ export function InspectionDetailModal({
   const [sessions, setSessions] = useState<InspectionSessionResponse[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [isExportingSlip, setIsExportingSlip] = useState(false);
+
+  const handlePrintInspectionSlip = async () => {
+    if (!activeSession?.id) return;
+    setIsExportingSlip(true);
+    try {
+      await downloadInspectionSlip(activeSession.id);
+      showToast?.("success", "Đã tải xuống biên bản kiểm tra & khấu trừ bồi thường.");
+    } catch (err) {
+      console.error("Export inspection slip error:", err);
+      showToast?.("error", err instanceof Error ? err.message : "Không thể tải biên bản kiểm tra.");
+    } finally {
+      setIsExportingSlip(false);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -83,11 +103,38 @@ export function InspectionDetailModal({
       return;
     }
 
+    // 1. Nếu có initialSessions truyền vào (đã có sẵn trong state của trang gọi), ưu tiên dùng ngay
+    if (initialSessions && initialSessions.length > 0) {
+      setSessions(initialSessions);
+      if (sessionId) {
+        const matched = initialSessions.find((s) => s.id === sessionId);
+        setSelectedSessionId(matched ? matched.id : initialSessions[0]?.id ?? null);
+      } else {
+        setSelectedSessionId(initialSessions[0]?.id ?? null);
+      }
+      return;
+    }
+
+    const loadSingleSession = async (sid: string) => {
+      try {
+        const res = await getInspectionSession(sid);
+        if (res.success && res.data) {
+          setSessions([res.data]);
+          setSelectedSessionId(res.data.id);
+        } else {
+          setSessions([]);
+        }
+      } catch {
+        setSessions([]);
+      }
+    };
+
+    // 2. Nếu có bookingId, tải danh sách phiên kiểm tra của đơn hàng
     if (bookingId) {
       setLoading(true);
       getBookingInspections(bookingId)
         .then((res) => {
-          if (res.success && res.data) {
+          if (res.success && res.data && res.data.length > 0) {
             setSessions(res.data);
             if (sessionId) {
               const matched = res.data.find((s) => s.id === sessionId);
@@ -95,13 +142,29 @@ export function InspectionDetailModal({
             } else {
               setSelectedSessionId(res.data[0]?.id ?? null);
             }
+          } else if (sessionId) {
+            void loadSingleSession(sessionId);
+          } else {
+            setSessions([]);
+          }
+        })
+        .catch(() => {
+          if (sessionId) {
+            void loadSingleSession(sessionId);
           } else {
             setSessions([]);
           }
         })
         .finally(() => setLoading(false));
+      return;
     }
-  }, [isOpen, bookingId, sessionId]);
+
+    // 3. Nếu chỉ có sessionId (không có bookingId), tải trực tiếp phiên kiểm tra đó
+    if (sessionId) {
+      setLoading(true);
+      void loadSingleSession(sessionId).finally(() => setLoading(false));
+    }
+  }, [isOpen, bookingId, sessionId, initialSessions]);
 
   const activeSession = sessions.find((s) => s.id === selectedSessionId) ?? sessions[0] ?? null;
 
@@ -578,7 +641,21 @@ export function InspectionDetailModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end border-t border-sand bg-mist px-6 py-3">
+        <div className="flex items-center justify-between border-t border-sand bg-mist px-6 py-3">
+          {activeSession ? (
+            <button
+              type="button"
+              onClick={handlePrintInspectionSlip}
+              disabled={isExportingSlip}
+              className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white px-4 py-2 text-sm font-semibold text-stone-700 shadow-xs hover:bg-stone-50 hover:text-ink disabled:opacity-50 transition"
+              title="In biên bản kiểm định & khấu trừ cọc (PDF)"
+            >
+              <Printer className="h-4 w-4 text-lotus" />
+              <span>{isExportingSlip ? "Đang xuất PDF..." : "In Biên Bản Kiểm Tra (PDF)"}</span>
+            </button>
+          ) : (
+            <div />
+          )}
           <button
             type="button"
             onClick={onClose}

@@ -122,6 +122,7 @@ import {
   getFinancialTransactions,
   getReconciliation,
   downloadFinancialReport,
+  downloadAssetsInventoryReport,
   type FinancialExportParams,
   type FinancialSummaryResponse,
   type FinancialQueryParams,
@@ -1515,6 +1516,7 @@ export default function ManagerDashboardPage() {
               [...prev.filter((s) => s !== label), label].sort(),
             )
           }
+          showToast={showToast}
         />
       ) : tab === "inspection-log" ? (
         <InspectionLogTab
@@ -2723,6 +2725,7 @@ function InventoryTab({
   onRestoreGarment,
   onCategoryCreated,
   onSizeCreated,
+  showToast,
 }: {
   garments: GarmentSummary[];
   categories: GarmentCategory[];
@@ -2757,11 +2760,30 @@ function InventoryTab({
   onRestoreGarment: (id: string) => void;
   onCategoryCreated: (cat: GarmentCategory) => void;
   onSizeCreated: (label: string) => void;
+  showToast?: (type: "success" | "error", message: string) => void;
 }) {
   const [garmentSearch, setGarmentSearch] = useState("");
   const [garmentFilter, setGarmentFilter] = useState<"all" | "active" | "deleted">("all");
   const [assetSearch, setAssetSearch] = useState("");
   const [assetStatusFilter, setAssetStatusFilter] = useState("all");
+  const [exportingInventory, setExportingInventory] = useState(false);
+
+  const handleExportInventory = async () => {
+    setExportingInventory(true);
+    try {
+      const res = await downloadAssetsInventoryReport();
+      if (!res.success) {
+        showToast?.("error", res.error ?? "Không thể xuất file kiểm kê kho.");
+      } else {
+        showToast?.("success", `Đã tải xuống file kiểm kê kho: ${res.filename}`);
+      }
+    } catch (err) {
+      console.error("Export assets inventory error:", err);
+      showToast?.("error", err instanceof Error ? err.message : "Lỗi khi xuất file kiểm kê.");
+    } finally {
+      setExportingInventory(false);
+    }
+  };
 
   const activeCount = useMemo(() => garments.filter((g) => !g.deletedAt).length, [garments]);
   const deletedCount = useMemo(() => garments.filter((g) => Boolean(g.deletedAt)).length, [garments]);
@@ -2800,8 +2822,31 @@ function InventoryTab({
     garments.find((g) => g.id === selectedGarmentId) ?? null;
 
   return (
-    <div className="flex h-[calc(100vh-240px)] -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden border-y border-sand bg-white">
-      {/* Left Pane: Garment Catalog Grid */}
+    <div className="space-y-4">
+      {/* ── Top Header Toolbar cho Kho Hiện Vật: Nút Xuất Kiểm Kê đặt độc lập ở góc trên bên phải ── */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-ink">Kho Hiện Vật &amp; Trang Phục</h2>
+          <p className="text-xs text-stone-500">
+            Quản lý tập trung {garments.length} mẫu cổ phục và {assets.length} hiện vật vật lý lưu kho
+          </p>
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={handleExportInventory}
+            disabled={exportingInventory}
+            className="inline-flex items-center gap-2 rounded-xl border border-sand bg-white px-4 py-2 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 hover:border-emerald-300 disabled:opacity-50"
+            title="Xuất file Excel danh mục toàn bộ hiện vật và tỷ lệ khấu hao"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+            <span>{exportingInventory ? "Đang xuất Excel..." : "Xuất Kiểm Kê (.xlsx)"}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex h-[calc(100vh-280px)] -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden border-y border-sand bg-white">
+        {/* Left Pane: Garment Catalog Grid */}
       <section className="w-1/2 flex flex-col border-r border-sand bg-warm-ivory">
         <div className="p-4 border-b border-sand bg-surface-container-low sticky top-0 z-10 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -2987,16 +3032,18 @@ function InventoryTab({
               {assets.length} tài sản
             </span>
           </div>
-          {selectedGarmentId && (
-            <button
-              type="button"
-              onClick={onCreateAsset}
-              className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
-            >
-              <Plus className="h-4 w-4" />
-              Thêm tài sản
-            </button>
-          )}
+          <div>
+            {selectedGarmentId && (
+              <button
+                type="button"
+                onClick={onCreateAsset}
+                className="flex items-center gap-1 rounded-lg bg-lotus px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-oxblood"
+              >
+                <Plus className="h-4 w-4" />
+                Thêm tài sản
+              </button>
+            )}
+          </div>
         </div>
         <div className="border-b border-sand bg-white px-4 py-3">
           <div className="flex gap-2">
@@ -3299,6 +3346,7 @@ function InventoryTab({
           onSubmit={onSubmitAsset}
         />
       )}
+    </div>
     </div>
   );
 }
@@ -5615,7 +5663,68 @@ function FinanceTab({
 
   return (
     <div className="space-y-6">
-      {/* ── Filter Bar ── */}
+      {/* ── Top Header Toolbar cho Đối Soát Tài Chính: Nút Xuất Báo Cáo độc lập ở trên cùng ── */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-ink">Báo Cáo &amp; Đối Soát Doanh Thu</h2>
+          <p className="text-xs text-stone-500">
+            Dữ liệu dòng tiền, cọc giữ và doanh thu thực nhận theo kỳ hạch toán
+          </p>
+        </div>
+
+        {/* Nút Xuất Báo Cáo độc lập ở trên cùng bên phải */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setExportMenuOpen((prev) => !prev)}
+            disabled={isExporting !== null}
+            className="flex items-center gap-2 rounded-xl border border-sand bg-white px-4 py-2 text-xs font-semibold text-lotus shadow-sm transition hover:bg-lotus/5 hover:border-lotus/40 disabled:opacity-50"
+            title="Xuất báo cáo tài chính gửi kế toán hoặc in ấn"
+          >
+            <Download className="h-4 w-4 text-lotus" />
+            <span>
+              {isExporting
+                ? `Đang xuất ${isExporting.toUpperCase()}...`
+                : "Xuất báo cáo"}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+          </button>
+
+          {exportMenuOpen && (
+            <div className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl border border-sand bg-white p-1.5 shadow-xl">
+              <button
+                type="button"
+                onClick={() => handleExport("pdf")}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-700"
+              >
+                <FileText className="h-4 w-4 shrink-0 text-red-600" />
+                <div>
+                  <div className="font-semibold">Xuất file PDF (.pdf)</div>
+                  <div className="text-[10px] text-stone-400">
+                    Chuẩn in ấn &amp; lưu trữ kế toán
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExport("xlsx")}
+                className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-emerald-50 hover:text-emerald-700"
+              >
+                <FileSpreadsheet className="h-4 w-4 shrink-0 text-emerald-600" />
+                <div>
+                  <div className="font-semibold">Xuất file Excel (.xlsx)</div>
+                  <div className="text-[10px] text-stone-400">
+                    3 sheet, công thức &amp; định dạng VND
+                  </div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Filter Bar: Chỉ còn chức năng bộ lọc thời gian và chuyển góc nhìn ── */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-3 shadow-sm">
         <span className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
           Bộ lọc:
@@ -5684,57 +5793,6 @@ function FinanceTab({
               );
             },
           )}
-
-          {/* ── Nút Xuất Báo Cáo (PDF / Excel) ── */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setExportMenuOpen((prev) => !prev)}
-              disabled={isExporting !== null}
-              className="flex items-center gap-1.5 rounded-lg border border-sand bg-cream px-3 py-1.5 text-xs font-semibold text-lotus shadow-sm transition hover:bg-lotus/10 disabled:opacity-50"
-              title="Xuất báo cáo tài chính gửi kế toán hoặc in ấn"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>
-                {isExporting
-                  ? `Đang xuất ${isExporting.toUpperCase()}...`
-                  : "Xuất báo cáo"}
-              </span>
-              <ChevronDown className="h-3 w-3 opacity-70" />
-            </button>
-
-            {exportMenuOpen && (
-              <div className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl border border-sand bg-white p-1.5 shadow-xl">
-                <button
-                  type="button"
-                  onClick={() => handleExport("pdf")}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-700"
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-red-600" />
-                  <div>
-                    <div className="font-semibold">Xuất file PDF (.pdf)</div>
-                    <div className="text-[10px] text-stone-400">
-                      Chuẩn in ấn & lưu trữ kế toán
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleExport("xlsx")}
-                  className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-emerald-50 hover:text-emerald-700"
-                >
-                  <FileSpreadsheet className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <div>
-                    <div className="font-semibold">Xuất file Excel (.xlsx)</div>
-                    <div className="text-[10px] text-stone-400">
-                      3 sheet, công thức & định dạng VND
-                    </div>
-                  </div>
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
