@@ -328,4 +328,51 @@ describe("FinancialService", () => {
       expect(items[0].type).toBe("REFUND");
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Export Report
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("Export Report", () => {
+    it("should export report as pdf by default", async () => {
+      const mockExportService = {
+        generateExcelReport: vi.fn(),
+        generatePdfReport: vi.fn().mockResolvedValue(Buffer.from("%PDF-mock")),
+      };
+      const testService = new FinancialService(prisma as any, mockExportService as any);
+
+      const result = await testService.exportReport({
+        format: "pdf",
+        from: "2026-11-01",
+        to: "2026-11-10",
+        getStartDate: () => "2026-11-01",
+        getEndDate: () => "2026-11-10",
+      } as any, "Admin");
+
+      expect(result.contentType).toBe("application/pdf");
+      expect(result.filename).toContain("bao-cao-tai-chinh");
+      expect(result.filename).toContain(".pdf");
+      expect(mockExportService.generatePdfReport).toHaveBeenCalled();
+    });
+
+    it("should export report as xlsx when format is xlsx", async () => {
+      const mockExportService = {
+        generateExcelReport: vi.fn().mockResolvedValue(Buffer.from("PK-mock")),
+        generatePdfReport: vi.fn(),
+      };
+      const testService = new FinancialService(prisma as any, mockExportService as any);
+
+      const result = await testService.exportReport({
+        format: "xlsx",
+        from: "2026-11-01",
+        to: "2026-11-10",
+        getStartDate: () => "2026-11-01",
+        getEndDate: () => "2026-11-10",
+      } as any, "Admin");
+
+      expect(result.contentType).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      expect(result.filename).toContain("bao-cao-tai-chinh");
+      expect(result.filename).toContain(".xlsx");
+      expect(mockExportService.generateExcelReport).toHaveBeenCalled();
+    });
+  });
 });

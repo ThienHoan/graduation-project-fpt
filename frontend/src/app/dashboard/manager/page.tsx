@@ -42,6 +42,9 @@ import {
   Package,
   BarChart3,
   FileText,
+  Download,
+  FileSpreadsheet,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 
@@ -118,6 +121,8 @@ import {
   getRevenueByDay,
   getFinancialTransactions,
   getReconciliation,
+  downloadFinancialReport,
+  type FinancialExportParams,
   type FinancialSummaryResponse,
   type FinancialQueryParams,
   type FinancialTransactionItem,
@@ -5461,6 +5466,39 @@ function FinanceTab({
   const [subView, setSubView] = useState<
     "overview" | "transactions" | "reconciliation"
   >("overview");
+  const [isExporting, setIsExporting] = useState<"pdf" | "xlsx" | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
+  const handleExport = async (format: "pdf" | "xlsx") => {
+    setIsExporting(format);
+    setExportMenuOpen(false);
+    try {
+      const exportParams: FinancialExportParams = { format };
+      if (preset === "custom") {
+        if (!customStart || !customEnd) {
+          alert("Vui lòng chọn đầy đủ ngày bắt đầu và kết thúc trước khi xuất báo cáo.");
+          setIsExporting(null);
+          return;
+        }
+        exportParams.preset = "custom";
+        exportParams.startDate = customStart;
+        exportParams.endDate = customEnd;
+        exportParams.from = customStart;
+        exportParams.to = customEnd;
+      } else if (preset) {
+        exportParams.preset = preset;
+      }
+
+      const res = await downloadFinancialReport(exportParams);
+      if (!res.success) {
+        alert(res.error || "Xuất báo cáo thất bại.");
+      }
+    } catch {
+      alert("Đã xảy ra lỗi khi xuất báo cáo.");
+    } finally {
+      setIsExporting(null);
+    }
+  };
 
   const buildParams = (): FinancialQueryParams | null => {
     const params: FinancialQueryParams = {};
@@ -5627,7 +5665,7 @@ function FinanceTab({
             />
           </>
         )}
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {(["overview", "transactions", "reconciliation"] as const).map(
             (v) => {
               const vLabels = {
@@ -5646,6 +5684,57 @@ function FinanceTab({
               );
             },
           )}
+
+          {/* ── Nút Xuất Báo Cáo (PDF / Excel) ── */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setExportMenuOpen((prev) => !prev)}
+              disabled={isExporting !== null}
+              className="flex items-center gap-1.5 rounded-lg border border-sand bg-cream px-3 py-1.5 text-xs font-semibold text-lotus shadow-sm transition hover:bg-lotus/10 disabled:opacity-50"
+              title="Xuất báo cáo tài chính gửi kế toán hoặc in ấn"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>
+                {isExporting
+                  ? `Đang xuất ${isExporting.toUpperCase()}...`
+                  : "Xuất báo cáo"}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-70" />
+            </button>
+
+            {exportMenuOpen && (
+              <div className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl border border-sand bg-white p-1.5 shadow-xl">
+                <button
+                  type="button"
+                  onClick={() => handleExport("pdf")}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-red-50 hover:text-red-700"
+                >
+                  <FileText className="h-4 w-4 shrink-0 text-red-600" />
+                  <div>
+                    <div className="font-semibold">Xuất file PDF (.pdf)</div>
+                    <div className="text-[10px] text-stone-400">
+                      Chuẩn in ấn & lưu trữ kế toán
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExport("xlsx")}
+                  className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-emerald-50 hover:text-emerald-700"
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <div>
+                    <div className="font-semibold">Xuất file Excel (.xlsx)</div>
+                    <div className="text-[10px] text-stone-400">
+                      3 sheet, công thức & định dạng VND
+                    </div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

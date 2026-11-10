@@ -3,12 +3,17 @@ import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { FinancialQueryDto } from "./dto/financial-query.dto";
+import type { FinancialExportQueryDto } from "./dto/financial-export-query.dto";
+import { FinancialExportService, type FinancialExportData } from "./financial-export.service";
 
 type DateRange = { gte: Date; lte: Date };
 
 @Injectable()
 export class FinancialService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financialExportService?: FinancialExportService,
+  ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Financial Summary API
@@ -831,5 +836,67 @@ export class FinancialService {
     if (rawType.startsWith("refund")) return "REFUND";
     if (rawType.startsWith("penalty")) return "DAMAGE_DEDUCTION";
     return map[rawType] ?? rawType.toUpperCase();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Export Report API (PDF / Excel)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async exportReport(query: FinancialExportQueryDto, actorName?: string) {
+    const exportService = this.financialExportService ?? new FinancialExportService();
+    const startDate = query.getStartDate();
+    const endDate = query.getEndDate();
+
+    const queryForData: FinancialQueryDto = {
+      preset: query.preset ?? (startDate && endDate ? "custom" : "this_month"),
+      startDate,
+      endDate,
+    };
+
+    const [summaryRes, revenueRes, reconRes] = await Promise.all([
+      this.getSummary(queryForData),
+      this.getRevenueByDay(queryForData),
+      this.getReconciliation(queryForData),
+    ]);
+
+    let dateLabel = "Toàn thời gian";
+    if (startDate && endDate) {
+      dateLabel = `Từ ${startDate} đến ${endDate}`;
+    } else if (query.preset === "today") {
+      dateLabel = `Hôm nay (${new Date().toLocaleDateString("vi-VN")})`;
+    } else if (query.preset === "this_month") {
+      const now = new Date();
+      dateLabel = `Tháng ${now.getMonth() + 1}/${now.getFullYear()}`;
+    } else if (query.preset === "this_year") {
+      dateLabel = `Năm ${new Date().getFullYear()}`;
+    }
+
+    const exportData: FinancialExportData = {
+      dateLabel,
+      summary: summaryRes.data!,
+      revenueByDay: revenueRes.data!,
+      reconciliation: reconRes.data,
+      actorName,
+    };
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fromLabel = startDate ?? (query.preset ?? "all");
+    const toLabel = endDate ?? stamp;
+
+    if (query.format === "xlsx") {
+      const buffer = await exportService.generateExcelReport(exportData);
+      return {
+        buffer,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename: `bao-cao-tai-chinh-${fromLabel}-${toLabel}.xlsx`,
+      };
+    }
+
+    const buffer = await exportService.generatePdfReport(exportData);
+    return {
+      buffer,
+      contentType: "application/pdf",
+      filename: `bao-cao-tai-chinh-${fromLabel}-${toLabel}.pdf`,
+    };
   }
 }

@@ -1493,6 +1493,74 @@ export async function getReconciliation(params?: FinancialQueryParams) {
   return apiRequest<ReconciliationResponse>(`/financial/reconciliation${buildFinancialQueryString(params)}`);
 }
 
+export type FinancialExportParams = FinancialQueryParams & {
+  format?: "pdf" | "xlsx";
+  from?: string;
+  to?: string;
+};
+
+export async function downloadFinancialReport(
+  params?: FinancialExportParams,
+): Promise<{ success: boolean; filename?: string; error?: string }> {
+  const searchParams = new URLSearchParams();
+  if (params?.format) searchParams.set("format", params.format);
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.from) searchParams.set("from", params.from);
+  if (params?.to) searchParams.set("to", params.to);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+
+  const qs = searchParams.toString();
+  const url = `${API_BASE_URL}/financial/export${qs ? `?${qs}` : ""}`;
+
+  const token = readStoredAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: err?.message ?? `Xuất báo cáo thất bại (${res.status})`,
+      };
+    }
+
+    const disposition = res.headers.get("content-disposition");
+    let filename =
+      params?.format === "xlsx"
+        ? "bao-cao-tai-chinh.xlsx"
+        : "bao-cao-tai-chinh.pdf";
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+
+    const blob = await res.blob();
+    if (typeof window !== "undefined") {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    return { success: true, filename };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: message || "Không thể kết nối đến máy chủ để tải báo cáo.",
+    };
+  }
+}
+
 // ---------- Asset maintenance API functions ----------
 
 export type AssetNeedingProcessing = {
