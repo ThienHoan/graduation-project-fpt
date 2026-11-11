@@ -4,19 +4,45 @@ import {
   Param,
   ParseUUIDPipe,
   Query,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { AuthenticatedUser } from "../auth/auth-user";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { FinancialService } from "./financial.service";
 import { FinancialQueryDto } from "./dto/financial-query.dto";
+import { FinancialExportQueryDto } from "./dto/financial-export-query.dto";
+
+interface RawResponse {
+  setHeader(name: string, value: string): void;
+  send(body: Buffer): void;
+}
 
 @Controller("financial")
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles("manager_owner", "admin")
 export class FinancialController {
   constructor(private readonly financialService: FinancialService) {}
+
+  /** GET /api/financial/export — Export financial report (PDF / XLSX) */
+  @Get("export")
+  async exportReport(
+    @Query() query: FinancialExportQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: RawResponse,
+  ) {
+    const actorName = user?.fullName || user?.email || "Quản lý Cổ Phục";
+    const result = await this.financialService.exportReport(query, actorName);
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    return res.send(result.buffer);
+  }
 
   /** GET /api/financial/summary — KPI cards data */
   @Get("summary")

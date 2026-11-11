@@ -13,6 +13,8 @@ import {
   markBookingPaid,
   createRefund,
   getDeliveryTrack,
+  downloadHandoverSlip,
+  downloadInspectionSlip,
   type BookingResponse,
   type StaffBookingResponse,
   type DeliveryTrackData,
@@ -31,6 +33,8 @@ import {
   Phone,
   Mail,
   AlertTriangle,
+  Printer,
+  ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -114,6 +118,40 @@ export default function StaffBookingDetailPage() {
   const [refundBankAccount, setRefundBankAccount] = useState("");
   const [refundBankHolder, setRefundBankHolder] = useState("");
   const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
+  const [isExportingSlip, setIsExportingSlip] = useState(false);
+  const [isExportingInspection, setIsExportingInspection] = useState(false);
+
+  async function handlePrintSlip() {
+    if (!booking) return;
+    setIsExportingSlip(true);
+    try {
+      const res = await downloadHandoverSlip(booking.id);
+      if (!res.success) {
+        showToast("error", res.error ?? "Không thể in phiếu.");
+      }
+    } catch {
+      showToast("error", "Lỗi kết nối khi tải phiếu.");
+    } finally {
+      setIsExportingSlip(false);
+    }
+  }
+
+  async function handlePrintInspection() {
+    if (!booking) return;
+    setIsExportingInspection(true);
+    try {
+      const res = await downloadInspectionSlip(booking.id);
+      if (!res.success) {
+        showToast("error", res.error ?? "Không thể in biên bản kiểm tra.");
+      } else {
+        showToast("success", `Đã tải xuống biên bản kiểm tra: ${res.filename}`);
+      }
+    } catch {
+      showToast("error", "Lỗi kết nối khi tải biên bản kiểm tra.");
+    } finally {
+      setIsExportingInspection(false);
+    }
+  }
 
   useEffect(() => {
     if (!bookingId) return;
@@ -277,6 +315,37 @@ export default function StaffBookingDetailPage() {
   const s = STATUS_LABELS[booking.status] ?? { label: booking.status, color: "bg-stone-100 text-stone-600" };
   const actions = NEXT_ACTIONS[booking.status] ?? [];
   const isOverdue = booking.status === "overdue" || (booking.overdueDays ?? 0) > 0;
+  const canPrintSlip = Boolean(
+    booking &&
+      (booking.pickupMethod === "delivery"
+        ? [
+            "ready_for_pickup",
+            "delivering",
+            "renting",
+            "returned",
+            "inspection_pending",
+            "refund_pending",
+            "completed",
+          ].includes(booking.status)
+        : [
+            "renting",
+            "returned",
+            "inspection_pending",
+            "refund_pending",
+            "completed",
+          ].includes(booking.status) ||
+          booking.handover?.status === "CONFIRMED")
+  );
+  const canPrintInspection = Boolean(
+    booking &&
+      ([
+        "inspection_pending",
+        "refund_pending",
+        "completed",
+      ].includes(booking.status) ||
+        Boolean(booking.allAssignedAssetsInspected) ||
+        Number(booking.penaltyTotal ?? 0) > 0)
+  );
 
   return (
     <StaffPortalShell
@@ -357,9 +426,43 @@ export default function StaffBookingDetailPage() {
               {s.label}
             </span>
           </div>
-          <span className="text-xs text-stone-400">
-            Tạo lúc {formatDateTime(booking.createdAt)}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-stone-400">
+              Tạo lúc {formatDateTime(booking.createdAt)}
+            </span>
+            {canPrintSlip && (
+              <button
+                type="button"
+                onClick={handlePrintSlip}
+                disabled={isExportingSlip}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-lotus shadow-sm transition hover:bg-lotus/5 disabled:opacity-50"
+                title={booking.pickupMethod === "delivery" ? "In phiếu đóng gói và vận đơn giao hàng" : "In biên bản bàn giao trang phục tại quầy"}
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>
+                  {isExportingSlip
+                    ? "Đang tạo PDF..."
+                    : booking.pickupMethod === "delivery"
+                      ? "In Phiếu Vận Đơn"
+                      : "In Phiếu Bàn Giao"}
+                </span>
+              </button>
+            )}
+            {canPrintInspection && (
+              <button
+                type="button"
+                onClick={handlePrintInspection}
+                disabled={isExportingInspection}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 shadow-sm transition hover:bg-amber-100 disabled:opacity-50"
+                title="In biên bản kiểm tra & khấu trừ bồi thường hư hại (PDF)"
+              >
+                <ClipboardCheck className="h-3.5 w-3.5 text-amber-700" />
+                <span>
+                  {isExportingInspection ? "Đang xuất PDF..." : "In Biên Bản Kiểm Tra"}
+                </span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid gap-6 p-6 sm:grid-cols-2 lg:grid-cols-5">

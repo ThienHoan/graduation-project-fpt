@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import { ok } from "../../common/api-response";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -21,6 +21,11 @@ import { MarkPaidDto } from "./dto/mark-paid.dto";
 import { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
+
+interface RawResponse {
+  setHeader(name: string, value: string): void;
+  send(body: Buffer): void;
+}
 
 @Controller("bookings")
 export class BookingsController {
@@ -71,6 +76,23 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard)
   findOne(@CurrentUser() user: AuthenticatedUser, @Param("id", ParseUUIDPipe) id: string) {
     return this.bookingsService.findOne(user.id, id);
+  }
+
+  @Get(":id/export-handover-slip")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin", "customer")
+  async exportHandoverSlip(
+    @Param("id", ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: RawResponse,
+  ) {
+    const result = await this.bookingsService.exportHandoverSlip(id, user);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    return res.send(result.buffer);
   }
 
   @Get(":id/delivery-track")

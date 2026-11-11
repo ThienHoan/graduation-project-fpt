@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, ParseUUIDPipe } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UseGuards, ParseUUIDPipe } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -13,6 +13,11 @@ import { CompleteMaintenanceDto } from "./dto/maintenance.dto";
 import { OverridePenaltyDto } from "./dto/override-penalty.dto";
 import { UpdateDamageFeeTableDto } from "./dto/update-damage-fee-table.dto";
 import { InspectionsService } from "./inspections.service";
+
+interface RawResponse {
+  setHeader(name: string, value: string): void;
+  send(body: Buffer): void;
+}
 
 @Controller("inspections")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -130,6 +135,20 @@ export class InspectionsController {
   @Get(":id")
   findOne(@Param("id", ParseUUIDPipe) id: string) {
     return this.inspectionsService.findOne(id);
+  }
+
+  @Get(":id/export-slip")
+  async exportInspectionSlip(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Res() res: RawResponse,
+  ) {
+    const result = await this.inspectionsService.exportInspectionSlip(id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    return res.send(result.buffer);
   }
 
   @Post(":id/findings")

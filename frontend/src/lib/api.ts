@@ -882,6 +882,10 @@ export async function getBookingInspections(bookingId: string) {
   return apiRequest<InspectionSessionResponse[]>(`/inspections/booking/${bookingId}`);
 }
 
+export async function getInspectionSession(sessionId: string) {
+  return apiRequest<InspectionSessionResponse>(`/inspections/${sessionId}`);
+}
+
 export async function getCustomerBookingInspections(bookingId: string) {
   return apiRequest<InspectionSessionResponse[]>(`/inspections/customer/booking/${bookingId}`);
 }
@@ -1491,6 +1495,224 @@ export async function getFinancialTransactions(params?: FinancialQueryParams & {
 
 export async function getReconciliation(params?: FinancialQueryParams) {
   return apiRequest<ReconciliationResponse>(`/financial/reconciliation${buildFinancialQueryString(params)}`);
+}
+
+export type FinancialExportParams = FinancialQueryParams & {
+  format?: "pdf" | "xlsx";
+  from?: string;
+  to?: string;
+};
+
+export async function downloadFinancialReport(
+  params?: FinancialExportParams,
+): Promise<{ success: boolean; filename?: string; error?: string }> {
+  const searchParams = new URLSearchParams();
+  if (params?.format) searchParams.set("format", params.format);
+  if (params?.preset) searchParams.set("preset", params.preset);
+  if (params?.from) searchParams.set("from", params.from);
+  if (params?.to) searchParams.set("to", params.to);
+  if (params?.startDate) searchParams.set("startDate", params.startDate);
+  if (params?.endDate) searchParams.set("endDate", params.endDate);
+
+  const qs = searchParams.toString();
+  const url = `${API_BASE_URL}/financial/export${qs ? `?${qs}` : ""}`;
+
+  const token = readStoredAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: err?.message ?? `Xuất báo cáo thất bại (${res.status})`,
+      };
+    }
+
+    const disposition = res.headers.get("content-disposition");
+    let filename =
+      params?.format === "xlsx"
+        ? "bao-cao-tai-chinh.xlsx"
+        : "bao-cao-tai-chinh.pdf";
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+
+    const blob = await res.blob();
+    if (typeof window !== "undefined") {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    return { success: true, filename };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: message || "Không thể kết nối đến máy chủ để tải báo cáo.",
+    };
+  }
+}
+
+export async function downloadHandoverSlip(
+  bookingId: string,
+): Promise<{ success: boolean; filename?: string; error?: string }> {
+  const url = `${API_BASE_URL}/bookings/${bookingId}/export-handover-slip`;
+  const token = readStoredAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: err?.message ?? `Tải phiếu bàn giao thất bại (${res.status})`,
+      };
+    }
+
+    const disposition = res.headers.get("content-disposition");
+    let filename = `phieu-ban-giao-${bookingId.slice(0, 8)}.pdf`;
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+
+    const blob = await res.blob();
+    if (typeof window !== "undefined") {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    return { success: true, filename };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: message || "Không thể kết nối đến máy chủ để tải phiếu bàn giao.",
+    };
+  }
+}
+
+export async function downloadInspectionSlip(
+  inspectionId: string,
+): Promise<{ success: boolean; filename?: string; error?: string }> {
+  const url = `${API_BASE_URL}/inspections/${inspectionId}/export-slip`;
+  const token = readStoredAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: err?.message ?? `Tải biên bản kiểm tra thất bại (${res.status})`,
+      };
+    }
+
+    const disposition = res.headers.get("content-disposition");
+    let filename = `bien-ban-kiem-tra-${inspectionId.slice(0, 8)}.pdf`;
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+
+    const blob = await res.blob();
+    if (typeof window !== "undefined") {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    return { success: true, filename };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: message || "Không thể kết nối đến máy chủ để tải biên bản kiểm tra.",
+    };
+  }
+}
+
+export async function downloadAssetsInventoryReport(): Promise<{
+  success: boolean;
+  filename?: string;
+  error?: string;
+}> {
+  const url = `${API_BASE_URL}/garments/export-assets`;
+  const token = readStoredAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      return {
+        success: false,
+        error: err?.message ?? `Tải báo cáo kiểm kê thất bại (${res.status})`,
+      };
+    }
+
+    const disposition = res.headers.get("content-disposition");
+    const dateStr = new Date().toISOString().split("T")[0];
+    let filename = `Kiem_Ke_Kho_Hien_Vat_${dateStr}.xlsx`;
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      if (match?.[1]) filename = match[1];
+    }
+
+    const blob = await res.blob();
+    if (typeof window !== "undefined") {
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    }
+
+    return { success: true, filename };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: message || "Không thể kết nối đến máy chủ để tải báo cáo kiểm kê.",
+    };
+  }
 }
 
 // ---------- Asset maintenance API functions ----------

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BookingsExportService, type HandoverSlipData } from "./bookings-export.service";
 import { AppRole, AssetStatus, BookingStatus, InspectionStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -194,7 +195,12 @@ export class BookingsService {
     @Optional() private readonly returnReminderBuilder?: BookingReturnReminderBuilder,
     @Optional() private readonly returnReminderIdempotency?: ReturnReminderIdempotencyService,
     @Optional() private readonly emailAdapter?: BookingEmailAdapter,
+    @Optional() private readonly bookingsExportService?: BookingsExportService,
   ) { }
+
+  private get exportService(): BookingsExportService {
+    return this.bookingsExportService ?? new BookingsExportService();
+  }
 
   private get reminderBuilder(): BookingPickupReminderBuilder {
     return this.pickupReminderBuilder ?? new BookingPickupReminderBuilder();
@@ -3471,6 +3477,135 @@ export class BookingsService {
         conditionImages: row.conditionImages ?? row.condition_images ?? [],
       })),
     };
+  }
+
+  async exportHandoverSlip(id: string, user: AuthenticatedUser) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: {
+            garment_sizes: {
+              include: { garments: true },
+            },
+            garmentAsset: true,
+          },
+        },
+        accessoryItems: {
+          include: {
+            accessory: true,
+            accessoryAsset: true,
+          },
+        },
+        customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
+        deliveryAddress: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException("Đơn đặt không tồn tại.");
+    }
+
+    if (user.role === "customer" && booking.customerId !== user.id) {
+      throw new ForbiddenException("Bạn không có quyền truy cập đơn đặt này.");
+    }
+
+    const { days } = parseRentalDateRange(booking.rentalStartDate, booking.rentalEndDate);
+    const rentalDays = days;
+
+    const items = booking.items.map((it) => {
+      const dailyPrice = Number(it.dailyPrice ?? it.basePrice ?? 0);
+      const lineRentalTotal = dailyPrice > 0 ? dailyPrice * rentalDays : Number(it.basePrice ?? 0);
+      return {
+        id: it.id,
+        dailyPrice,
+        rentalDays,
+        rentalPrice: lineRentalTotal,
+        depositPrice: Number(it.depositAmount ?? 0),
+        garment: { name: it.garment_sizes?.garments?.name ?? "Trang phục cổ phục" },
+        size: it.garment_sizes ? { sizeLabel: it.garment_sizes.size_label } : null,
+        garmentAsset: it.garmentAsset ? { assetCode: it.garmentAsset.assetCode } : null,
+      };
+    });
+
+    const accessories = booking.accessoryItems.map((acc) => {
+      const unitPrice = Number(acc.unitPrice ?? 0);
+      const accRentalTotal = Number(acc.rentalTotal ?? (unitPrice > 0 ? unitPrice * (acc.quantity ?? 1) : 0));
+      return {
+        id: acc.id,
+        quantity: acc.quantity ?? 1,
+        unitPrice,
+        rentalPrice: accRentalTotal,
+        depositPrice: 0,
+        accessory: { name: acc.accessory?.name ?? "Phụ kiện" },
+        accessoryAsset: acc.accessoryAsset ? { assetCode: acc.accessoryAsset.asset_code } : null,
+      };
+    });
+
+    const calculatedSubtotal =
+      items.reduce((s, it) => s + it.rentalPrice, 0) +
+      accessories.reduce((s, a) => s + a.rentalPrice, 0);
+
+    const rawSubtotal = Number(booking.subtotal ?? 0);
+    const rentalTotal = Number(booking.rentalTotal ?? 0);
+    const shippingFee = Number(booking.shippingFee ?? 0);
+    let discountTotal = Number(booking.discountTotal ?? 0);
+
+    // Giá gốc niêm yết ban đầu (trước mọi ưu đãi/giảm giá theo ngày hay voucher)
+    // = Tổng (đơn giá ngày * số ngày thuê) của từng món
+    const originalSubtotal = Math.max(calculatedSubtotal, rawSubtotal, rentalTotal);
+
+    // Mức chiết khấu giảm giá thực tế (bao gồm voucher, giảm thành viên, hoặc chính sách ưu đãi ngày thuê)
+    const implicitDiscount = Math.max(0, originalSubtotal + shippingFee - rentalTotal);
+    if (implicitDiscount > discountTotal) {
+      discountTotal = implicitDiscount;
+    }
+
+    const subtotal = Math.max(originalSubtotal, rentalTotal + discountTotal - shippingFee);
+
+    // Xác định tên lý do/chính sách ưu đãi
+    let discountReason: string | null = null;
+    if (booking.voucherCode) {
+      discountReason = `Mã voucher: ${booking.voucherCode}`;
+    } else if (booking.items.some((it) => it.appliedPriceRule)) {
+      discountReason = "Ưu đãi chính sách giá thuê theo ngày";
+    } else if (booking.note && booking.note.includes("Ưu đãi thành viên")) {
+      const match = booking.note.match(/Ưu đãi thành viên[^:\n]*/);
+      discountReason = match ? match[0] : "Ưu đãi khách hàng thân thiết";
+    } else if (discountTotal > 0) {
+      discountReason = "Ưu đãi giảm giá ngày thuê";
+    }
+
+    const handoverData: HandoverSlipData = {
+      id: booking.id,
+      status: booking.status,
+      pickupMethod: booking.pickupMethod,
+      rentalStartDate: booking.rentalStartDate,
+      rentalEndDate: booking.rentalEndDate,
+      rentalDays,
+      subtotal,
+      discountTotal,
+      shippingFee,
+      rentalTotal,
+      depositTotal: Number(booking.depositTotal),
+      voucherCode: booking.voucherCode,
+      discountReason,
+      paymentMethod: booking.paymentMethod,
+      customer: {
+        email: booking.customer.email,
+        profile: booking.customer.profile,
+      },
+      deliveryAddress: booking.deliveryAddress,
+      handover: this.serializeHandover(booking),
+      items,
+      accessories,
+    };
+
+    const buffer = await this.exportService.generateHandoverSlip(handoverData);
+    const prefix = booking.pickupMethod === "delivery" ? "van-don-giao-hang" : "phieu-ban-giao";
+    const filename = `${prefix}-${booking.id.slice(0, 8)}.pdf`;
+
+    return { buffer, filename };
   }
 }
 

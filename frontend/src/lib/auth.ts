@@ -109,7 +109,10 @@ function normalizeStoredSession(value: unknown): AuthSession | null {
   };
 }
 
-function readSessionFromStorage(storage: Storage) {
+function readSessionFromStorage(storage?: Storage) {
+  if (!storage) {
+    return null;
+  }
   const rawValue = storage.getItem(AUTH_SESSION_STORAGE_KEY);
   if (!rawValue) {
     return null;
@@ -122,7 +125,10 @@ function readSessionFromStorage(storage: Storage) {
   }
 }
 
-function readLegacySession(storage: Storage): AuthSession | null {
+function readLegacySession(storage?: Storage): AuthSession | null {
+  if (!storage) {
+    return null;
+  }
   const accessToken = storage.getItem(LEGACY_ACCESS_TOKEN_KEY);
   const role = storage.getItem(LEGACY_ROLE_KEY);
 

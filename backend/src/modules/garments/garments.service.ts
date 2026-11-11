@@ -16,6 +16,11 @@ import type { CreateGarmentAccessoryDto } from "./dto/create-garment-accessory.d
 import type { UpdateGarmentAccessoryDto } from "./dto/update-garment-accessory.dto";
 import { normalizeStringArray, type GarmentMeasurementsDto } from "./dto/garment-details.dto";
 import { RedisService } from "../redis/redis.service";
+import {
+  GarmentsExportService,
+  type GarmentAssetExportItem,
+  type GarmentCatalogExportItem,
+} from "./garments-export.service";
 
 type GarmentWithCategory = {
   id: string;
@@ -40,6 +45,7 @@ export class GarmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redisService?: RedisService,
+    private readonly garmentsExportService?: GarmentsExportService,
   ) { }
 
   async findAll(includeDeleted = false) {
@@ -915,6 +921,147 @@ export class GarmentsService {
       .slice(0, limit);
 
     return ok(scored);
+  }
+
+  // ── Inventory Excel Export ──────────────────────────────────────────────────
+
+  async exportAssetsExcel(actorName?: string): Promise<{ filename: string; buffer: Buffer }> {
+    const [assets, garments] = await Promise.all([
+      this.prisma.garmentAsset.findMany({
+        include: {
+          garment: {
+            include: {
+              category: {
+                select: { name: true },
+              },
+            },
+          },
+          garment_sizes: {
+            select: {
+              size_label: true,
+              daily_price: true,
+              deposit_amount: true,
+            },
+          },
+          _count: {
+            select: { bookingItems: true },
+          },
+        },
+        orderBy: { assetCode: "asc" },
+      }),
+      this.prisma.garment.findMany({
+        where: { deletedAt: null },
+        include: {
+          category: { select: { name: true } },
+          garment_sizes: {
+            select: {
+              size_label: true,
+              daily_price: true,
+              deposit_amount: true,
+            },
+            orderBy: { size_label: "asc" },
+          },
+          assets: {
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+          _count: {
+            select: {
+              bookingItems: true,
+              assets: true,
+            },
+          },
+        },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+
+    const items: GarmentAssetExportItem[] = assets.map((a) => ({
+      id: a.id,
+      assetCode: a.assetCode,
+      garmentName: a.garment?.name ?? "Trang phục không xác định",
+      categoryName: a.garment?.category?.name ?? null,
+      sizeLabel: a.garment_sizes?.size_label ?? null,
+      status: a.status,
+      purchaseCost: a.purchaseCost ? Number(a.purchaseCost) : 0,
+      dailyPrice: a.garment_sizes?.daily_price ? Number(a.garment_sizes.daily_price) : 0,
+      depositAmount: a.garment_sizes?.deposit_amount ? Number(a.garment_sizes.deposit_amount) : 0,
+      conditionNote: a.conditionNote,
+      rentalCount: a._count?.bookingItems ?? 0,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    }));
+
+    const catalogs: GarmentCatalogExportItem[] = garments.map((g) => {
+      const sizes = g.garment_sizes ?? [];
+      const sizeLabels = sizes.map((s) => s.size_label).filter(Boolean);
+      const sizesSummary = sizeLabels.length > 0 ? sizeLabels.join(", ") : "-";
+
+      const dailyPrices = sizes
+        .map((s) => (s.daily_price ? Number(s.daily_price) : 0))
+        .filter((p) => p > 0);
+      const deposits = sizes
+        .map((s) => (s.deposit_amount ? Number(s.deposit_amount) : 0))
+        .filter((d) => d > 0);
+
+      const dailyPriceMin = dailyPrices.length > 0 ? Math.min(...dailyPrices) : 0;
+      const dailyPriceMax = dailyPrices.length > 0 ? Math.max(...dailyPrices) : 0;
+      const depositAmountMin = deposits.length > 0 ? Math.min(...deposits) : 0;
+      const depositAmountMax = deposits.length > 0 ? Math.max(...deposits) : 0;
+
+      const assetsList = g.assets ?? [];
+      const totalAssets = g._count?.assets ?? assetsList.length;
+      const availableAssets = assetsList.filter(
+        (a) => a.status === "available" || a.status === "cleaned",
+      ).length;
+      const rentedAssets = assetsList.filter((a) => a.status === "rented").length;
+      const maintenanceAssets = assetsList.filter(
+        (a) =>
+          a.status === "laundry" ||
+          a.status === "maintenance" ||
+          a.status === "damaged" ||
+          a.status === "inspection_pending",
+      ).length;
+
+      const materialStr =
+        Array.isArray(g.material) && g.material.length > 0
+          ? g.material.join(", ")
+          : null;
+
+      return {
+        id: g.id,
+        name: g.name,
+        categoryName: g.category?.name ?? null,
+        color: g.color ?? null,
+        material: materialStr,
+        sizesSummary,
+        dailyPriceMin,
+        dailyPriceMax,
+        depositAmountMin,
+        depositAmountMax,
+        totalAssets,
+        availableAssets,
+        rentedAssets,
+        maintenanceAssets,
+        rentalCount: g._count?.bookingItems ?? 0,
+      };
+    });
+
+    const exportService = this.garmentsExportService ?? new GarmentsExportService();
+    const now = new Date();
+    const buffer = await exportService.generateAssetsExcel({
+      items,
+      catalogs,
+      generatedAt: now,
+      actorName: actorName ?? "Quản lý Cổ Phục",
+    });
+
+    const dateStr = now.toISOString().split("T")[0];
+    const filename = `Kiem_Ke_Kho_Hien_Vat_${dateStr}.xlsx`;
+
+    return { filename, buffer };
   }
 
   // ── Serialization ──────────────────────────────────────────────────────────

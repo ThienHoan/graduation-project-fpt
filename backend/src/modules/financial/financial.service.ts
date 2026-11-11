@@ -3,12 +3,23 @@ import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { FinancialQueryDto } from "./dto/financial-query.dto";
+import type { FinancialExportQueryDto } from "./dto/financial-export-query.dto";
+import {
+  FinancialExportService,
+  type FinancialExportData,
+  type FinancialExportPaymentMethodItem,
+  type FinancialExportTransactionItem,
+  type FinancialExportDepositItem,
+} from "./financial-export.service";
 
 type DateRange = { gte: Date; lte: Date };
 
 @Injectable()
 export class FinancialService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financialExportService?: FinancialExportService,
+  ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Financial Summary API
@@ -831,5 +842,142 @@ export class FinancialService {
     if (rawType.startsWith("refund")) return "REFUND";
     if (rawType.startsWith("penalty")) return "DAMAGE_DEDUCTION";
     return map[rawType] ?? rawType.toUpperCase();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Export Report API (PDF / Excel)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async exportReport(query: FinancialExportQueryDto, actorName?: string) {
+    const exportService = this.financialExportService ?? new FinancialExportService();
+    const startDate = query.getStartDate();
+    const endDate = query.getEndDate();
+
+    const queryForData: FinancialQueryDto = {
+      preset: query.preset ?? (startDate && endDate ? "custom" : "this_month"),
+      startDate,
+      endDate,
+    };
+    const range = this.buildDateRange(queryForData);
+
+    const txWhere: Prisma.FinancialTransactionWhereInput = {
+      transactionType: {
+        notIn: ["refund_cash_pending", "refund_bank_transfer_pending", "refund_rejected"],
+      },
+    };
+    if (range) {
+      txWhere.createdAt = { gte: range.gte, lte: range.lte };
+    }
+
+    const [summaryRes, revenueRes, reconRes, methodRes, depositsRes, txItems] = await Promise.all([
+      this.getSummary(queryForData),
+      this.getRevenueByDay(queryForData),
+      this.getReconciliation(queryForData),
+      this.getRevenueByPaymentMethod(queryForData),
+      this.getDeposits(queryForData),
+      this.prisma.financialTransaction.findMany({
+        where: txWhere,
+        orderBy: { createdAt: "desc" },
+        take: 3000,
+        include: {
+          booking: {
+            select: {
+              id: true,
+              paymentMethod: true,
+              customer: {
+                select: {
+                  email: true,
+                  profile: { select: { fullName: true, phone: true } },
+                },
+              },
+            },
+          },
+          payment: { select: { id: true, paymentMethod: true, status: true } },
+          refund: { select: { id: true, status: true, refund_method: true, processed_by: true } },
+          penalty: { select: { id: true, reason: true, createdBy: true } },
+        },
+      }),
+    ]);
+
+    let dateLabel = "Toàn thời gian";
+    if (startDate && endDate) {
+      dateLabel = `Từ ${startDate} đến ${endDate}`;
+    } else if (query.preset === "today") {
+      dateLabel = `Hôm nay (${new Date().toLocaleDateString("vi-VN")})`;
+    } else if (query.preset === "this_month") {
+      const now = new Date();
+      dateLabel = `Tháng ${now.getMonth() + 1}/${now.getFullYear()}`;
+    } else if (query.preset === "this_year") {
+      dateLabel = `Năm ${new Date().getFullYear()}`;
+    }
+
+    const paymentMethods: FinancialExportPaymentMethodItem[] = (methodRes.data ?? []).map((m: any) => ({
+      method: m.paymentMethod,
+      transactionCount: m.transactionCount,
+      rentalRevenue: m.rentalRevenue,
+      depositReceived: m.depositReceived,
+      refundedAmount: m.refundedAmount ?? 0,
+      netRevenue: m.rentalRevenue + m.depositReceived - (m.refundedAmount ?? 0),
+    }));
+
+    const transactions: FinancialExportTransactionItem[] = txItems.map((tx) => ({
+      id: tx.id,
+      bookingId: tx.bookingId,
+      customerName:
+        tx.booking?.customer?.profile?.fullName ?? tx.booking?.customer?.email ?? null,
+      customerPhone: tx.booking?.customer?.profile?.phone ?? null,
+      type: this.mapTransactionType(tx.transactionType),
+      rawType: tx.transactionType,
+      amount: Number(tx.amount),
+      method: tx.refund?.refund_method ?? tx.payment?.paymentMethod ?? tx.booking?.paymentMethod ?? "cash",
+      status: tx.refund?.status ?? tx.payment?.status ?? "completed",
+      note: tx.note,
+      createdAt: tx.createdAt,
+      processedBy: tx.refund?.processed_by ?? tx.penalty?.createdBy ?? null,
+    }));
+
+    const depositReconciliation: FinancialExportDepositItem[] = (depositsRes.data ?? []).map((d: any) => ({
+      bookingId: d.bookingId,
+      customerName: d.customerName,
+      customerPhone: d.customerPhone,
+      status: d.status,
+      depositTotal: d.originalDeposit,
+      damageDeduction: d.damageDeduction,
+      refundedAmount: d.refundedAmount,
+      depositHeld: d.remainingAmount,
+      refundMethod: d.refunds?.[0]?.refundMethod ?? null,
+      settledAt: d.refunds?.[0]?.updatedAt ?? d.updatedAt,
+    }));
+
+    const exportData: FinancialExportData = {
+      dateLabel,
+      summary: summaryRes.data!,
+      revenueByDay: revenueRes.data!,
+      paymentMethods,
+      transactions,
+      depositReconciliation,
+      reconciliation: reconRes.data,
+      actorName,
+    };
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fromLabel = startDate ?? (query.preset ?? "all");
+    const toLabel = endDate ?? stamp;
+
+    if (query.format === "xlsx") {
+      const buffer = await exportService.generateExcelReport(exportData);
+      return {
+        buffer,
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename: `bao-cao-tai-chinh-${fromLabel}-${toLabel}.xlsx`,
+      };
+    }
+
+    const buffer = await exportService.generatePdfReport(exportData);
+    return {
+      buffer,
+      contentType: "application/pdf",
+      filename: `bao-cao-tai-chinh-${fromLabel}-${toLabel}.pdf`,
+    };
   }
 }
