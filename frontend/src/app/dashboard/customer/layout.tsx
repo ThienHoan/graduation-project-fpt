@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ProtectedPage } from "@/components/auth/protected-page";
 import { useAuth } from "@/components/auth/auth-provider";
 import { CustomerNavbar } from "@/components/customer/navbar";
 import { CustomerFooter } from "@/components/customer/footer";
+import { getMyIncidents } from "@/lib/api";
 import {
+  AlertTriangle,
   Calendar,
   Bell,
   Sparkles,
@@ -19,8 +21,11 @@ import {
   Award,
 } from "lucide-react";
 
+const INCIDENT_HREF = "/dashboard/customer/incidents";
+
 const navItems = [
   { href: "/dashboard/customer", label: "Đơn thuê", icon: Calendar },
+  { href: INCIDENT_HREF, label: "Sự cố", icon: AlertTriangle },
   { href: "/dashboard/customer/loyalty", label: "Điểm thưởng", icon: Award },
   { href: "/dashboard/customer/notifications", label: "Thông báo", icon: Bell },
   { href: "/try-on", label: "Thử đồ AI", icon: Sparkles },
@@ -33,6 +38,20 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
   const pathname = usePathname();
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const [incidentCount, setIncidentCount] = useState(0);
+
+  // Badge cạnh tab "Sự cố" = số ĐƠN đang có sự cố. Tải lại mỗi lần đổi trang
+  // (đặc biệt khi quay về từ cổng PayOS) để không hiện số cũ.
+  useEffect(() => {
+    let active = true;
+    void getMyIncidents().then((res) => {
+      if (!active) return;
+      setIncidentCount(res.success && res.data ? res.data.count : 0);
+    });
+    return () => {
+      active = false;
+    };
+  }, [pathname]);
 
   const displayName = user?.fullName ?? user?.email ?? "Khách hàng";
   const userInitial = displayName.charAt(0).toUpperCase();
@@ -76,7 +95,11 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
             <nav className="flex flex-1 flex-col gap-1.5">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href || (item.href !== "/dashboard/customer" && pathname.startsWith(item.href));
+                const isIncidentRoute = pathname.startsWith("/booking/incidents");
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/dashboard/customer" && pathname.startsWith(item.href)) ||
+                  (item.href === INCIDENT_HREF && isIncidentRoute);
                 return (
                   <Link
                     key={item.href}
@@ -88,7 +111,15 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
                     }
                   >
                     <Icon className={`h-4 w-4 ${isActive ? "text-lotus" : "text-stone-400"}`} />
-                    <span>{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.href === INCIDENT_HREF && incidentCount > 0 ? (
+                      <span
+                        className="ml-auto shrink-0 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold leading-none text-white"
+                        aria-label={`${incidentCount} đơn đang có sự cố`}
+                      >
+                        {incidentCount}
+                      </span>
+                    ) : null}
                   </Link>
                 );
               })}
@@ -113,9 +144,13 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
 
         {/* Mobile Bottom Navigation */}
         <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 border-t border-sand bg-white/95 backdrop-blur-md md:hidden">
-          {navItems.slice(0, 5).map((item) => {
+          {navItems.slice(0, 6).map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href || (item.href !== "/dashboard/customer" && pathname.startsWith(item.href));
+            const isIncidentRoute = pathname.startsWith("/booking/incidents");
+            const isActive =
+              pathname === item.href ||
+              (item.href !== "/dashboard/customer" && pathname.startsWith(item.href)) ||
+              (item.href === INCIDENT_HREF && isIncidentRoute);
             return (
               <Link
                 key={item.href}
@@ -124,7 +159,14 @@ export default function CustomerDashboardLayout({ children }: { children: ReactN
                   isActive ? "text-lotus font-semibold" : "text-stone-500 hover:text-stone-800"
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <span className="relative">
+                  <Icon className="h-4 w-4" />
+                  {item.href === INCIDENT_HREF && incidentCount > 0 ? (
+                    <span className="absolute -right-2 -top-1.5 rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-tight text-white">
+                      {incidentCount}
+                    </span>
+                  ) : null}
+                </span>
                 <span className="text-[10px]">{item.label}</span>
               </Link>
             );

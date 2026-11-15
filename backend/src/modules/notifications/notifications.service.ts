@@ -135,6 +135,13 @@ const DEFAULT_TEMPLATES: NotificationTemplateMap = {
     channels: ["inApp"],
     enabled: true,
   },
+  "booking.staff.payment_unmatched": {
+    subject: "Có khoản tiền về muộn cần xử lý",
+    title: "Tiền về sau khi giao dịch đã đóng",
+    body: "Đơn #{{bookingCode}} có khoản {{amount}} (mã giao dịch {{orderCode}}) về sau khi liên kết thanh toán đã hủy/hết hạn. Vui lòng kiểm tra và hoàn tiền thủ công.",
+    channels: ["inApp"],
+    enabled: true,
+  },
   "booking.asset_issue": {
     subject: "Trang phục trong đơn thuê của bạn gặp sự cố",
     title: "Cần đổi trang phục",
@@ -210,6 +217,50 @@ const DEFAULT_TEMPLATES: NotificationTemplateMap = {
     title: "Gán tài sản thành công",
     body: "Đã gán {{assetCode}} vào đơn #{{bookingCode}} ({{garmentName}}).",
     channels: ["inApp"],
+    enabled: true,
+  },
+  "booking.incident_action_required": {
+    subject: "Trang phục trong đơn thuê của bạn cần thay",
+    title: "Cần xử lý trang phục trong đơn",
+    body: "Rất tiếc, {{garmentName}} trong đơn #{{bookingCode}} (nhận ngày {{startDate}}) vừa gặp sự cố. Bấm vào thông báo để chọn đổi mẫu, bỏ món hoặc hủy đơn. {{note}}",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "booking.staff.incident_open": {
+    subject: "Có sự cố trang phục cần xử lý",
+    title: "Sự cố trang phục mới",
+    body: "Đơn #{{bookingCode}} ({{garmentName}}, nhận ngày {{startDate}}) có món không chuẩn bị được ({{reason}}). Mở trang sự cố để xử lý.",
+    channels: ["inApp"],
+    enabled: true,
+  },
+  "booking.incident_resolved": {
+    subject: "Sự cố trang phục đã được xử lý",
+    title: "Đã xử lý sự cố trang phục",
+    body: "Sự cố với {{garmentName}} trong đơn #{{bookingCode}} đã được xử lý xong.",
+    channels: ["inApp"],
+    enabled: true,
+  },
+  // Email HTML do server dựng (preview + gửi) — subject lấy từ dữ liệu đã kiểm
+  // soát, body không dùng vì `data.html` được ưu tiên trong `sendEmail`.
+  "booking.incident_proposal_email": {
+    subject: "{{emailSubject}}",
+    title: "Đề xuất đổi mẫu",
+    body: "Đề xuất đổi mẫu cho đơn #{{bookingCode}}.",
+    channels: ["email"],
+    enabled: true,
+  },
+  "booking.incident_removed_email": {
+    subject: "{{emailSubject}}",
+    title: "Cập nhật đơn sau khi bỏ món",
+    body: "Đơn #{{bookingCode}} đã được cập nhật sau khi bỏ món.",
+    channels: ["email"],
+    enabled: true,
+  },
+  "booking.incident_cancelled_email": {
+    subject: "{{emailSubject}}",
+    title: "Đơn thuê đã bị huỷ",
+    body: "Đơn #{{bookingCode}} đã bị huỷ.",
+    channels: ["email"],
     enabled: true,
   },
   "refund.approved": {
@@ -415,6 +466,7 @@ export class NotificationsService {
     data?: Record<string, unknown>;
     persistInApp?: boolean;
     channels?: NotificationChannel[];
+    linkUrl?: string | null;
   }) {
     const templates = await this.loadTemplates();
     const template = templates[input.templateKey] ?? this.fallbackTemplate(input.templateKey);
@@ -424,7 +476,10 @@ export class NotificationsService {
           select: { id: true, email: true, profile: { select: { fullName: true } } },
         })
       : null;
-    const data = this.composeTemplateData(user, input.templateKey, input.data ?? {});
+    // Chỉ nhận đường dẫn tương đối do server sinh (chặn open-redirect/XSS). Không nhận
+    // URL tuyệt đối, protocol-relative "//host" hay "javascript:".
+    const linkUrl = this.safeLinkUrl(input.linkUrl);
+    const data = this.composeTemplateData(user, input.templateKey, { ...(input.data ?? {}), linkUrl });
     const preferences = input.userId ? await this.loadPreferences(input.userId) : DEFAULT_PREFERENCES;
     const requestedChannels = input.channels ?? template.channels ?? DEFAULT_CHANNELS;
     const activeChannels = requestedChannels.filter((channel) => {
@@ -441,6 +496,7 @@ export class NotificationsService {
           userId: input.userId,
           title: this.render(template.title, data),
           body: this.render(template.body, data),
+          linkUrl,
         },
       });
       // Emit sau khi row đã ghi xong: frontend chỉ dùng event làm tín hiệu refetch.
@@ -484,7 +540,7 @@ export class NotificationsService {
 
   async sendBookingNotification(input: {
     userId: string;
-    templateKey: "booking.created" | "booking.status_changed" | "booking.payment_received" | "booking.cancelled" | "booking.pickup_reminder" | "booking.return_reminder" | "booking.review_invite" | "booking.asset_issue" | "booking.extension_applied" | "booking.extension_expired" | "booking.overdue";
+    templateKey: "booking.created" | "booking.status_changed" | "booking.payment_received" | "booking.cancelled" | "booking.pickup_reminder" | "booking.return_reminder" | "booking.review_invite" | "booking.asset_issue" | "booking.extension_applied" | "booking.extension_expired" | "booking.overdue" | "booking.incident_action_required" | "booking.incident_resolved" | "booking.incident_proposal_email" | "booking.incident_removed_email" | "booking.incident_cancelled_email";
     bookingId: string;
     garmentName?: string | null;
     startDate?: string;
@@ -494,11 +550,13 @@ export class NotificationsService {
     amount?: string | number;
     overdueDays?: number;
     html?: string | null;
+    linkUrl?: string | null;
   }) {
     const bookingCode = input.bookingId.slice(0, 8).toUpperCase();
     return this.notifyUser({
       userId: input.userId,
       templateKey: input.templateKey,
+      linkUrl: input.linkUrl ?? null,
       data: {
         bookingId: input.bookingId,
         bookingCode,
@@ -519,6 +577,7 @@ export class NotificationsService {
     templateKey: string;
     data?: Record<string, unknown>;
     channels?: NotificationChannel[];
+    linkUrl?: string | null;
   }) {
     const recipients = await this.prisma.userAccount.findMany({
       where: { role: { in: input.roles }, isActive: true },
@@ -532,6 +591,7 @@ export class NotificationsService {
           templateKey: input.templateKey,
           data: input.data,
           channels: input.channels,
+          linkUrl: input.linkUrl,
         }),
       ),
     );
@@ -540,7 +600,7 @@ export class NotificationsService {
   }
 
   async notifyStaffBooking(input: {
-    templateKey: "booking.staff.created" | "booking.staff.cancelled" | "booking.staff.paid" | "booking.staff.confirmed" | "booking.staff.asset_assigned" | "booking.staff.asset_unavailable" | "booking.staff.extension_refund";
+    templateKey: "booking.staff.created" | "booking.staff.cancelled" | "booking.staff.paid" | "booking.staff.confirmed" | "booking.staff.asset_assigned" | "booking.staff.asset_unavailable" | "booking.staff.extension_refund" | "booking.staff.incident_open" | "booking.staff.payment_unmatched";
     bookingId: string;
     customerName?: string | null;
     garmentName?: string | null;
@@ -550,11 +610,14 @@ export class NotificationsService {
     amount?: string | number;
     assetCode?: string | null;
     roles?: AppRole[];
+    linkUrl?: string | null;
+    extra?: Record<string, unknown>;
   }) {
     const bookingCode = input.bookingId.slice(0, 8).toUpperCase();
     return this.notifyRoles({
       roles: input.roles ?? [AppRole.staff, AppRole.manager_owner],
       templateKey: input.templateKey,
+      linkUrl: input.linkUrl ?? null,
       data: {
         bookingId: input.bookingId,
         bookingCode,
@@ -565,6 +628,7 @@ export class NotificationsService {
         note: input.note ?? null,
         amount: input.amount ?? null,
         assetCode: input.assetCode ?? null,
+        ...(input.extra ?? {}),
       },
     });
   }
@@ -712,7 +776,11 @@ export class NotificationsService {
     const htmlContent =
       typeof data.html === "string" && data.html.trim().length > 0
         ? data.html
-        : this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />"));
+        : this.wrapEmailHtml(
+            template.title,
+            this.render(template.body, data).replace(/\n/g, "<br />"),
+            typeof data.linkUrl === "string" ? data.linkUrl : null,
+          );
     const replyTo = settings.smtp.replyTo ? { email: settings.smtp.replyTo } : undefined;
 
     try {
@@ -834,7 +902,11 @@ export class NotificationsService {
         html:
           typeof data.html === "string" && data.html.trim().length > 0
             ? data.html
-            : this.wrapEmailHtml(template.title, this.render(template.body, data).replace(/\n/g, "<br />")),
+            : this.wrapEmailHtml(
+                template.title,
+                this.render(template.body, data).replace(/\n/g, "<br />"),
+                typeof data.linkUrl === "string" ? data.linkUrl : null,
+              ),
         replyTo: settings.smtp.replyTo ?? undefined,
       });
 
@@ -996,10 +1068,20 @@ export class NotificationsService {
       userId: notification.userId,
       title: notification.title,
       body: notification.body,
+      linkUrl: notification.linkUrl ?? null,
       readAt: notification.readAt?.toISOString() ?? null,
       createdAt: notification.createdAt.toISOString(),
       isRead: Boolean(notification.readAt),
     };
+  }
+
+  /** Chỉ giữ đường dẫn tương đối nội bộ ("/..."), chặn URL tuyệt đối, "//host" và scheme lạ. */
+  private safeLinkUrl(value: string | null | undefined): string | null {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return null;
+    if (/[\r\n]/.test(trimmed)) return null;
+    return trimmed;
   }
 
   private normalizeTemplate(
@@ -1057,7 +1139,23 @@ export class NotificationsService {
     });
   }
 
-  private wrapEmailHtml(title: string, body: string) {
+  /**
+   * Gốc URL công khai của web app để dựng liên kết tuyệt đối trong email. Lấy từ
+   * `FRONTEND_URL` (server deploy cấu hình domain thật) — KHÔNG hardcode localhost
+   * để link trong email mở đúng máy chủ đã triển khai.
+   */
+  private appBaseUrl() {
+    return (this.configService.get<string>("FRONTEND_URL") ?? "http://localhost:3000").split(",")[0]!.trim().replace(/\/+$/, "");
+  }
+
+  private wrapEmailHtml(title: string, body: string, linkUrl?: string | null) {
+    const safeLink = this.safeLinkUrl(linkUrl);
+    const href = safeLink ? this.escapeHtml(`${this.appBaseUrl()}${safeLink}`) : "";
+    const cta = safeLink
+      ? `<tr><td style="background: #ffffff; padding: 0 40px 8px; text-align: center;">
+              <a href="${href}" style="display:inline-block; background:#8B0000; color:#ffffff; text-decoration:none; font-size:15px; font-weight:700; padding:14px 28px; border-radius:12px;">Xem chi tiết đơn thuê</a>
+            </td></tr>`
+      : "";
     return `
 <!DOCTYPE html>
 <html lang="vi">
@@ -1107,6 +1205,7 @@ export class NotificationsService {
           </tr>
 
           <!-- CTA / INFO BOX -->
+          ${cta}
           <tr>
             <td style="background: #ffffff; padding: 0 40px 32px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -1155,6 +1254,15 @@ export class NotificationsService {
 </body>
 </html>
     `;
+  }
+
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   private hasSmtpEnv() {

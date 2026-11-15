@@ -9,6 +9,7 @@ import type { CreateRefundDto } from "./dto/create-refund.dto";
 import type { UpdateRefundDetailsDto } from "./dto/update-refund-details.dto";
 import type { UpdateRefundStatusDto } from "./dto/update-refund.dto";
 import { assertOwnedEvidenceUrl } from "../../common/validation/evidence-url";
+import { sumAccruedCredits, settleAccruedCredits } from "../../common/settlement/settlement.helper";
 
 const MUTABLE_REFUND_STATUSES: PaymentStatus[] = [PaymentStatus.pending, PaymentStatus.refunding];
 
@@ -33,7 +34,59 @@ export class RefundsService {
     if (!booking) throw new NotFoundException("Booking not found.");
     const depositTotal = Number(booking.depositTotal);
     const penaltyTotal = Number(booking.penaltyTotal);
-    return ok({ bookingId, depositTotal, penaltyTotal, refundAmount: Math.max(0, depositTotal - penaltyTotal) });
+
+    // Đơn đã huỷ/từ chối: số hoàn là toàn bộ tiền đã thực thu trừ phiếu hoàn đã
+    // tạo — KHÔNG dùng cọc − phạt (sẽ thiếu tiền thuê + credit đã void khi huỷ).
+    if (booking.status === BookingStatus.cancelled || booking.status === BookingStatus.rejected) {
+      const [paidPayments, coveringRefunds] = await Promise.all([
+        this.prisma.payment.findMany({ where: { bookingId, status: PaymentStatus.paid }, select: { amount: true } }),
+        this.prisma.refund.findMany({
+          where: {
+            bookingId,
+            status: { in: [PaymentStatus.pending, PaymentStatus.refunding, PaymentStatus.refunded, PaymentStatus.partially_refunded] },
+          },
+          select: { amount: true },
+        }),
+      ]);
+      const paidTotal = paidPayments.reduce((sum, row) => sum + Number(row.amount), 0);
+      const refundedTotal = coveringRefunds.reduce((sum, row) => sum + Number(row.amount), 0);
+      return ok({
+        bookingId,
+        depositTotal,
+        penaltyTotal,
+        refundAmount: Math.max(0, paidTotal - refundedTotal),
+      });
+    }
+
+    // Đơn có credit đổi mẫu/bỏ món còn treo thì số hoàn thực = cọc + credit − phạt.
+    const creditRows = await this.prisma.bookingAdjustment.findMany({
+      where: { bookingId, status: "accrued", direction: "credit" },
+      select: { amount: true },
+    });
+    const credits = creditRows.reduce((sum, row) => sum + Number(row.amount), 0);
+    return ok({
+      bookingId,
+      depositTotal,
+      penaltyTotal,
+      refundAmount: Math.max(0, depositTotal + credits - penaltyTotal),
+    });
+  }
+
+  /**
+   * Số tiền hoàn THỰC của đơn: cọc + credit đổi mẫu/bỏ món còn treo − phạt.
+   * Đơn không sự cố → credits = 0 ⇒ giữ nguyên `depositTotal − penaltyTotal`.
+   *
+   * Credit (§11) là phần khách đã trả thừa nhưng KHÔNG nằm trong `depositTotal` sau
+   * khi giảm đơn, nên bỏ qua credit sẽ hoàn thiếu đúng bằng phần giảm đó.
+   * Hàm này CHỈ tính — caller tự gọi `settleAccruedCredits` khi phiếu được DUYỆT
+   * (xong); không tất toán lúc tạo để phiếu bị từ chối/huỷ không làm mất credit.
+   */
+  private async refundDueAmount(
+    tx: Prisma.TransactionClient,
+    booking: { id: string; depositTotal: Prisma.Decimal | number; penaltyTotal: Prisma.Decimal | number },
+  ): Promise<number> {
+    const credits = Number(await sumAccruedCredits(tx, booking.id));
+    return Math.max(0, Number(booking.depositTotal) + credits - Number(booking.penaltyTotal));
   }
 
   async create(dto: CreateRefundDto, staffId: string) {
@@ -59,7 +112,9 @@ export class RefundsService {
         const trimmedBankDetails = this.trimBankDetails(dto);
         if (dto.refundMethod === "bank_transfer") this.assertBankDetails(trimmedBankDetails);
 
-        const amount = Math.max(0, Number(booking.depositTotal) - Number(booking.penaltyTotal));
+        // Credit (§11) cộng vào số hoàn thực = cọc + credit − phạt. Đơn không sự cố
+        // → credits = 0 nên giữ nguyên hành vi cũ.
+        const amount = await this.refundDueAmount(tx, booking);
         if (amount <= 0) throw new BadRequestException("Không có tiền cọc để hoàn lại.");
 
         const payment = this.pickAuthoritativePaidPayment(booking.payments);
@@ -81,6 +136,9 @@ export class RefundsService {
           },
         });
 
+        // Credit đổi mẫu/bỏ món (nếu có) nằm trong `amount` nhưng CHƯA tất toán ở đây —
+        // chỉ tất toán khi phiếu được duyệt (§11). Nếu staff từ chối/huỷ phiếu, credit
+        // vẫn còn treo để lần hoàn sau (kiểm tra lại / tạo lại phiếu) cộng đúng.
         const txType = isCash ? "refund_cash_pending" : "refund_bank_transfer_pending";
         await tx.financialTransaction.create({
           data: {
@@ -160,7 +218,7 @@ export class RefundsService {
         throw new BadRequestException("Chỉ đóng được đơn đang ở trạng thái chờ hoàn cọc.");
       }
 
-      const refundAmount = Number(booking.depositTotal) - Number(booking.penaltyTotal);
+      const refundAmount = await this.refundDueAmount(tx, booking);
       if (refundAmount > 0) throw new BadRequestException("Đơn vẫn còn tiền cọc phải hoàn — hãy tạo yêu cầu hoàn cọc.");
 
       const activeRefund = booking.refunds.find(
@@ -279,34 +337,32 @@ export class RefundsService {
       const liveRefundAmount = isCancellationRefund
         ? Number((await tx.payment.aggregate({ where: { bookingId: refund.bookingId, status: PaymentStatus.paid }, _sum: { amount: true } }))._sum.amount ?? 0) -
         Number((await tx.refund.aggregate({ where: { bookingId: refund.bookingId, id: { not: id }, status: { in: [PaymentStatus.pending, PaymentStatus.refunding, PaymentStatus.refunded, PaymentStatus.partially_refunded] } }, _sum: { amount: true } }))._sum.amount ?? 0)
-        : Math.max(0, Number(refund.booking.depositTotal) - Number(refund.booking.penaltyTotal));
+        : await this.refundDueAmount(tx, refund.booking);
       const frozenAmount = Number(refund.amount);
 
-      if (liveRefundAmount <= 0) {
-        const claimed = await tx.refund.updateMany({
+      if (isCancellationRefund) {
+        // Phiếu huỷ đơn: credit đã bị void trước khi hoàn toàn bộ tiền thực thu.
+        await settleAccruedCredits(tx, refund.bookingId, id);
+      } else if (Math.round(liveRefundAmount) !== Math.round(frozenAmount)) {
+        // Số tiền hoàn đã đổi (thường do phạt tăng sau khi tạo yêu cầu) → KHÔNG tự
+        // duyệt theo số cũ; huỷ phiếu và bắt tạo lại để ra đúng số tiền mới.
+        const stale = await tx.refund.updateMany({
           where: { id, status: { in: MUTABLE_REFUND_STATUSES } },
           data: { status: PaymentStatus.cancelled, processed_by: managerId, updated_at: new Date() },
         });
-        if (claimed.count !== 1) throw new ConflictException("Refund was already processed.");
+        if (stale.count !== 1) throw new ConflictException("Refund was already processed.");
         await tx.financialTransaction.create({
           data: {
             bookingId: refund.bookingId,
             refundId: id,
             transactionType: "refund_rejected",
             amount: 0,
-            note: "Tự động huỷ: phạt hiện tại đã bằng hoặc vượt tiền cọc, không còn gì để hoàn.",
+            note: "Tự động huỷ: số tiền hoàn đã thay đổi kể từ lúc tạo yêu cầu.",
           },
         });
         throw new BadRequestException(
-          "Tiền phạt của đơn đã tăng lên bằng hoặc vượt tiền cọc kể từ lúc tạo yêu cầu này — yêu cầu đã bị huỷ tự động. " +
-          "Vào màn Hoàn cọc của nhân viên và dùng nút \"Đóng đơn — không hoàn cọc\" để hoàn tất đơn.",
-        );
-      }
-
-      if (!isCancellationRefund && Math.round(liveRefundAmount) !== Math.round(frozenAmount)) {
-        throw new BadRequestException(
           `Số tiền hoàn đã thay đổi kể từ lúc tạo yêu cầu (lúc tạo: ${frozenAmount.toLocaleString("vi-VN")}đ, hiện tại: ${liveRefundAmount.toLocaleString("vi-VN")}đ) ` +
-          `do tiền phạt của đơn đã cập nhật. Vui lòng từ chối yêu cầu này rồi tạo lại yêu cầu hoàn cọc mới để lấy đúng số tiền.`,
+          "do tiền phạt của đơn đã cập nhật. Yêu cầu đã bị huỷ tự động — vào màn Hoàn cọc của nhân viên để tạo lại yêu cầu với đúng số tiền.",
         );
       }
 
@@ -332,6 +388,15 @@ export class RefundsService {
           note: dto.note ?? `Đã duyệt hoàn ${isCancellationRefund ? "tiền thực thu do hủy đơn" : "cọc"} ${isBankTransfer ? "chuyển khoản" : "tiền mặt"}.`,
         },
       });
+
+      // Tiền hoàn đã chốt sổ → credit đổi mẫu/bỏ món đã gộp vào phiếu này, tất toán
+      // để lần kiểm tra sau không cộng trùng.
+      if (
+        !isCancellationRefund &&
+        (dto.status === PaymentStatus.refunded || dto.status === PaymentStatus.partially_refunded)
+      ) {
+        await settleAccruedCredits(tx, refund.bookingId, id);
+      }
 
       if (
         !isCancellationRefund &&

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrismaService } from "./prisma.service";
 
@@ -61,7 +62,7 @@ describe("PrismaService.runSerializable", () => {
       .mockRejectedValueOnce(failures[2]);
 
     const result = service.runSerializable(async () => "unused");
-    const rejection = expect(result).rejects.toBe(failures[2]);
+    const rejection = expect(result).rejects.toBeInstanceOf(ConflictException);
     await vi.runAllTimersAsync();
 
     await rejection;

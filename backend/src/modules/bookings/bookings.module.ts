@@ -1,8 +1,9 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { GarmentsModule } from "../garments/garments.module";
 import { LocationsModule } from "../locations/locations.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { PaymentsModule } from "../payments/payments.module";
 import { PricingModule } from "../pricing/pricing.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { InspectionsModule } from "../inspections/inspections.module";
@@ -24,13 +25,17 @@ import { BookingsController } from "./bookings.controller";
 import { BookingsScheduler } from "./bookings.scheduler";
 import { BookingsService } from "./bookings.service";
 import { BookingsExportService } from "./bookings-export.service";
+import { BookingIncidentsService } from "./booking-incidents.service";
+import { BookingChangeRequestsService } from "./booking-change-requests.service";
 
 @Module({
-  imports: [AuthModule, NotificationsModule, LocationsModule, PricingModule, RealtimeModule, VouchersModule, InspectionsModule, GarmentsModule],
+  imports: [AuthModule, NotificationsModule, LocationsModule, PricingModule, RealtimeModule, VouchersModule, InspectionsModule, GarmentsModule, forwardRef(() => PaymentsModule)],
   controllers: [BookingsController, CustomerCareController],
   providers: [
     BookingsService,
     BookingsExportService,
+    BookingIncidentsService,
+    BookingChangeRequestsService,
     BookingAutomationService,
     BookingExtensionsService,
     BookingsScheduler,
@@ -48,6 +53,8 @@ import { BookingsExportService } from "./bookings-export.service";
   exports: [
     BookingsService,
     BookingsExportService,
+    BookingIncidentsService,
+    BookingChangeRequestsService,
     BookingExtensionsService,
     BookingPickupReminderBuilder,
     BookingReturnReminderBuilder,

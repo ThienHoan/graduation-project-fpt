@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, Inject, forwardRef } from "@nestjs/common";
 import { BookingsExportService, type HandoverSlipData } from "./bookings-export.service";
 import { AppRole, AssetStatus, BookingStatus, InspectionStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
@@ -19,12 +19,13 @@ import type { AssignAccessoryAssetDto } from "./dto/assign-accessory-asset.dto";
 import type { InspectBookingAccessoryDto } from "./dto/inspect-booking-accessory.dto";
 import type { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import type { MarkPaidDto } from "./dto/mark-paid.dto";
+import type { ManagerCancelDto } from "./dto/manager-cancel.dto";
 import type { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import type { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { loadSizeInventory, parseRentalDateRange, sizeAvailability, sizeAvailabilityCalendar, vietnamToday, loadAccessoryInventory, accessoryAvailability, RENTABLE_ASSET_STATUSES } from "./booking-inventory";
 import { AUTO_ASSIGN_LEAD_DAYS, AUTO_ASSIGNABLE_STATUSES, rankAssetCandidates } from "./booking-auto-assign";
-import { assertAccessoryAssetScheduleAvailable, assertAssetScheduleAvailable, claimBookingAssets, releaseBookingAssets, transitionBookingAssets } from "./booking-reservations";
+import { assertAccessoryAssetScheduleAvailable, assertAssetScheduleAvailable, cancelBookingTx, claimBookingAssets, closeOpenIncidentsTx, releaseBookingAssets, transitionBookingAssets, voidPendingCredits, STAFF_CANCELLABLE_STATUSES } from "./booking-reservations";
 import { readBookingDeliverySnapshot, serializeAddressSnapshot } from "./booking-delivery";
 import { BookingPickupReminderBuilder, type PickupStoreConfig } from "./booking-pickup-reminder.builder";
 import { BookingReturnReminderBuilder, type ReturnStoreConfig } from "./booking-return-reminder.builder";
@@ -34,6 +35,7 @@ import { BookingEmailAdapter } from "./email/booking-email.adapter";
 import { EmailTemplateBuilder } from "./email/email-templates.builder";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import { assertOwnedEvidenceUrls } from "../../common/validation/evidence-url";
+import { BookingIncidentsService } from "./booking-incidents.service";
 
 const BOOKING_STATUS_LABELS: Record<string, string> = {
   draft: "Nháp",
@@ -56,6 +58,14 @@ const BOOKING_STATUS_LABELS: Record<string, string> = {
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const VN_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Trạng thái phiếu hoàn được tính là "đã/đang hoàn" khi đối chiếu tiền thực thu. */
+const COVERING_REFUND_STATUSES: PaymentStatus[] = [
+  PaymentStatus.pending,
+  PaymentStatus.refunding,
+  PaymentStatus.refunded,
+  PaymentStatus.partially_refunded,
+];
 const OVERDUE_FEE_PER_DAY = 10_000;
 const OVERDUE_PENALTY_REASON = "Phí quá hạn trả đồ (10.000đ/ngày)";
 // Đơn thanh toán QR chỉ giữ size trong khoảng này nếu khách chưa trả tiền; quá hạn
@@ -196,10 +206,27 @@ export class BookingsService {
     @Optional() private readonly returnReminderIdempotency?: ReturnReminderIdempotencyService,
     @Optional() private readonly emailAdapter?: BookingEmailAdapter,
     @Optional() private readonly bookingsExportService?: BookingsExportService,
+    @Optional() @Inject(forwardRef(() => BookingIncidentsService)) private readonly incidents?: BookingIncidentsService,
   ) { }
 
   private get exportService(): BookingsExportService {
     return this.bookingsExportService ?? new BookingsExportService();
+  }
+
+  /**
+   * Kiểm tra sự cố ngay sau khi tạo/xác nhận/thanh toán đơn — NGOÀI transaction,
+   * lỗi chỉ log để không làm hỏng luồng chính. Không truyền `incidents` (test cũ,
+   * ngữ cảnh không liên quan) thì bỏ qua.
+   */
+  private async evaluateIncidentsQuietly(bookingId: string) {
+    if (!this.incidents) return;
+    try {
+      await this.incidents.evaluateBooking(bookingId);
+    } catch (error) {
+      this.logger.warn(
+        `Không quét được sự cố cho đơn ${bookingId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private get reminderBuilder(): BookingPickupReminderBuilder {
@@ -747,6 +774,8 @@ export class BookingsService {
       });
     }
 
+    await this.evaluateIncidentsQuietly(booking.id);
+
     return ok(this.serializeBooking(autoConfirmed ? { ...booking, status: BookingStatus.confirmed } : booking, days));
   }
 
@@ -890,24 +919,16 @@ export class BookingsService {
         throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
       }
 
-      await releaseBookingAssets(tx, id);
-      await ensureCancellationRefunds(tx, id, undefined, "Khách hàng tự hủy đơn");
-      const claimed = await tx.booking.updateMany({
-        where: { id, status: current.status },
-        data: { status: BookingStatus.cancelled },
+      const cancelled = await cancelBookingTx(tx, {
+        bookingId: id,
+        fromStatus: current.status,
+        actorId: undefined,
+        reason: "Khách hàng tự hủy đơn",
+        vouchers: this.vouchers,
       });
-      if (claimed.count !== 1) {
+      if (!cancelled) {
         throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
       }
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: id,
-          fromStatus: current.status,
-          toStatus: BookingStatus.cancelled,
-          note: "Khách hàng tự hủy đơn",
-        },
-      });
-      await this.vouchers?.releaseForBooking(tx, id);
       return tx.booking.findUniqueOrThrow({
         where: { id },
         include: {
@@ -959,6 +980,84 @@ export class BookingsService {
       status: BookingStatus.cancelled,
     });
     this.realtime.assetChanged({ bookingId: updated.id });
+
+    return ok(this.serializeBooking(updated));
+  }
+
+  /**
+   * §8.2 Manager/Admin hủy đơn TRƯỚC bàn giao
+   * (pending_confirmation → ready_for_pickup). Bắt buộc `reason`; chỉ khi đơn có
+   * sự cố đang mở (open/awaiting_customer/needs_manager).
+   * Dùng chung `cancelBookingTx` để void credit trước khi hoàn (§8.3).
+   */
+  async staffCancel(id: string, dto: ManagerCancelDto, actor: Pick<AuthenticatedUser, "id" | "role">) {
+    if (actor.role !== AppRole.manager_owner && actor.role !== AppRole.admin) {
+      throw new ForbiddenException("Chỉ quản lý được hủy đơn trước bàn giao.");
+    }
+    const reason = dto.reason?.trim();
+    if (!reason) throw new BadRequestException("Cần lý do hủy đơn.");
+
+    const prepared = await this.prisma.booking.findUnique({ where: { id }, select: { status: true, customerId: true } });
+    if (!prepared) throw new NotFoundException("Booking not found.");
+    if (!STAFF_CANCELLABLE_STATUSES.includes(prepared.status)) {
+      throw new BadRequestException("Chỉ hủy được đơn trước khi bàn giao (chờ xác nhận → sẵn sàng nhận).");
+    }
+    const openIncident = await this.prisma.bookingIncident.count({
+      where: { bookingId: id, status: { in: ["open", "awaiting_customer", "needs_manager"] } },
+    });
+    if (openIncident === 0) {
+      throw new BadRequestException("Chỉ hủy đơn trước bàn giao khi đơn có sự cố đang mở.");
+    }
+
+    const updated = await this.prisma.runSerializable(async (tx) => {
+      const current = await tx.booking.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException("Booking not found.");
+      if (!STAFF_CANCELLABLE_STATUSES.includes(current.status)) {
+        throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
+      }
+
+      const cancelled = await cancelBookingTx(tx, {
+        bookingId: id,
+        fromStatus: current.status,
+        actorId: actor.id,
+        reason,
+        vouchers: this.vouchers,
+      });
+      if (!cancelled) throw new ConflictException("Booking đã được xử lý bởi một thao tác khác.");
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: "booking.staff.cancelled",
+          entityType: "booking",
+          entityId: id,
+          metadata: { reason, fromStatus: current.status } as Prisma.InputJsonValue,
+        },
+      });
+
+      return tx.booking.findUniqueOrThrow({
+        where: { id },
+        include: {
+          items: { include: { garment_sizes: { include: { garments: true } }, garmentAsset: true } },
+          payments: true,
+          deliveryRecords: { orderBy: { createdAt: "desc" } },
+        },
+      });
+    });
+
+    await this.notificationsService.sendBookingNotification({
+      userId: updated.customerId,
+      templateKey: "booking.cancelled",
+      bookingId: updated.id,
+      garmentName: updated.items[0]?.garment_sizes?.garments?.name ?? null,
+      startDate: updated.rentalStartDate.toISOString().slice(0, 10),
+      endDate: updated.rentalEndDate.toISOString().slice(0, 10),
+      note: reason,
+    });
+
+    this.realtime.bookingChanged({ id: updated.id, bookingId: updated.id, status: BookingStatus.cancelled });
+    this.realtime.assetChanged({ bookingId: updated.id });
+    this.realtime.bookingChangedForCustomer(updated.customerId, { id: updated.id, bookingId: updated.id, status: BookingStatus.cancelled });
 
     return ok(this.serializeBooking(updated));
   }
@@ -1548,18 +1647,38 @@ export class BookingsService {
           },
         },
         customer: { select: { profile: { select: { fullName: true, phone: true } }, email: true } },
-        payments: { where: { status: PaymentStatus.paid }, take: 1 },
-        refunds: { orderBy: { createdAt: "desc" }, take: 1 },
+        payments: { where: { status: PaymentStatus.paid }, select: { amount: true, paymentMethod: true, status: true } },
+        refunds: { orderBy: { createdAt: "desc" } },
         deliveryRecords: { orderBy: { createdAt: "desc" } },
         inspections: {
           where: { status: InspectionStatus.completed },
           select: { garmentAssetId: true },
+        },
+        // Credit đổi mẫu/bỏ món còn treo — cộng vào số hoàn cọc (§11) để trang
+        // staff hiện đúng con số manager sẽ duyệt (`refund.amount`).
+        adjustments: {
+          where: { status: "accrued", direction: "credit" },
+          select: { amount: true },
         },
       },
     });
     return ok(bookings.map((b) => ({
       ...this.serializeStaffBooking(b),
       allAssignedAssetsInspected: this.hasCompletedInspectionForEveryAssignedAsset(b),
+      accruedCreditTotal: b.adjustments.reduce((sum, row) => sum + Number(row.amount), 0),
+      /**
+       * Đơn đã bị huỷ/từ chối và đang có phiếu hoàn: số hoàn là TOÀN BỘ tiền đã
+       * thực thu trừ các phiếu hoàn đã tạo (cùng công thức `ensureCancellationRefunds`
+       * và màn duyệt hoàn). Đơn hoàn cọc thường vẫn dùng cọc + credit − phạt.
+       */
+      cancellationRefund: b.status === BookingStatus.cancelled || b.status === BookingStatus.rejected
+        ? {
+          paidTotal: b.payments.reduce((sum, row) => sum + Number(row.amount), 0),
+          coveringRefundsTotal: b.refunds
+            .filter((r) => COVERING_REFUND_STATUSES.includes(r.status))
+            .reduce((sum, row) => sum + Number(row.amount), 0),
+        }
+        : null,
       refunds: b.refunds.map((r) => ({
         id: r.id, amount: Number(r.amount), status: r.status,
         refundMethod: r.refund_method,
@@ -1830,29 +1949,45 @@ export class BookingsService {
       if (targetStatus === BookingStatus.preparing) await claimBookingAssets(tx, id);
       if (targetStatus === BookingStatus.renting) await transitionBookingAssets(tx, id, AssetStatus.reserved, AssetStatus.rented);
       if (targetStatus === BookingStatus.returned) await transitionBookingAssets(tx, id, AssetStatus.rented, AssetStatus.inspection_pending);
-      if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
+      const isCancelling = targetStatus === BookingStatus.cancelled;
+      // §8.2: void credit → release asset → refund → voucher → cancelled + history,
+      // dùng chung với `cancel()` và Manager cancel. `cancelBookingTx` tự ghi status +
+      // history; nhánh cancelled bỏ qua bước updateMany/history bên dưới.
+      if (isCancelling) {
+        const cancelled = await cancelBookingTx(tx, {
+          bookingId: id,
+          fromStatus: booking.status,
+          actorId: changedBy,
+          reason: dto.note ?? options?.historyNote ?? "Hủy đơn",
+          vouchers: this.vouchers,
+        });
+        if (!cancelled) throw new ConflictException("Booking status was already changed by another request.");
+      }
+      if (targetStatus === BookingStatus.rejected) {
         await releaseBookingAssets(tx, id);
         await ensureCancellationRefunds(tx, id, changedBy, dto.note);
       }
       // Nhân viên đã xử lý đơn chờ xác nhận → bỏ hạn giữ chỗ tạm lúc tạo đơn, để
       // cron không huỷ ngay đơn vừa được duyệt. Đơn nhận tại cửa hàng chuyển sang chờ
       // thanh toán thì có hạn 2 giờ mới.
-      const paymentDueAtUpdate =
-        targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup"
-          ? { paymentDueAt: new Date(Date.now() + STORE_PICKUP_PAYMENT_WINDOW_MS) }
-          : targetStatus === BookingStatus.paid || booking.status === BookingStatus.pending_confirmation
-            ? { paymentDueAt: null }
-            : {};
-      const claimedBooking = await tx.booking.updateMany({
-        where: { id, status: booking.status },
-        data: {
-          status: targetStatus,
-          ...paymentDueAtUpdate,
-          ...(dto.note ? { note: dto.note } : {}),
-        },
-      });
-      if (claimedBooking.count !== 1) {
-        throw new ConflictException("Booking status was already changed by another request.");
+      if (!isCancelling) {
+        const paymentDueAtUpdate =
+          targetStatus === BookingStatus.awaiting_payment && booking.pickupMethod === "store_pickup"
+            ? { paymentDueAt: new Date(Date.now() + STORE_PICKUP_PAYMENT_WINDOW_MS) }
+            : targetStatus === BookingStatus.paid || booking.status === BookingStatus.pending_confirmation
+              ? { paymentDueAt: null }
+              : {};
+        const claimedBooking = await tx.booking.updateMany({
+          where: { id, status: booking.status },
+          data: {
+            status: targetStatus,
+            ...paymentDueAtUpdate,
+            ...(dto.note ? { note: dto.note } : {}),
+          },
+        });
+        if (claimedBooking.count !== 1) {
+          throw new ConflictException("Booking status was already changed by another request.");
+        }
       }
 
       if (assetIds.length > 0) {
@@ -1869,20 +2004,22 @@ export class BookingsService {
         }
       }
 
-      if (targetStatus === BookingStatus.cancelled || targetStatus === BookingStatus.rejected) {
+      if (targetStatus === BookingStatus.rejected) {
         await this.vouchers?.releaseForBooking(tx, id);
       }
 
-      await tx.bookingStatusHistory.create({
-        data: {
-          bookingId: id,
-          fromStatus: booking.status,
-          toStatus: targetStatus,
-          changedBy: changedBy ?? null,
-          note: dto.note ?? options?.historyNote ??
-            (skipAwaitingPayment ? "Đã thanh toán online trước — bỏ qua bước chờ thanh toán" : null),
-        },
-      });
+      if (!isCancelling) {
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId: id,
+            fromStatus: booking.status,
+            toStatus: targetStatus,
+            changedBy: changedBy ?? null,
+            note: dto.note ?? options?.historyNote ??
+              (skipAwaitingPayment ? "Đã thanh toán online trước — bỏ qua bước chờ thanh toán" : null),
+          },
+        });
+      }
 
       const saved = await tx.booking.findUnique({
         where: { id },
@@ -1948,6 +2085,9 @@ export class BookingsService {
         status: updated.status,
       });
     }
+
+    // Đơn vừa xác nhận/đổi trạng thái: kiểm tra sự cố ngay (ngoài tx).
+    await this.evaluateIncidentsQuietly(updated.id);
 
     return ok(this.serializeBooking(updated));
   }
@@ -2741,31 +2881,9 @@ export class BookingsService {
       const archived = [...history, {
         status: booking.handoverStatus, conditionBeforeRental: booking.conditionBeforeRental,
         decidedAt: booking.confirmedAt!.toISOString(), confirmedBy: booking.confirmedBy,
-        evidence, action: dto.action, reason: dto.reason.trim(), resolvedBy: actor.id,
+        evidence, action: "cancel", reason: dto.reason.trim(), resolvedBy: actor.id,
         resolvedAt: new Date().toISOString(),
       }];
-      const replacements = dto.replacements ?? [];
-      if (dto.action === "replace") {
-        // The original condition is booking-wide; quarantine every assigned asset
-        // when damage was reported, rather than silently returning it to inventory.
-        const ids = new Set(replacements.map((row) => row.itemId));
-        if (ids.size !== booking.items.length || replacements.length !== booking.items.length ||
-          booking.items.some((item) => !ids.has(item.id)) ||
-          new Set(replacements.map((row) => row.garmentAssetId)).size !== replacements.length ||
-          replacements.some((row) => booking.items.some((item) => item.garmentAssetId === row.garmentAssetId))) {
-          throw new BadRequestException("Cần chọn asset thay thế riêng biệt cho tất cả sản phẩm.");
-        }
-        const bufferDays = await this.laundryBufferDays();
-        for (const row of replacements) {
-          const item = booking.items.find((candidate) => candidate.id === row.itemId)!;
-          await assertAssetScheduleAvailable(tx, {
-            assetId: row.garmentAssetId, bookingId: id, itemId: item.id,
-            garmentId: item.garmentId, garmentSizeId: item.garment_size_id ?? undefined,
-            startDay: booking.rentalStartDate, endDay: booking.rentalEndDate,
-            laundryBufferDays: bufferDays,
-          });
-        }
-      }
       const assignedAssetIds = booking.items
         .map((item) => item.garmentAssetId)
         .filter((assetId): assetId is string => Boolean(assetId));
@@ -2780,23 +2898,26 @@ export class BookingsService {
       } else {
         await releaseBookingAssets(tx, id);
       }
-      if (dto.action === "replace") {
-        for (const row of replacements) await tx.bookingItem.update({ where: { id: row.itemId }, data: { garmentAssetId: row.garmentAssetId } });
-        await claimBookingAssets(tx, id);
-      } else {
-        await ensureCancellationRefunds(tx, id, actor.id, dto.reason);
-      }
-      const nextStatus = dto.action === "replace" ? BookingStatus.preparing : BookingStatus.cancelled;
+
+      // Hủy đơn: void credit đang treo TRƯỚC khi hoàn toàn bộ tiền đã thu
+      // (`ensureCancellationRefunds` đã gồm phần credit đó), rồi hoàn tiền.
+      // Thiếu bước void + hoàn toàn bộ tiền đã thu là nguyên nhân phiếu hoàn cọc
+      // bị thiếu đúng phần cọc/credit của đơn đã đổi mẫu.
+      await voidPendingCredits(tx, id);
+      await ensureCancellationRefunds(tx, id, actor.id, dto.reason);
+
+      const nextStatus = BookingStatus.cancelled;
       const claimed = await tx.booking.updateMany({
         where: { id, status: booking.status, handoverStatus: "REJECTED", confirmedAt: booking.confirmedAt },
         data: {
           status: nextStatus,
-          ...(dto.action === "replace" ? { handoverStatus: "PENDING", confirmedAt: null, confirmedBy: null, conditionBeforeRental: null } : {}),
-          conditionImages: (dto.action === "replace" ? { history: archived } : { ...previous, history: archived }) as Prisma.InputJsonValue,
+          conditionImages: { ...previous, history: archived } as Prisma.InputJsonValue,
         },
       });
       if (claimed.count !== 1) throw new ConflictException("Biên bản đã được người khác xử lý.");
       await tx.bookingStatusHistory.create({ data: { bookingId: id, fromStatus: booking.status, toStatus: nextStatus, changedBy: actor.id, note: dto.reason.trim() } });
+      await closeOpenIncidentsTx(tx, { bookingId: id, reason: dto.reason.trim(), actorId: actor.id });
+      await this.vouchers?.releaseForBooking(tx, id);
       return tx.booking.findUniqueOrThrow({
         where: { id },
         include: {
@@ -2946,6 +3067,13 @@ export class BookingsService {
             data: { status: BookingStatus.cancelled, paymentDueAt: null },
           });
           if (claimed.count !== 1) throw new ConflictException("Booking vừa được xử lý bởi yêu cầu khác.");
+
+          // Cron tự huỷ KHÔNG đi qua `cancelBookingTx`, nên phải đóng sự cố ở đây;
+          // nếu bỏ sót, đơn đã huỷ vẫn hiện "chờ khách xác nhận" (lỗi #EFAEEBEC).
+          await closeOpenIncidentsTx(tx, {
+            bookingId: booking.id,
+            reason: "Tự động hủy — quá hạn thanh toán",
+          });
 
           await tx.bookingStatusHistory.create({
             data: { bookingId: booking.id, fromStatus: current.status, toStatus: BookingStatus.cancelled, note: "Tự động hủy — quá hạn thanh toán" },

@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { AssetStatus, BookingStatus, Prisma } from "@prisma/client";
+import { loadActiveHolds } from "./booking-change-holds";
 
 export const INVENTORY_RELEASED_STATUSES: BookingStatus[] = [
   BookingStatus.cancelled, BookingStatus.rejected, BookingStatus.completed,
@@ -72,6 +73,8 @@ export interface SizeInventorySnapshot {
   excludeBookingId?: string;
   /** Số ngày khoá lịch sau ngày trả để giặt hấp. 0 = không khoá. */
   laundryBufferDays?: number;
+  /** Hold của yêu cầu đổi mẫu đang giữ asset cụ thể (§10). Đã khử trùng. */
+  holds?: Array<{ garmentAssetId: string; startDay: Date; endDay: Date }>;
 }
 
 export interface AccessoryInventorySnapshot {
@@ -81,6 +84,7 @@ export interface AccessoryInventorySnapshot {
   assets: InventoryAsset[];
   /** Mỗi dòng = 1 đơn vị phụ kiện (quantity luôn là 1 sau khi tách dòng). */
   rows: Array<{
+    accessoryAssetId: string | null;
     booking: {
       id: string;
       status: BookingStatus;
@@ -90,6 +94,8 @@ export interface AccessoryInventorySnapshot {
   }>;
   /** Số ngày khoá lịch sau ngày trả để giặt hấp. 0 = không khoá. */
   laundryBufferDays?: number;
+  /** Hold của yêu cầu đổi mẫu đang giữ accessory asset cụ thể (§10). Đã khử trùng. */
+  holds?: Array<{ accessoryAssetId: string; startDay: Date; endDay: Date }>;
 }
 
 /** Tồn kho phụ kiện theo khoảng ngày: nhu cầu (dòng booking_accessory_items của
@@ -100,12 +106,12 @@ export async function loadAccessoryInventory(
   accessoryId: string,
   startDay: Date,
   endDay: Date,
-  options: { now?: Date; laundryBufferDays?: number } = {},
+  options: { now?: Date; laundryBufferDays?: number; excludeBookingId?: string; excludeChangeRequestId?: string } = {},
 ): Promise<AccessoryInventorySnapshot> {
   const range = parseRentalDateRange(startDay, endDay);
   const buffer = options.laundryBufferDays !== undefined ? options.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   const queryStartDay = buffer > 0 ? new Date(+range.startDay - buffer * DAY_MS) : range.startDay;
-  const [assets, rows] = await Promise.all([
+  const [assets, rows, holds] = await Promise.all([
     client.accessory_assets.findMany({
       where: { accessory_id: accessoryId },
       select: { id: true, status: true },
@@ -120,11 +126,41 @@ export async function loadAccessoryInventory(
         },
       },
       select: {
+        accessoryAssetId: true,
         booking: { select: { id: true, status: true, rentalStartDate: true, rentalEndDate: true } },
       },
     }),
+    loadAccessoryHolds(client, accessoryId, range.startDay, range.endDay, options),
   ]);
-  return { ...range, assets, rows, today: vietnamToday(options.now), laundryBufferDays: buffer };
+  return { ...range, assets, rows, today: vietnamToday(options.now), laundryBufferDays: buffer, holds };
+}
+
+/** Hold đổi mẫu của MỘT accessory (đã lọc expired/consumed + trừ đơn đang xét). */
+async function loadAccessoryHolds(
+  client: Prisma.TransactionClient,
+  accessoryId: string,
+  from: Date,
+  to: Date,
+  options: { now?: Date; excludeBookingId?: string; excludeChangeRequestId?: string },
+): Promise<Array<{ accessoryAssetId: string; startDay: Date; endDay: Date }>> {
+  const holds = await loadActiveHolds(client, { from, to, ...options });
+  const assetIds = [...new Set(holds.filter((h) => h.accessoryAssetId).map((h) => h.accessoryAssetId as string))];
+  if (assetIds.length === 0) return [];
+  const owned = await client.accessory_assets.findMany({
+    where: { id: { in: assetIds }, accessory_id: accessoryId },
+    select: { id: true },
+  });
+  const ownedIds = new Set(owned.map((row) => row.id));
+  const seen = new Set<string>();
+  const result: Array<{ accessoryAssetId: string; startDay: Date; endDay: Date }> = [];
+  for (const hold of holds) {
+    if (!hold.accessoryAssetId || !ownedIds.has(hold.accessoryAssetId)) continue;
+    // Chỉ cộng 1 demand/asset: asset đã có item giữ trong khoảng thì item đã tính.
+    if (seen.has(hold.accessoryAssetId)) continue;
+    seen.add(hold.accessoryAssetId);
+    result.push({ accessoryAssetId: hold.accessoryAssetId, startDay: hold.startDay, endDay: hold.endDay });
+  }
+  return result;
 }
 
 /** committed là PEAK nhu cầu đồng thời, không phải tổng mọi booking giao nhau. */
@@ -139,13 +175,22 @@ export function accessoryAvailability(snapshot: AccessoryInventorySnapshot) {
     events.set(to + DAY_MS, (events.get(to + DAY_MS) ?? 0) - 1);
   };
   const buffer = snapshot.laundryBufferDays ?? 0;
+  const itemAssetIds = new Set<string>();
   for (const row of snapshot.rows) {
     const booking = row.booking;
     if (INVENTORY_RELEASED_STATUSES.includes(booking.status)) continue;
     let to = +booking.rentalEndDate + buffer * DAY_MS;
     // Đơn quá hạn chưa trả: nhu cầu kéo dài đến hết cửa sổ tra cứu.
     if (isUnreturnedOverdue(booking, snapshot.today)) to = Math.max(to, +snapshot.endDay);
+    if (row.accessoryAssetId) itemAssetIds.add(row.accessoryAssetId);
     addSpan(+booking.rentalStartDate, to);
+  }
+  // Hold của yêu cầu đổi mẫu: accessory asset cụ thể đang giữ tạm, +1 demand (đã khử trùng).
+  const holdAssets = new Set<string>();
+  for (const hold of snapshot.holds ?? []) {
+    if (itemAssetIds.has(hold.accessoryAssetId) || holdAssets.has(hold.accessoryAssetId)) continue;
+    holdAssets.add(hold.accessoryAssetId);
+    addSpan(+hold.startDay, +hold.endDay + buffer * DAY_MS);
   }
   const sorted = [...events].sort(([a], [b]) => a - b);
   let occupancy = 0;
@@ -167,10 +212,12 @@ export async function loadSizeInventory(
   garmentSizeId: string,
   startDay: Date,
   endDay: Date,
-  options: { now?: Date; excludeBookingId?: string; laundryBufferDays?: number } = {},
+  options: { now?: Date; excludeBookingId?: string; laundryBufferDays?: number; excludeChangeRequestId?: string } = {},
 ): Promise<SizeInventorySnapshot> {
   const range = parseRentalDateRange(startDay, endDay);
-  const [assets, items] = await Promise.all([
+  const buffer = options.laundryBufferDays !== undefined ? options.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
+  const queryStartDay = buffer > 0 ? new Date(+range.startDay - buffer * DAY_MS) : range.startDay;
+  const [assets, items, holds] = await Promise.all([
     client.garmentAsset.findMany({
       where: { garment_size_id: garmentSizeId },
       select: { id: true, status: true },
@@ -188,8 +235,8 @@ export async function loadSizeInventory(
         booking: { select: { id: true, status: true, rentalStartDate: true, rentalEndDate: true } },
       },
     }),
+    loadSizeHolds(client, garmentSizeId, queryStartDay, range.endDay, options),
   ]);
-  const buffer = options.laundryBufferDays !== undefined ? options.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   return {
     ...range,
     assets,
@@ -197,7 +244,36 @@ export async function loadSizeInventory(
     today: vietnamToday(options.now),
     excludeBookingId: options.excludeBookingId,
     laundryBufferDays: buffer,
+    holds,
   };
+}
+
+/** Hold đổi mẫu của MỘT size (đã lọc expired/consumed + trừ đơn đang xét). */
+async function loadSizeHolds(
+  client: Prisma.TransactionClient,
+  garmentSizeId: string,
+  from: Date,
+  to: Date,
+  options: { now?: Date; excludeBookingId?: string; excludeChangeRequestId?: string },
+): Promise<Array<{ garmentAssetId: string; startDay: Date; endDay: Date }>> {
+  const holds = await loadActiveHolds(client, { from, to, ...options });
+  const assetIds = [...new Set(holds.filter((h) => h.garmentAssetId).map((h) => h.garmentAssetId as string))];
+  if (assetIds.length === 0) return [];
+  const owned = await client.garmentAsset.findMany({
+    where: { id: { in: assetIds }, garment_size_id: garmentSizeId },
+    select: { id: true },
+  });
+  const ownedIds = new Set(owned.map((row) => row.id));
+  const seen = new Set<string>();
+  const result: Array<{ garmentAssetId: string; startDay: Date; endDay: Date }> = [];
+  for (const hold of holds) {
+    if (!hold.garmentAssetId || !ownedIds.has(hold.garmentAssetId)) continue;
+    // Mỗi asset chỉ +1 demand dù có nhiều hold/lẫn item (khử trùng §10).
+    if (seen.has(hold.garmentAssetId)) continue;
+    seen.add(hold.garmentAssetId);
+    result.push({ garmentAssetId: hold.garmentAssetId, startDay: hold.startDay, endDay: hold.endDay });
+  }
+  return result;
 }
 
 /** One event stream drives range and calendar availability. An overdue asset is
@@ -219,6 +295,8 @@ function inventoryEvents(snapshot: SizeInventorySnapshot) {
     events.set(to + DAY_MS, (events.get(to + DAY_MS) ?? 0) - 1);
   };
   const overdueAssets = new Set<string>();
+  // Asset đã được một item giữ trong khoảng: hold của chính asset đó không cộng thêm (§10 khử trùng).
+  const itemAssetIds = new Set<string>();
   for (const item of activeItems) {
     const booking = item.booking;
     if (booking.id === excludeBookingId) continue;
@@ -241,6 +319,7 @@ function inventoryEvents(snapshot: SizeInventorySnapshot) {
         from = Math.min(from, +today);
       }
     }
+    if (item.garmentAssetId) itemAssetIds.add(item.garmentAssetId);
     addSpan(from, to);
   }
   for (const asset of assets) {
@@ -250,6 +329,13 @@ function inventoryEvents(snapshot: SizeInventorySnapshot) {
       ? owners.length > 0
       : owners.some((item) => UNRETURNED_STATUSES.includes(item.booking.status));
     if (!hasOwner) addSpan(+startDay, +endDay);
+  }
+  // Hold của yêu cầu đổi mẫu: asset cụ thể đang giữ tạm, +1 demand (đã khử trùng).
+  const holdAssets = new Set<string>();
+  for (const hold of snapshot.holds ?? []) {
+    if (itemAssetIds.has(hold.garmentAssetId) || holdAssets.has(hold.garmentAssetId)) continue;
+    holdAssets.add(hold.garmentAssetId);
+    addSpan(+hold.startDay, +hold.endDay + buffer * DAY_MS);
   }
   return { capacity, events: [...events].sort(([a], [b]) => a - b) };
 }

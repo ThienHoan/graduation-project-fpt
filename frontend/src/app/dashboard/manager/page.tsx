@@ -1406,7 +1406,8 @@ export default function ManagerDashboardPage() {
           key !== "vouchers" &&
           key !== "product-stats" &&
           key !== "faq" &&
-          key !== "customer-care"
+          key !== "customer-care" &&
+          key !== "incidents"
         )
           goToTab(key);
       }}
@@ -1655,7 +1656,6 @@ export default function ManagerDashboardPage() {
       ) : tab === "rejected-handovers" ? (
         <RejectedHandoversTab
           bookings={bookings.filter((b) => b.handover?.status === "REJECTED")}
-          allAssets={allAssets}
           showToast={showToast}
           onRecover={async (id, payload) => {
             const res = await recoverBookingHandover(id, payload);
@@ -7181,20 +7181,16 @@ function RefundsTab({
 }
 function RejectedHandoversTab({
   bookings,
-  allAssets,
   showToast,
   onRecover,
 }: {
   bookings: StaffBookingResponse[];
-  allAssets: AssetDetail[];
   showToast?: (type: "success" | "error", message: string) => void;
   onRecover: (id: string, payload: HandoverRecoveryPayload) => Promise<void>;
 }) {
   const [selectedBooking, setSelectedBooking] =
     useState<StaffBookingResponse | null>(null);
-  const [action, setAction] = useState<"cancel" | "replace">("replace");
   const [reason, setReason] = useState("");
-  const [replacements, setReplacements] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 6;
@@ -7204,39 +7200,20 @@ function RejectedHandoversTab({
     return bookings.slice(start, start + PAGE_SIZE);
   }, [bookings, page]);
 
-  const availableAssets = useMemo(
-    () => allAssets.filter((a) => a.status === "available"),
-    [allAssets],
-  );
-
   const handleSubmit = async () => {
     if (!selectedBooking) return;
     if (!reason.trim())
       return showToast?.("error", "Vui lòng nhập lý do xử lý");
     const payload: HandoverRecoveryPayload = {
-      action,
+      action: "cancel",
       reason: reason.trim(),
       expectedDecidedAt: selectedBooking.handover?.decidedAt!,
     };
-    if (action === "replace") {
-      const rep: { itemId: string; garmentAssetId: string }[] = [];
-      for (const item of selectedBooking.items) {
-        if (!replacements[item.id]) {
-          return showToast?.(
-            "error",
-            `Vui lòng chọn tài sản thay thế cho ${item.garmentId}`,
-          );
-        }
-        rep.push({ itemId: item.id, garmentAssetId: replacements[item.id] });
-      }
-      payload.replacements = rep;
-    }
     setSubmitting(true);
     await onRecover(selectedBooking.id, payload);
     setSubmitting(false);
     setSelectedBooking(null);
     setReason("");
-    setReplacements({});
   };
 
   return (
@@ -7281,9 +7258,7 @@ function RejectedHandoversTab({
                   <button
                     onClick={() => {
                       setSelectedBooking(booking);
-                      setAction("replace");
                       setReason("");
-                      setReplacements({});
                     }}
                     className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
                   >
@@ -7321,32 +7296,6 @@ function RejectedHandoversTab({
               </button>
             </div>
 
-            <div className="mb-4 space-y-3">
-              <label className="block text-sm font-medium text-ink">
-                Hướng xử lý
-              </label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={action === "replace"}
-                    onChange={() => setAction("replace")}
-                    name="action"
-                  />
-                  Thay thế sản phẩm
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={action === "cancel"}
-                    onChange={() => setAction("cancel")}
-                    name="action"
-                  />
-                  Hủy đơn (Hoàn tiền)
-                </label>
-              </div>
-            </div>
-
             <div className="mb-4">
               <label className="block text-sm font-medium text-ink mb-1">
                 Lý do/Ghi chú xử lý
@@ -7360,55 +7309,10 @@ function RejectedHandoversTab({
               />
             </div>
 
-            {action === "replace" && (
-              <div className="mb-6 space-y-4">
-                <h4 className="font-medium text-ink border-b border-sand pb-2">
-                  Chọn tài sản thay thế
-                </h4>
-                {selectedBooking.items.map((item) => {
-                  const options = availableAssets.filter(
-                    (a) =>
-                      a.garmentId === item.garmentId &&
-                      (!item.garmentSizeId ||
-                        a.garmentSizeId === item.garmentSizeId),
-                  );
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-4 p-3 border border-sand rounded-lg bg-surface"
-                    >
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold">
-                          {item.garmentId} (Size:{" "}
-                          {item.garmentSizeId || "Freesize"})
-                        </p>
-                        <p className="text-xs text-stone-500">
-                          Asset bị từ chối:{" "}
-                          {item.assetCode || "Không rõ"}
-                        </p>
-                      </div>
-                      <select
-                        className="w-48 rounded border border-sand p-2 text-sm"
-                        value={replacements[item.id] || ""}
-                        onChange={(e) =>
-                          setReplacements((prev) => ({
-                            ...prev,
-                            [item.id]: e.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">-- Chọn asset thay thế --</option>
-                        {options.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
-                            {opt.assetCode} ({opt.conditionNote || "Tốt"})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              Đơn sẽ bị <strong>huỷ toàn bộ</strong> và hoàn lại tiền khách đã thanh toán theo
+              chính sách. Bước này không còn tùy chọn thay thế sản phẩm.
+            </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-sand">
               <button

@@ -16,6 +16,9 @@ function createMockPrisma() {
     bookingItem: {
       findMany: vi.fn(),
     },
+    bookingChangeHold: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     systemSetting: {
       findUnique: vi.fn().mockResolvedValue({ key: "laundry_buffer_days", value: { value: 0 } }),
     },

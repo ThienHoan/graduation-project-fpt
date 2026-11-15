@@ -1,4 +1,14 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { PayOS } from "@payos/node";
@@ -6,7 +16,10 @@ import { ok } from "../../common/api-response";
 import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth-user";
+import { BookingChangeRequestsService } from "../bookings/booking-change-requests.service";
 import { BookingExtensionsService } from "../bookings/booking-extensions.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { BookingIncidentsService } from "../bookings/booking-incidents.service";
 
 const PAYMENTABLE_STATUSES: BookingStatus[] = [
   BookingStatus.pending_confirmation,
@@ -23,6 +36,11 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Optional() private readonly extensions?: BookingExtensionsService,
+    @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly incidents?: BookingIncidentsService,
+    @Optional()
+    @Inject(forwardRef(() => BookingChangeRequestsService))
+    private readonly changeRequests?: BookingChangeRequestsService,
   ) {
     this.payos = new PayOS({
       clientId: this.config.get<string>("PAYOS_CLIENT_ID") ?? "",
@@ -160,8 +178,55 @@ export class PaymentsService {
     if (!Number.isFinite(providerAmount) || Math.round(providerAmount) !== Math.round(Number(payment.amount))) {
       return ok({ message: "Payment amount mismatch." });
     }
+    // Tiền về sau khi PayOS đã bị đóng/hủy (payment cancelled/failed): KHÔNG đổi
+    // trạng thái đơn, KHÔNG tự hoàn. Chỉ ghi nhận khoản tiền không khớp và báo
+    // manager để xử lý hoàn tiền thủ công. Không nới `markAsPaidTx`.
+    if (payment.status === PaymentStatus.cancelled || payment.status === PaymentStatus.failed) {
+      await this.recordUnmatchedPayment(payment.id, payment.bookingId, orderCode, payment.amount);
+      return ok({ message: "Late payment recorded for manual handling." });
+    }
     await this.markAsPaid(payment.id, payment.bookingId, "Thanh toán qua PayOS thành công");
     return ok({ message: "Payment processed successfully." });
+  }
+
+  /**
+   * Khoản tiền về sau khi payment đã `cancelled/failed`: ghi 1 `financialTransaction`
+   * (`payment_unmatched`) và báo manager. Idempotent theo `paymentId` để webhook gửi
+   * lại không tạo dòng thứ hai; `note` giữ `orderCode` để đối chiếu thủ công.
+   */
+  private async recordUnmatchedPayment(
+    paymentId: string,
+    bookingId: string,
+    orderCode: string,
+    amount: Prisma.Decimal | number,
+  ) {
+    const recorded = await this.prisma.runSerializable(async (tx) => {
+      const existing = await tx.financialTransaction.findFirst({
+        where: { paymentId, transactionType: "payment_unmatched" },
+        select: { id: true },
+      });
+      if (existing) return false;
+      await tx.financialTransaction.create({
+        data: {
+          bookingId,
+          paymentId,
+          transactionType: "payment_unmatched",
+          amount: new Prisma.Decimal(amount),
+          note: orderCode,
+        },
+      });
+      return true;
+    });
+    if (!recorded || !this.notifications) return;
+    try {
+      await this.notifications.notifyRoles({
+        roles: ["manager_owner"],
+        templateKey: "booking.staff.payment_unmatched",
+        data: { bookingCode: bookingId.slice(0, 8).toUpperCase(), amount: String(amount), orderCode },
+      });
+    } catch (error) {
+      this.logger.warn(`Không gửi được thông báo thanh toán muộn cho payment ${paymentId}: ${this.errorMessage(error)}`);
+    }
   }
 
   // ── Gia hạn thuê ───────────────────────────────────────────────────────────
@@ -233,6 +298,208 @@ export class PaymentsService {
       await this.extensions.abortPending(extension.id, "Không tạo được link thanh toán gia hạn");
       throw new BadRequestException("Không thể tạo liên kết thanh toán gia hạn. Vui lòng thử lại.");
     }
+  }
+
+  /**
+   * §7.3 / §12 — Tạo PayOS link cho PHẦN CHÊNH của yêu cầu đổi mẫu/bỏ món.
+   * Payment intent được ghi trước (bền vững) rồi mới gọi PayOS; lỗi PayOS thì
+   * đóng intent `cancelled`. Caller liên kết `paymentId` + `checkoutUrl` vào
+   * `BookingChangeRequest` và chuyển request sang `awaiting_payment`.
+   */
+  async createChangeRequestPaymentLink(input: {
+    bookingId: string;
+    requestId: string;
+    amount: number;
+    depositAmount: number;
+    expiresAt: Date;
+  }) {
+    const amount = Math.round(input.amount);
+    if (amount <= 0) throw new BadRequestException("Không có phần chênh cần thanh toán.");
+
+    const intent = await this.prisma.runSerializable(async (tx) => {
+      if (typeof (tx as any).$executeRawUnsafe === "function") {
+        await (tx as any).$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext('payments:payos-order-code'))");
+      }
+      const existing = await tx.payment.findMany({
+        where: { bookingId: input.bookingId },
+        select: { providerTransactionId: true },
+      });
+      let orderCode = this.allocateOrderCode(input.bookingId, existing.map((p) => p.providerTransactionId));
+      while (
+        await tx.payment.findFirst({
+          where: { provider: "payos", providerTransactionId: String(orderCode) },
+          select: { id: true },
+        })
+      ) {
+        orderCode += 1;
+      }
+      const payment = await tx.payment.create({
+        data: {
+          bookingId: input.bookingId,
+          provider: "payos",
+          providerTransactionId: String(orderCode),
+          paymentMethod: "qr_code",
+          amount,
+          // `depositAmount` = phần cọc thu thêm để `markAsPaidTx` tách doanh thu thuê/cọc.
+          depositAmount: Math.max(0, Math.round(input.depositAmount)),
+          status: PaymentStatus.pending,
+        },
+      });
+      return { paymentId: payment.id, orderCode };
+    });
+
+    const frontendUrl = this.config.get<string>("FRONTEND_URL") ?? "http://localhost:3000";
+    // Kèm `bookingId` để trang kết quả quay lại đúng trang sự cố của đơn.
+    const returnUrl = `${frontendUrl}/booking/change-payment?requestId=${input.requestId}&bookingId=${input.bookingId}`;
+    try {
+      const link = await this.payos.paymentRequests.create({
+        orderCode: intent.orderCode,
+        amount,
+        description: `Doi mau #${input.bookingId.slice(0, 8)}`,
+        items: [{ name: "Phần chênh đổi mẫu/bỏ món", quantity: 1, price: amount }],
+        cancelUrl: `${returnUrl}&cancelled=1`,
+        returnUrl,
+        expiredAt: Math.floor(input.expiresAt.getTime() / 1000),
+      });
+      return { paymentId: intent.paymentId, checkoutUrl: link.checkoutUrl as string };
+    } catch (error) {
+      this.logger.warn(`PayOS create failed for change request ${input.requestId}: ${this.errorMessage(error)}`);
+      await this.prisma.payment.updateMany({
+        where: { id: intent.paymentId, status: PaymentStatus.pending },
+        data: { status: PaymentStatus.cancelled },
+      });
+      throw new BadRequestException("Không thể tạo liên kết thanh toán phần chênh. Vui lòng thử lại.");
+    }
+  }
+
+  /** §13.2 — Poll trạng thái thanh toán phần chênh của yêu cầu đổi mẫu/bỏ món. */
+  async getChangeRequestStatus(requestId: string, user: AuthenticatedUser) {
+    const load = () =>
+      this.prisma.bookingChangeRequest.findUnique({
+        where: { id: requestId },
+        include: { booking: { select: { customerId: true } }, payment: true },
+      });
+    let request = await load();
+    if (!request) throw new NotFoundException("Không tìm thấy yêu cầu đổi.");
+    const isStaff = ["staff", "manager_owner", "admin"].includes(user.role);
+    if (request.booking.customerId !== user.id && !isStaff) {
+      throw new ForbiddenException("You cannot view this payment.");
+    }
+    // Webhook có thể chưa về: đối soát trực tiếp với PayOS rồi đọc lại request
+    // (markAsPaid → afterPaymentPaid → handlePaymentPaid có thể đã áp dụng).
+    if (request.payment?.status === PaymentStatus.pending && request.payment.providerTransactionId) {
+      await this.reconcileWithPayos(request.payment);
+      request = (await load()) ?? request;
+    }
+    const holdExpiresAt = new Date(request.holdExpiresAt);
+    return ok({
+      requestId: request.id,
+      status: request.status,
+      paid: request.payment?.status === PaymentStatus.paid,
+      chargeAmount: Number(request.chargeAmount),
+      checkoutUrl: request.checkoutUrl,
+      countdownSeconds: Math.max(0, Math.round((holdExpiresAt.getTime() - Date.now()) / 1000)),
+    });
+  }
+
+  /**
+   * Khách bấm "Thanh toán lại" sau khi huỷ trên cổng PayOS. Link cũ đã chết
+   * (PayOS không cho tái sử dụng orderCode) nên phải cấp một link MỚI cho cùng
+   * yêu cầu đổi, vẫn trong hạn giữ chỗ ban đầu.
+   *
+   * - Payment cũ còn PENDING thật ở PayOS → trả lại đúng link đó (không mở 2 link).
+   * - PayOS đã PAID (webhook lỡ mất) → đối soát + áp dụng ngay.
+   * - PayOS CANCELLED/EXPIRED/không tồn tại → đóng intent cũ rồi tạo orderCode mới.
+   */
+  async retryChangeRequestPayment(requestId: string, user: AuthenticatedUser) {
+    const request = await this.prisma.bookingChangeRequest.findUnique({
+      where: { id: requestId },
+      include: { booking: { select: { customerId: true } }, payment: true },
+    });
+    if (!request) throw new NotFoundException("Không tìm thấy yêu cầu đổi.");
+    const isStaff = ["staff", "manager_owner", "admin"].includes(user.role);
+    if (request.booking.customerId !== user.id && !isStaff) {
+      throw new ForbiddenException("You cannot pay this request.");
+    }
+    // Đã xử lý xong (kể cả chuyển manager) → chỉ trả trạng thái hiện tại.
+    if (request.status === "applied" || request.status === "needs_manager") {
+      return this.getChangeRequestStatus(requestId, user);
+    }
+    if (request.status !== "awaiting_payment" && request.status !== "quoted") {
+      throw new ConflictException("Yêu cầu này không còn ở bước thanh toán.");
+    }
+    if (request.holdExpiresAt.getTime() <= Date.now()) {
+      throw new ConflictException("Giữ chỗ đã hết hạn, vui lòng chọn lại mẫu khác.");
+    }
+
+    const frozen = (request.afterSnapshot ?? {}) as Record<string, unknown>;
+    const chargeAmount = Math.round(Number(request.chargeAmount ?? frozen.chargeAmount ?? 0));
+    if (chargeAmount <= 0) {
+      throw new BadRequestException("Không có phần chênh cần thanh toán.");
+    }
+
+    // Còn intent pending: hỏi thẳng PayOS trước khi cấp link mới.
+    const current = request.payment;
+    if (current?.status === PaymentStatus.pending && current.providerTransactionId) {
+      let info: { status?: string } | null = null;
+      try {
+        info = await this.payos.paymentRequests.get(Number(current.providerTransactionId));
+      } catch (error) {
+        // Không đọc được trạng thái → KHÔNG mở link thứ hai (tiền có thể đang chuyển).
+        this.logger.warn(
+          `Không đọc được PayOS order ${current.providerTransactionId}: ${this.errorMessage(error)}`,
+        );
+        throw new BadRequestException(
+          "Không đọc được trạng thái thanh toán từ PayOS. Vui lòng thử lại sau.",
+        );
+      }
+      if (info?.status === "PAID") {
+        await this.markAsPaid(
+          current.id,
+          current.bookingId,
+          "Thanh toán qua PayOS thành công (đối soát khi thanh toán lại)",
+        );
+        return this.getChangeRequestStatus(requestId, user);
+      }
+      if (info?.status === "PROCESSING" || info?.status === "UNDERPAID") {
+        throw new BadRequestException(
+          "Đơn hàng đang được PayOS ghi nhận thanh toán. Vui lòng chờ trong giây lát rồi tải lại trang.",
+        );
+      }
+      if (info?.status === "PENDING" && request.checkoutUrl) {
+        // Link cũ vẫn sống → dùng lại, tránh hai QR cho cùng một khoản thu.
+        return ok({
+          requestId: request.id,
+          status: request.status,
+          paid: false,
+          chargeAmount,
+          checkoutUrl: request.checkoutUrl,
+          countdownSeconds: this.countdownSeconds(request.holdExpiresAt),
+        });
+      }
+    }
+
+    // Link cũ đã chết: đóng intent (nếu còn pending local) rồi tạo link mới.
+    await this.releaseClosedPayosIntents(request.bookingId);
+    const link = await this.createChangeRequestPaymentLink({
+      bookingId: request.bookingId,
+      requestId: request.id,
+      amount: chargeAmount,
+      depositAmount: Math.max(0, Math.round(Number(frozen.depositDelta ?? 0))),
+      expiresAt: request.holdExpiresAt,
+    });
+    await this.prisma.bookingChangeRequest.update({
+      where: { id: request.id },
+      data: { status: "awaiting_payment", paymentId: link.paymentId, checkoutUrl: link.checkoutUrl },
+    });
+    return ok({
+      requestId: request.id,
+      status: "awaiting_payment" as const,
+      paid: false,
+      chargeAmount,
+      checkoutUrl: link.checkoutUrl,
+      countdownSeconds: this.countdownSeconds(request.holdExpiresAt),
+    });
   }
 
   /** Trạng thái yêu cầu gia hạn; đối soát trực tiếp với PayOS nếu webhook chưa về. */
@@ -310,11 +577,34 @@ export class PaymentsService {
    * làm hỏng webhook — cron gia hạn sẽ áp dụng lại cho yêu cầu đã trả tiền.
    */
   private async afterPaymentPaid(paymentId: string) {
-    if (!this.extensions) return;
-    try {
-      await this.extensions.handlePaymentPaid(paymentId);
-    } catch (error) {
-      this.logger.error(`Không áp dụng được gia hạn cho payment ${paymentId}: ${this.errorMessage(error)}`);
+    if (this.extensions) {
+      try {
+        await this.extensions.handlePaymentPaid(paymentId);
+      } catch (error) {
+        this.logger.error(`Không áp dụng được gia hạn cho payment ${paymentId}: ${this.errorMessage(error)}`);
+      }
+    }
+    // §7.3 — tiền về cho phần chênh đổi mẫu/bỏ món: áp dụng yêu cầu (hoặc
+    // needs_manager nếu hết hàng). Lỗi ở đây không được làm hỏng webhook; cron
+    // `expireChangeRequests` sẽ thử lại cho payment đã `paid`.
+    if (this.changeRequests) {
+      try {
+        await this.changeRequests.handlePaymentPaid(paymentId);
+      } catch (error) {
+        this.logger.error(`Không áp dụng được yêu cầu đổi cho payment ${paymentId}: ${this.errorMessage(error)}`);
+      }
+    }
+    // Tiền về ⇒ đơn chuyển sang đã thanh toán: quét lại sự cố (ngoài tx, lỗi chỉ log).
+    if (this.incidents) {
+      try {
+        const payment = await this.prisma.payment.findUnique({
+          where: { id: paymentId },
+          select: { bookingId: true },
+        });
+        if (payment?.bookingId) await this.incidents.evaluateBooking(payment.bookingId);
+      } catch (error) {
+        this.logger.warn(`Không quét được sự cố sau thanh toán ${paymentId}: ${this.errorMessage(error)}`);
+      }
     }
   }
 
@@ -446,7 +736,13 @@ export class PaymentsService {
    * - PAID / PROCESSING / UNDERPAID: money may be moving, so never open a second link.
    * - Unknown to PayOS (create never reached it): keep it and reuse the same code.
    */
-  private async releaseClosedPayosIntents(bookingId: string) {
+  /**
+   * Đóng các intent PayOS đã chết trước khi áp dụng đổi mẫu (§7.3 bước 1).
+   * - CANCELLED/EXPIRED/FAILED hoặc không đọc được → đóng local (dùng code mới).
+   * - PENDING → hủy link cũ rồi đóng local.
+   * - PAID/PROCESSING/UNDERPAID → ném lỗi (tiền có thể đang chuyển, không mở link thứ hai).
+   */
+  async releaseClosedPayosIntents(bookingId: string, options: { strict?: boolean } = {}) {
     const pending = await this.prisma.payment.findMany({
       where: { bookingId, provider: "payos", status: PaymentStatus.pending, providerTransactionId: { not: null } },
       select: { id: true, providerTransactionId: true },
@@ -457,6 +753,13 @@ export class PaymentsService {
       try {
         link = await this.payos.paymentRequests.get(orderCode);
       } catch (error) {
+        if (options.strict) {
+          // Hủy yêu cầu / hết hạn giữ chỗ: không đọc được trạng thái PayOS thì
+          // KHÔNG được đóng intent (tiền có thể đang chuyển).
+          throw new BadRequestException(
+            "Không đọc được trạng thái thanh toán từ PayOS. Vui lòng thử lại sau.",
+          );
+        }
         this.logger.warn(`PayOS order ${orderCode} not found, keeping intent for reuse: ${this.errorMessage(error)}`);
         continue;
       }
@@ -486,6 +789,10 @@ export class PaymentsService {
     const used = new Set(existingCodes.filter(Boolean));
     while (used.has(String(code))) code += 1;
     return code;
+  }
+
+  private countdownSeconds(deadline: Date): number {
+    return Math.max(0, Math.round((deadline.getTime() - Date.now()) / 1000));
   }
 
   private errorMessage(error: unknown) {

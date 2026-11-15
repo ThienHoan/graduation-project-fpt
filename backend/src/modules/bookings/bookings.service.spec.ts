@@ -94,6 +94,9 @@ function createService(options?: {
     accessory_assets: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    bookingChangeHold: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
 
   const prisma = {
@@ -229,6 +232,24 @@ function createHandoverService(initialBooking = makeHandoverBooking()) {
     },
     bookingStatusHistory: {
       create: vi.fn().mockResolvedValue({ id: "history-1" }),
+    },
+    bookingAdjustment: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    bookingIncident: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    payment: {
+      findMany: vi.fn().mockResolvedValue([]),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+    },
+    refund: {
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue({ id: "refund-1" }),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+    },
+    financialTransaction: {
+      create: vi.fn().mockResolvedValue({ id: "txn-1" }),
     },
   };
 
@@ -461,6 +482,13 @@ describe("BookingsService handover", () => {
     expect(tx.booking.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: "cancelled" }),
     }));
+    // Credit đang treo phải bị void trước khi hoàn toàn bộ tiền đã thu (nếu không
+    // khách bị hoàn hai lần / phiếu hoàn bị lệch).
+    expect(tx.bookingAdjustment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: BOOKING_ID, status: { in: ["accrued", "pending_payment"] } },
+      }),
+    );
   });
 
   it("blocks direct advanceStatus to renting until handover is confirmed", async () => {
@@ -491,6 +519,125 @@ describe("BookingsService handover", () => {
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
     expect(tx.garmentAsset.updateMany).not.toHaveBeenCalled();
     expect(tx.bookingStatusHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("BookingsService.staffCancel (§8.2)", () => {
+  function createManagerCancelService(options: { status?: string; openIncidents?: number; itemCount?: number } = {}) {
+    const booking = {
+      id: BOOKING_ID,
+      customerId: CUSTOMER_ID,
+      status: options.status ?? "paid",
+      rentalStartDate: new Date("2026-10-10T00:00:00.000Z"),
+      rentalEndDate: new Date("2026-10-12T00:00:00.000Z"),
+      subtotal: 100,
+      discountTotal: 0,
+      rentalTotal: 100,
+      depositTotal: 50,
+      shippingFee: 0,
+      pickupMethod: "store_pickup",
+      note: null,
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+      items: Array.from({ length: options.itemCount ?? 1 }, (_, i) => ({
+        id: `item-${i}`,
+        garmentId: GARMENT_ID,
+        garment_size_id: SIZE_ID,
+        garmentAssetId: `asset-${i}`,
+        garment_sizes: { garments: { name: "Áo A" } },
+        garmentAsset: { id: `asset-${i}`, status: "reserved" },
+      })),
+      payments: [],
+      refunds: [],
+    };
+    const tx = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({ ...booking, payments: [], refunds: [] }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue(booking),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      garmentAsset: { findUnique: vi.fn().mockResolvedValue(null), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      bookingItem: { findMany: vi.fn().mockResolvedValue(booking.items.map((it) => ({ garmentAssetId: it.garmentAssetId }))) },
+      bookingAccessoryItem: { findMany: vi.fn().mockResolvedValue([]) },
+      bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
+      bookingAdjustment: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      bookingIncident: { updateMany: vi.fn().mockResolvedValue({ count: options.openIncidents ?? 0 }) },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+      refund: { create: vi.fn() },
+      financialTransaction: { create: vi.fn() },
+      $queryRawUnsafe: vi.fn().mockResolvedValue([{ id: BOOKING_ID }]),
+    };
+    const prisma = {
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({ status: booking.status, customerId: CUSTOMER_ID }),
+      },
+      bookingIncident: { count: vi.fn().mockResolvedValue(options.openIncidents ?? 1) },
+      runSerializable: vi.fn().mockImplementation(async (cb: (c: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+    const notifications = { sendBookingNotification: vi.fn().mockResolvedValue(undefined), notifyStaffBooking: vi.fn() };
+    const realtime = { bookingChanged: vi.fn(), bookingChangedForCustomer: vi.fn(), assetChanged: vi.fn() };
+    const service = new BookingsService(
+      prisma as never,
+      notifications as never,
+      {} as never,
+      {} as never,
+      realtime as never,
+    );
+    return { service, tx, prisma, realtime };
+  }
+
+  it("hủy đơn đã thanh toán có sự cố mở: void credit → cancelled + AuditLog + history", async () => {
+    const { service, tx } = createManagerCancelService({ status: "paid", openIncidents: 1 });
+    const result = await service.staffCancel(BOOKING_ID, { reason: "Đồ lỗi nặng" }, { id: "mgr-1", role: "manager_owner" });
+
+    expect(tx.bookingAdjustment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: { in: ["accrued", "pending_payment"] } }) }),
+    );
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "cancelled" }) }),
+    );
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ action: "booking.staff.cancelled" }) }),
+    );
+    expect(tx.bookingStatusHistory.create).toHaveBeenCalled();
+    expect(result.data).toBeDefined();
+  });
+
+  it("thiếu lý do → 400", async () => {
+    const { service } = createManagerCancelService();
+    await expect(service.staffCancel(BOOKING_ID, { reason: "  " }, { id: "mgr-1", role: "manager_owner" })).rejects.toThrow(
+      "Cần lý do hủy đơn.",
+    );
+  });
+
+  it("không phải manager/admin → 403", async () => {
+    const { service } = createManagerCancelService();
+    await expect(
+      service.staffCancel(BOOKING_ID, { reason: "x" }, { id: "s1", role: "staff" }),
+    ).rejects.toThrow("Chỉ quản lý được hủy đơn trước bàn giao.");
+  });
+
+  it("đơn không có sự cố mở → 400", async () => {
+    const { service } = createManagerCancelService({ status: "paid", openIncidents: 0 });
+    await expect(
+      service.staffCancel(BOOKING_ID, { reason: "x" }, { id: "mgr-1", role: "manager_owner" }),
+    ).rejects.toThrow("Chỉ hủy đơn trước bàn giao khi đơn có sự cố đang mở.");
+  });
+
+  it("hủy được đơn CHƯA thanh toán (pending_confirmation) khi có sự cố mở", async () => {
+    const { service, tx } = createManagerCancelService({ status: "pending_confirmation", openIncidents: 1 });
+    const result = await service.staffCancel(BOOKING_ID, { reason: "Không còn mẫu thay thế" }, { id: "mgr-1", role: "manager_owner" });
+
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "cancelled" }) }),
+    );
+    expect(result.data).toBeDefined();
+  });
+
+  it("đơn đã qua bàn giao (sau ready_for_pickup) → 400", async () => {
+    const { service } = createManagerCancelService({ status: "delivering", openIncidents: 1 });
+    await expect(
+      service.staffCancel(BOOKING_ID, { reason: "x" }, { id: "mgr-1", role: "manager_owner" }),
+    ).rejects.toThrow("Chỉ hủy được đơn trước khi bàn giao (chờ xác nhận → sẵn sàng nhận).");
   });
 });
 
@@ -822,6 +969,7 @@ describe("BookingsService.assignAccessoryAsset", () => {
     const tx = {
       booking: { findUnique: vi.fn().mockResolvedValue(booking) },
       accessory_assets: { findUnique: vi.fn().mockResolvedValue({ id: ACCESSORY_ASSET_ID, ...asset, asset_code: "PK-001" }) },
+      bookingChangeHold: { findMany: vi.fn().mockResolvedValue([]) },
       bookingAccessoryItem: {
         findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn().mockResolvedValue({ id: ACCESSORY_ITEM_ID }),
@@ -906,6 +1054,11 @@ describe("BookingsService.advanceStatus accessories", () => {
         findUniqueOrThrow: vi.fn(),
       },
       bookingAccessoryItem: { findMany: vi.fn().mockResolvedValue(accessories) },
+      bookingChangeHold: { findMany: vi.fn().mockResolvedValue([]) },
+      garmentAsset: {
+        findUnique: vi.fn().mockResolvedValue({ id: ASSET_ID, status: "available" }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
     };
     const savedBooking = {
@@ -970,6 +1123,7 @@ describe("BookingsService.checkAccessoryAvailability", () => {
       bookingAccessoryItem: {
         findMany: vi.fn().mockResolvedValue(
           rows.map((r, i) => ({
+            accessoryAssetId: null,
             booking: {
               id: `b-${i}`,
               status: r.status,
@@ -978,6 +1132,9 @@ describe("BookingsService.checkAccessoryAvailability", () => {
             },
           })),
         ),
+      },
+      bookingChangeHold: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       systemSetting: {
         findUnique: vi.fn().mockResolvedValue(null),
@@ -1295,6 +1452,54 @@ describe("BookingsService getStaffOverview", () => {
 });
 
 
+describe("BookingsService.findCompletedWithPendingRefunds — số hoàn đơn bị huỷ", () => {
+  function createRefundListService() {
+    const booking = {
+      ...makeHandoverBooking({ status: "cancelled" }),
+      createdAt: new Date("2026-10-01T00:00:00.000Z"),
+      subtotal: 500_000,
+      discountTotal: 0,
+      rentalTotal: 500_000,
+      depositTotal: 300_000,
+      penaltyTotal: 0,
+      shippingFee: 0,
+      payments: [{ amount: 800_000, paymentMethod: "cash", status: "paid" }],
+      // Phiếu cọc cũ đã huỷ (không tính) + phiếu hoàn toàn bộ tiền thực thu đang chờ.
+      refunds: [
+        { id: "r-1", amount: 300_000, status: "cancelled", refund_method: "cash", createdAt: new Date(), updated_at: new Date() },
+        { id: "r-2", amount: 800_000, status: "pending", refund_method: "cash", createdAt: new Date(), updated_at: new Date() },
+      ],
+      adjustments: [],
+      inspections: [],
+    };
+    const prisma = { booking: { findMany: vi.fn().mockResolvedValue([booking]) } };
+    const service = new BookingsService(
+      prisma as never,
+      { sendBookingNotification: vi.fn(), notifyStaffBooking: vi.fn() } as never,
+      {} as never,
+      { effectiveDailyPrice: vi.fn(), quoteRental: vi.fn() } as never,
+      {} as never,
+    );
+    return { service };
+  }
+
+  it("đơn huỷ: paidTotal − Σ phiếu hoàn đang/đã xử lý (bỏ phiếu đã huỷ)", async () => {
+    const { service } = createRefundListService();
+    const res = await service.findCompletedWithPendingRefunds();
+    const row = (res.data as any[])[0];
+
+    expect(row.status).toBe("cancelled");
+    expect(row.cancellationRefund).toEqual({
+      paidTotal: 800_000,
+      coveringRefundsTotal: 800_000,
+    });
+    // Công thức cọc − phạt sẽ ra 300.000 ⇒ thiếu tiền thuê; BE trả số liệu thật
+    // để FE tính 800.000 − 800.000 = 0 và số hoàn phiếu là toàn bộ tiền đã thu.
+    expect(row.depositTotal).toBe(300_000);
+    expect(row.refunds.map((r: any) => r.id)).toEqual(["r-1", "r-2"]);
+  });
+});
+
 describe("BookingsService payment hold expiry", () => {
   const NOW = new Date("2026-10-01T05:00:00.000Z");
   const HOLD_MS = 30 * 60 * 1000;
@@ -1413,6 +1618,7 @@ describe("BookingsService payment hold expiry", () => {
         updateMany: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) => ({ count: byId.get(where.id)?.claimCount ?? 0 })),
       },
       bookingItem: { findMany: vi.fn().mockResolvedValue([]) },
+      bookingIncident: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
       bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
     };
     const prisma = {
@@ -1460,6 +1666,14 @@ describe("BookingsService payment hold expiry", () => {
     });
     expect(notifications.sendBookingNotification).toHaveBeenCalledWith(expect.objectContaining({ templateKey: "booking.cancelled" }));
     expect(realtime.bookingChangedForCustomer).toHaveBeenCalledWith(CUSTOMER_ID, expect.objectContaining({ status: "cancelled" }));
+    // Đơn tự huỷ phải đóng luôn sự cố còn mở (lỗi #EFAEEBEC).
+    expect(tx.bookingIncident.updateMany).toHaveBeenCalledWith({
+      where: {
+        bookingId: rows[0].id,
+        status: { in: ["open", "awaiting_customer", "needs_manager"] },
+      },
+      data: expect.objectContaining({ status: "resolved", resolution: "booking_cancelled" }),
+    });
   });
 
   it("never cancels a booking that already has a paid payment", async () => {
@@ -1732,6 +1946,7 @@ describe("BookingsService.assignAsset auto mode", () => {
       booking: { findUnique: vi.fn().mockResolvedValue(booking) },
       garmentAsset: { findUnique: vi.fn().mockResolvedValue(asset) },
       bookingItem: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn().mockResolvedValue({}) },
+      bookingChangeHold: { findMany: vi.fn().mockResolvedValue([]) },
       bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "h1" }) },
     };
     const prisma = {

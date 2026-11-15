@@ -27,6 +27,7 @@ const makeNotification = (overrides: Partial<{
   isRead: boolean;
   readAt: string | null;
   createdAt: string;
+  linkUrl: string | null;
 }> = {}) => ({
   id: "notif-1",
   title: "Test Notification",
@@ -34,6 +35,7 @@ const makeNotification = (overrides: Partial<{
   isRead: false,
   readAt: null,
   createdAt: new Date().toISOString(),
+  linkUrl: null,
   ...overrides,
 });
 
@@ -203,6 +205,66 @@ describe("NotificationBell", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(mockMarkAllMyNotificationsRead).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Item link ---
+  it("renders an internal link for a notification with a safe linkUrl", async () => {
+    mockGetMyNotifications.mockResolvedValue({
+      success: true,
+      data: {
+        notifications: [makeNotification({ id: "n1", linkUrl: "/dashboard/manager/incidents" })],
+        unreadCount: 1,
+      },
+    });
+
+    render(<NotificationBell />);
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByLabelText("Thông báo"));
+    const link = screen.getByText("Xem chi tiết").closest("a");
+    expect(link).toHaveAttribute("href", "/dashboard/manager/incidents");
+  });
+
+  it("marks read and closes the panel when a linked unread notification is clicked", async () => {
+    mockGetMyNotifications.mockResolvedValue({
+      success: true,
+      data: {
+        notifications: [makeNotification({ id: "n1", isRead: false, linkUrl: "/dashboard/manager/incidents" })],
+        unreadCount: 1,
+      },
+    });
+
+    render(<NotificationBell />);
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByLabelText("Thông báo"));
+    fireEvent.click(screen.getByText("Xem chi tiết"));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockMarkMyNotificationRead).toHaveBeenCalledWith("n1");
+    expect(screen.queryByText("Chưa có thông báo.")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["absolute", "https://evil.example/phish"],
+    ["protocol-relative", "//evil.example/phish"],
+    ["backslash trick", "/\\evil.example/phish"],
+    ["control char", "/dashboard/\u0000incidents"],
+  ])("does not render a link for a %s linkUrl", async (_label, hostile) => {
+    mockGetMyNotifications.mockResolvedValue({
+      success: true,
+      data: {
+        notifications: [makeNotification({ id: "n1", linkUrl: hostile })],
+        unreadCount: 0,
+      },
+    });
+
+    render(<NotificationBell />);
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(screen.getByLabelText("Thông báo"));
+    expect(screen.queryByText("Xem chi tiết")).not.toBeInTheDocument();
+    expect(screen.getByText("Test Notification")).toBeInTheDocument();
   });
 
   // --- "View all" link ---

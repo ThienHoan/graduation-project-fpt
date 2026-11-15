@@ -26,6 +26,7 @@ import { DeliveryMap } from "@/components/location/delivery-map";
 import { STATUS_LABELS, statusBadgeClass } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { HandoverConfirmationModal } from "@/components/bookings/handover-confirmation-modal";
+import { staffRefundDue } from "./refund-due";
 import {
   Map,
   Search,
@@ -277,6 +278,10 @@ export default function StaffBookingManagementPage() {
     refundMethod: "cash" | "bank_transfer";
     depositTotal: number;
     penaltyTotal: number;
+    /** Credit đổi mẫu/bỏ món còn treo (đã gộp vào số hoàn) — có sẵn trên danh sách. */
+    creditTotal: number;
+    /** Đơn đã huỷ/từ chối: số hoàn = tiền thực thu − phiếu hoàn đã tạo (không dùng cọc−phạt). */
+    cancellationPayable?: number | null;
   } | null>(null);
   const [refundBankName, setRefundBankName] = useState("");
   const [refundBankAccount, setRefundBankAccount] = useState("");
@@ -509,7 +514,20 @@ export default function StaffBookingManagementPage() {
       refundMethod: refund?.refundMethod === "cash" ? "cash" : refundMethodForBooking(booking),
       depositTotal: booking.depositTotal,
       penaltyTotal: booking.penaltyTotal ?? 0,
+      creditTotal: booking.accruedCreditTotal ?? 0,
+      cancellationPayable:
+        booking.status === "cancelled" || booking.status === "rejected"
+          ? staffRefundDue(booking)
+          : null,
     });
+  }
+
+  /**
+   * Số tiền thực phải hoàn của đơn (khớp đúng số Quản lý duyệt).
+   * Xem `staffRefundDue` — đơn huỷ hoàn toàn bộ tiền thực thu, không dùng cọc−phạt.
+   */
+  function refundDueOf(booking: StaffBookingResponse): number {
+    return staffRefundDue(booking);
   }
 
   async function refreshRefundBookings() {
@@ -579,7 +597,8 @@ export default function StaffBookingManagementPage() {
   }
 
   const refundAmount = refundDialog
-    ? Math.max(0, refundDialog.depositTotal - refundDialog.penaltyTotal)
+    ? (refundDialog.cancellationPayable ??
+      Math.max(0, refundDialog.depositTotal + refundDialog.creditTotal - refundDialog.penaltyTotal))
     : 0;
 
   const pendingRefundCount = pendingCount ?? (tab === "pending" ? bookings.filter((b) => b.status === "pending_confirmation").length : 0);
@@ -752,7 +771,15 @@ export default function StaffBookingManagementPage() {
             const sizeLabel = booking.items[0]?.sizeLabel ?? "—";
             const garmentImageUrl = booking.items[0]?.imageUrl ?? null;
             // Refund info for completed bookings
-            const refund = booking.refunds?.[0];
+            // Đơn huỷ có thể có NHIỀU phiếu hoàn (vd 1 phiếu cọc cũ đã huỷ + phiếu
+            // hoàn toàn bộ tiền thực thu) → ưu tiên phiếu đang chờ/đã hoàn.
+            const refund =
+              booking.refunds?.find((r) => r.status === "pending" || r.status === "refunding") ??
+              booking.refunds?.find((r) => r.status === "refunded" || r.status === "partially_refunded") ??
+              booking.refunds?.[0];
+            // Số hoàn thực (khớp số Quản lý duyệt): đơn huỷ = tiền thực thu − phiếu
+            // hoàn đã tạo; đơn hoàn cọc thường = cọc + credit − phạt.
+            const refundDue = refundDueOf(booking);
             const isRefunded = refund && (refund.status === "refunded" || refund.status === "partially_refunded");
             const isPendingRefund = refund && (refund.status === "pending" || refund.status === "refunding");
             const paidMethod = booking.paidPaymentMethod
@@ -877,12 +904,31 @@ export default function StaffBookingManagementPage() {
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-500">Hoàn cọc</p>
-                    <p className="mt-1 font-medium text-ink">
-                      Cọc: {formatVND(booking.depositTotal)}
-                    </p>
-                    <p className="text-sm text-stone-500">
-                      Phạt: {formatVND(booking.penaltyTotal ?? 0)} → Hoàn: <span className="font-semibold text-jade">{formatVND(Math.max(0, booking.depositTotal - (booking.penaltyTotal ?? 0)))}</span>
-                    </p>
+                    {booking.cancellationRefund ? (
+                      <>
+                        <p className="mt-1 font-medium text-ink">
+                          Đã thu: {formatVND(booking.cancellationRefund.paidTotal)}
+                        </p>
+                        <p className="text-sm text-stone-500">
+                          Đã tạo phiếu hoàn: {formatVND(booking.cancellationRefund.coveringRefundsTotal)} → Hoàn:{" "}
+                          <span className="font-semibold text-jade">{formatVND(refundDue)}</span>
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-1 font-medium text-ink">
+                          Cọc: {formatVND(booking.depositTotal)}
+                        </p>
+                        <p className="text-sm text-stone-500">
+                          Phạt: {formatVND(booking.penaltyTotal ?? 0)}
+                          {(booking.accruedCreditTotal ?? 0) > 0
+                            ? ` · Điều chỉnh: +${formatVND(booking.accruedCreditTotal ?? 0)}`
+                            : ""}{" "}
+                          → Hoàn:{" "}
+                          <span className="font-semibold text-jade">{formatVND(refundDue)}</span>
+                        </p>
+                      </>
+                    )}
                     {refund && (
                       <p className="mt-1 text-xs text-stone-400">
                         {refund.refundMethod === "cash" ? "Tiền mặt" : "Chuyển khoản"} · {refund.status === "refunded" ? "Đã hoàn" : refund.status === "pending" ? "Chờ duyệt" : refund.status}
@@ -1019,7 +1065,7 @@ export default function StaffBookingManagementPage() {
                             </button>
                           )}
                         </div>
-                      ) : booking.depositTotal - (booking.penaltyTotal ?? 0) <= 0 ? (
+                      ) : refundDue <= 0 ? (
                         booking.status === "refund_pending" ? (
                           <button
                             type="button"
@@ -1056,12 +1102,17 @@ export default function StaffBookingManagementPage() {
                                   refundMethod: "cash",
                                   depositTotal: booking.depositTotal,
                                   penaltyTotal: booking.penaltyTotal ?? 0,
+                                  creditTotal: booking.accruedCreditTotal ?? 0,
+                                  cancellationPayable:
+                                    booking.status === "cancelled" || booking.status === "rejected"
+                                      ? staffRefundDue(booking)
+                                      : null,
                                 });
                                 handleCashRefund(booking.id);
                               }}
                               className="rounded-lg bg-jade px-4 py-2 text-sm font-semibold text-white transition hover:bg-forest disabled:opacity-50"
                             >
-                              {isActioning ? "Đang xử lý..." : `Tạo yêu cầu hoàn cọc tiền mặt (${formatVND(Math.max(0, booking.depositTotal - (booking.penaltyTotal ?? 0)))})`}
+                              {isActioning ? "Đang xử lý..." : `Tạo yêu cầu hoàn cọc tiền mặt (${formatVND(refundDue)})`}
                             </button>
                           )}
                         </>
@@ -1204,18 +1255,38 @@ export default function StaffBookingManagementPage() {
             </p>
 
             <div className="mt-6 rounded-xl bg-jade/5 border border-jade/30 p-4">
-              <div className="flex justify-between text-sm">
-                <span className="text-stone-600">Tiền cọc</span>
-                <span className="font-semibold text-ink">{formatVND(refundDialog.depositTotal)}</span>
-              </div>
-              <div className="mt-2 flex justify-between text-sm">
-                <span className="text-stone-600">Phí phạt</span>
-                <span className="font-semibold text-red-700">-{formatVND(refundDialog.penaltyTotal)}</span>
-              </div>
-              <div className="mt-3 border-t border-jade/30 pt-3 flex justify-between text-base">
-                <span className="font-semibold text-ink">Tiền hoàn</span>
-                <span className="font-bold text-jade">{formatVND(refundAmount)}</span>
-              </div>
+              {refundDialog.cancellationPayable ? (
+                <>
+                  <p className="text-sm text-stone-600">
+                    Đơn đã huỷ — hoàn toàn bộ tiền khách đã thực thu (không trừ phạt).
+                  </p>
+                  <div className="mt-3 flex justify-between text-base">
+                    <span className="font-semibold text-ink">Tiền hoàn</span>
+                    <span className="font-bold text-jade">{formatVND(refundAmount)}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-stone-600">Tiền cọc</span>
+                    <span className="font-semibold text-ink">{formatVND(refundDialog.depositTotal)}</span>
+                  </div>
+                  {refundDialog.creditTotal > 0 && (
+                    <div className="mt-2 flex justify-between text-sm">
+                      <span className="text-stone-600">Điều chỉnh đổi mẫu / bỏ món</span>
+                      <span className="font-semibold text-jade">+{formatVND(refundDialog.creditTotal)}</span>
+                    </div>
+                  )}
+                  <div className="mt-2 flex justify-between text-sm">
+                    <span className="text-stone-600">Phí phạt</span>
+                    <span className="font-semibold text-red-700">-{formatVND(refundDialog.penaltyTotal)}</span>
+                  </div>
+                  <div className="mt-3 border-t border-jade/30 pt-3 flex justify-between text-base">
+                    <span className="font-semibold text-ink">Tiền hoàn</span>
+                    <span className="font-bold text-jade">{formatVND(refundAmount)}</span>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="mt-6 space-y-4">

@@ -48,11 +48,25 @@ describe("RefundsService", () => {
       financialTransaction: {
         create: vi.fn().mockResolvedValue({ id: "ft-1" }),
       },
+      // Credit đổi mẫu/bỏ món (§11): mặc định không có → số hoàn = cọc − phạt.
+      bookingAdjustment: {
+        findMany: vi.fn().mockResolvedValue([]),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
     };
 
     const prisma = {
       booking: {
         findUnique: vi.fn().mockResolvedValue(defaultBooking),
+      },
+      bookingAdjustment: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      payment: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      refund: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       runSerializable: vi.fn().mockImplementation(async (cb: (txClient: typeof tx) => Promise<any>) => cb(tx)),
     };
@@ -90,6 +104,39 @@ describe("RefundsService", () => {
       const { service } = createService({ depositTotal: 200000, penaltyTotal: 300000 });
       const result = await service.calculate(BOOKING_ID);
 
+      expect(result.data?.refundAmount).toBe(0);
+    });
+
+    it("cộng credit đổi mẫu/bỏ món còn treo vào số hoàn thực (§11)", async () => {
+      const { service } = createService({ depositTotal: 500000, penaltyTotal: 100000 });
+      // prisma.bookingAdjustment (không phải tx) trả credit.
+      (service["prisma"].bookingAdjustment.findMany as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        { amount: 150000 },
+      ]);
+
+      const result = await service.calculate(BOOKING_ID);
+
+      // 500.000 − 100.000 + 150.000 = 550.000
+      expect(result.data?.refundAmount).toBe(550000);
+    });
+
+    it("đơn đã huỷ: hoàn toàn bộ tiền thực thu trừ phiếu hoàn đã tạo (không dùng cọc − phạt)", async () => {
+      const { service } = createService({
+        status: BookingStatus.cancelled,
+        depositTotal: 300000,
+        penaltyTotal: 0,
+      });
+      (service["prisma"].payment.findMany as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        { amount: 800000 },
+      ]);
+      (service["prisma"].refund.findMany as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        { amount: 800000 },
+      ]);
+
+      const result = await service.calculate(BOOKING_ID);
+
+      // Cọc − phạt sẽ ra 300.000 (thiếu tiền thuê) ⇒ phải là 800.000 − 800.000 = 0
+      // khi phiếu hoàn toàn bộ tiền thực thu đã tồn tại.
       expect(result.data?.refundAmount).toBe(0);
     });
 
@@ -224,6 +271,21 @@ describe("RefundsService", () => {
       };
 
       await expect(service.create(dto, STAFF_ID)).rejects.toThrow("Không có tiền cọc để hoàn lại.");
+    });
+
+    it("cộng credit còn treo vào số tiền phiếu và KHÔNG tất toán ngay (chỉ tất toán khi duyệt)", async () => {
+      const { service, tx } = createService({ depositTotal: 1_000_000, penaltyTotal: 200_000 });
+      tx.bookingAdjustment.findMany.mockResolvedValue([{ amount: 300_000 }]);
+
+      const dto = { bookingId: BOOKING_ID, refundMethod: "cash" as const };
+      await service.create(dto, STAFF_ID);
+
+      // 1.000.000 − 200.000 + 300.000 = 1.100.000
+      expect(tx.refund.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 1_100_000 }) }),
+      );
+      // Chưa tất toán: phiếu bị từ chối vẫn giữ credit để lần sau cộng đúng.
+      expect(tx.bookingAdjustment.updateMany).not.toHaveBeenCalled();
     });
   });
 });
