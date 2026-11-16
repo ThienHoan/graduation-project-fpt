@@ -1,6 +1,6 @@
 import { PaymentStatus, Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-import { ensureCancellationRefunds } from "./settlement.helper";
+import { ensureCancellationRefunds, settleAccruedCredits, sumAccruedCredits } from "./settlement.helper";
 
 const bookingId = "11111111-1111-4111-8111-111111111111";
 const paidId = "22222222-2222-4222-8222-222222222222";
@@ -65,5 +65,36 @@ describe("ensureCancellationRefunds", () => {
     const result = await ensureCancellationRefunds(tx, bookingId);
     expect(result.refundIds).toEqual(["refund-" + paidId, "refund-paid-2"]);
     expect(tx.refund.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sumAccruedCredits / settleAccruedCredits (§11)", () => {
+  it("sums accrued credit adjustments and returns 0 when none", async () => {
+    const tx: any = {
+      bookingAdjustment: {
+        findMany: vi.fn().mockResolvedValue([
+          { amount: new Prisma.Decimal(150_000) },
+          { amount: new Prisma.Decimal(50_000) },
+        ]),
+      },
+    };
+    const total = await sumAccruedCredits(tx, bookingId);
+    expect(Number(total)).toBe(200_000);
+    expect(tx.bookingAdjustment.findMany).toHaveBeenCalledWith({
+      where: { bookingId, status: "accrued", direction: "credit" },
+      select: { amount: true },
+    });
+
+    tx.bookingAdjustment.findMany.mockResolvedValueOnce([]);
+    expect(Number(await sumAccruedCredits(tx, bookingId))).toBe(0);
+  });
+
+  it("marks accrued credits settled with the covering refund id", async () => {
+    const tx: any = { bookingAdjustment: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) } };
+    await settleAccruedCredits(tx, bookingId, "refund-9");
+    expect(tx.bookingAdjustment.updateMany).toHaveBeenCalledWith({
+      where: { bookingId, status: "accrued", direction: "credit" },
+      data: { status: "settled", refundId: "refund-9" },
+    });
   });
 });

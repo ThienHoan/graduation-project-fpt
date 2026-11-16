@@ -97,7 +97,10 @@ function webhookService(options?: { bookingStatus?: BookingStatus; paymentStatus
       updateMany: vi.fn().mockResolvedValue({ count: options?.claimed ?? 1 }),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ ...current, status: PaymentStatus.paid }),
     },
-    financialTransaction: { create: vi.fn().mockResolvedValue({ id: "transaction-1" }) },
+    financialTransaction: {
+      create: vi.fn().mockResolvedValue({ id: "transaction-1" }),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     booking: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     bookingStatusHistory: { create: vi.fn().mockResolvedValue({ id: "history-1" }) },
   };
@@ -105,7 +108,14 @@ function webhookService(options?: { bookingStatus?: BookingStatus; paymentStatus
     payment: { findMany: vi.fn().mockResolvedValue([current]) },
     runSerializable: vi.fn(async (operation: (client: typeof tx) => Promise<unknown>) => operation(tx)),
   };
-  return { service: new PaymentsService(prisma as never, config() as never), prisma, tx, current };
+  const notifications = { notifyRoles: vi.fn().mockResolvedValue({ data: { notified: 1 } }) };
+  return {
+    service: new PaymentsService(prisma as never, config() as never, undefined, notifications as never),
+    prisma,
+    tx,
+    notifications,
+    current,
+  };
 }
 
 beforeEach(() => {
@@ -353,6 +363,42 @@ describe("PaymentsService.handleWebhook", () => {
 
     expect(result.data).toEqual({ message: "Payment amount mismatch." });
     expect(prisma.runSerializable).not.toHaveBeenCalled();
+  });
+
+  it("records a late payment for a cancelled intent without reopening the booking", async () => {
+    const { service, tx, notifications } = webhookService({ paymentStatus: PaymentStatus.cancelled });
+
+    const result = await service.handleWebhook({ code: "00", data: { amount: 160, currency: "VND" } });
+
+    expect(result.data).toEqual({ message: "Late payment recorded for manual handling." });
+    expect(tx.financialTransaction.create).toHaveBeenCalledTimes(1);
+    expect(tx.financialTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentId: "payment-1",
+        transactionType: "payment_unmatched",
+        amount: new Prisma.Decimal(160),
+        note: String(ORDER_CODE),
+      }),
+    });
+    // Không đổi trạng thái đơn, không nới markAsPaidTx.
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+    expect(tx.bookingStatusHistory.create).not.toHaveBeenCalled();
+    expect(notifications.notifyRoles).toHaveBeenCalledWith(expect.objectContaining({
+      roles: ["manager_owner"],
+      templateKey: "booking.staff.payment_unmatched",
+    }));
+  });
+
+  it("is idempotent when a late payment webhook is delivered again", async () => {
+    const { service, tx, notifications } = webhookService({ paymentStatus: PaymentStatus.failed });
+    tx.financialTransaction.findFirst.mockResolvedValue({ id: "transaction-1" });
+
+    const result = await service.handleWebhook({ code: "00", data: { amount: 160, currency: "VND" } });
+
+    expect(result.data).toEqual({ message: "Late payment recorded for manual handling." });
+    expect(tx.financialTransaction.create).not.toHaveBeenCalled();
+    expect(notifications.notifyRoles).not.toHaveBeenCalled();
   });
 });
 

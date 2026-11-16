@@ -35,6 +35,22 @@ export const STATUS_LABELS: Record<string, StatusLabel> = {
 };
 
 /**
+ * Trạng thái sự cố đổi mẫu (§13). Tách khỏi `STATUS_LABELS` để KHÔNG bị
+ * `normalizeStatusInText` thay thế nhầm các từ tiếng Anh trong nội dung thông báo.
+ */
+export const INCIDENT_STATUS_LABELS: Record<string, StatusLabel> = {
+  open:              { label: "Mới phát hiện",         color: "bg-amber-50 text-amber-700" },
+  awaiting_customer: { label: "Chờ khách xác nhận",    color: "bg-lotus/10 text-lotus" },
+  needs_manager:     { label: "Cần cửa hàng hỗ trợ",   color: "bg-red-50 text-red-600" },
+  resolved:          { label: "Đã xử lý",              color: "bg-jade/10 text-jade" },
+  cancelled:         { label: "Đã hủy",                color: "bg-stone-100 text-stone-500" },
+};
+
+export function incidentStatusOf(status: string): StatusLabel {
+  return INCIDENT_STATUS_LABELS[status] ?? { label: status, color: "bg-stone-100 text-stone-600" };
+}
+
+/**
  * Prebuilt Tailwind class string for all status badges.
  * Every badge gets: rounded-full, small text, uppercase, letter-spacing.
  */

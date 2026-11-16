@@ -460,4 +460,131 @@ describe("NotificationsService", () => {
       }),
     );
   });
+
+  it("fallback email dựng CTA tuyệt đối theo FRONTEND_URL (không phải localhost) khi có linkUrl", async () => {
+    const sendMailMock = vi.fn().mockResolvedValue(undefined);
+    const nodemailer = await import("nodemailer");
+    vi.mocked(nodemailer.createTransport).mockReturnValueOnce({
+      sendMail: sendMailMock,
+    } as any);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) => {
+          if (where.key === "notification:settings") {
+            return {
+              value: {
+                provider: "smtp",
+                smtp: {
+                  user: "mailer@example.com",
+                  password: "mailer-password",
+                  fromEmail: "mailer@example.com",
+                  fromName: "Cổ Phục ERP",
+                },
+              },
+            };
+          }
+          return null;
+        }),
+      },
+      auditLog: { create: vi.fn() },
+      notification: {
+        create: vi.fn().mockResolvedValue({ id: "notif-cta" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      userAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-cta",
+          email: "cta@example.com",
+          profile: { fullName: "User CTA" },
+        }),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "SMTP_EMAIL") return "mailer@example.com";
+        if (key === "SMTP_PASSWORD") return "mailer-password";
+        if (key === "FRONTEND_URL") return "https://cophuctruyenthong.tech";
+        return undefined;
+      }),
+    };
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+
+    await service.sendBookingNotification({
+      userId: "user-cta",
+      templateKey: "booking.pickup_reminder",
+      bookingId: "00000000-0000-4000-8000-000000000003",
+      garmentName: "Áo Tấc",
+      linkUrl: "/booking/incidents/00000000-0000-4000-8000-000000000003",
+      // Không truyền html → dùng wrapEmailHtml fallback.
+    });
+
+    const html = sendMailMock.mock.calls[0][0].html as string;
+    expect(html).toContain('href="https://cophuctruyenthong.tech/booking/incidents/00000000-0000-4000-8000-000000000003"');
+    expect(html).not.toContain("localhost:3000");
+  });
+
+  it("fallback email không dựng CTA khi linkUrl là URL tuyệt đối/scheme nguy hiểm", async () => {
+    const sendMailMock = vi.fn().mockResolvedValue(undefined);
+    const nodemailer = await import("nodemailer");
+    vi.mocked(nodemailer.createTransport).mockReturnValueOnce({
+      sendMail: sendMailMock,
+    } as any);
+
+    const prisma = {
+      systemSetting: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: { where: { key: string } }) => {
+          if (where.key === "notification:settings") {
+            return {
+              value: {
+                provider: "smtp",
+                smtp: {
+                  user: "mailer@example.com",
+                  password: "mailer-password",
+                  fromEmail: "mailer@example.com",
+                  fromName: "Cổ Phục ERP",
+                },
+              },
+            };
+          }
+          return null;
+        }),
+      },
+      auditLog: { create: vi.fn() },
+      notification: {
+        create: vi.fn().mockResolvedValue({ id: "notif-bad" }),
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      userAccount: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-bad",
+          email: "bad@example.com",
+          profile: { fullName: "User Bad" },
+        }),
+      },
+    };
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === "SMTP_EMAIL") return "mailer@example.com";
+        if (key === "SMTP_PASSWORD") return "mailer-password";
+        return undefined;
+      }),
+    };
+    const service = new NotificationsService(prisma as never, configService as never, realtimeMock);
+
+    await service.sendBookingNotification({
+      userId: "user-bad",
+      templateKey: "booking.pickup_reminder",
+      bookingId: "00000000-0000-4000-8000-000000000003",
+      garmentName: "Áo Tấc",
+      linkUrl: "javascript:alert(1)",
+    });
+
+    const html = sendMailMock.mock.calls[0][0].html as string;
+    // Không nhận scheme lạ → không chèn CTA nào.
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("Xem chi tiết đơn thuê");
+  });
 });

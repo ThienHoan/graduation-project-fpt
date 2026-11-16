@@ -18,9 +18,14 @@ import { ConfirmHandoverDto } from "./dto/confirm-handover.dto";
 import { SizeAvailabilityCalendarDto } from "./dto/size-availability-calendar.dto";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { MarkPaidDto } from "./dto/mark-paid.dto";
+import { ManagerCancelDto } from "./dto/manager-cancel.dto";
 import { MarkDeliveryDto } from "./dto/mark-delivery.dto";
 import { RecoverHandoverDto } from "./dto/recover-handover.dto";
 import { UpdateBookingStatusDto } from "./dto/update-booking-status.dto";
+import { BookingIncidentsService } from "./booking-incidents.service";
+import { BookingChangeRequestsService } from "./booking-change-requests.service";
+import { CreateChangeRequestDto } from "./dto/change-request.dto";
+import { ManagerIncidentActionDto } from "./dto/manager-incident-action.dto";
 
 interface RawResponse {
   setHeader(name: string, value: string): void;
@@ -33,6 +38,8 @@ export class BookingsController {
     private readonly bookingsService: BookingsService,
     private readonly automation: BookingAutomationService,
     private readonly extensions: BookingExtensionsService,
+    private readonly incidents: BookingIncidentsService,
+    private readonly changeRequests: BookingChangeRequestsService,
   ) {}
 
   @Post("check-availability")
@@ -60,6 +67,16 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard)
   findMine(@CurrentUser() user: AuthenticatedUser) {
     return this.bookingsService.findMine(user.id);
+  }
+
+  /**
+   * Tab "Sự cố" của khách: các đơn đang có sự cố + số đếm cho badge sidebar.
+   * Đặt TRƯỚC `:id` để không bị route tham số nuốt.
+   */
+  @Get("me/incidents")
+  @UseGuards(JwtAuthGuard)
+  findMyIncidents(@CurrentUser() user: AuthenticatedUser) {
+    return this.changeRequests.listMyIncidents(user);
   }
 
   /** Khách xem toàn bộ lịch sử gia hạn các đơn thuê của mình. */
@@ -260,6 +277,42 @@ export class BookingsController {
     return this.bookingsService.markReturned(id, dto, user.id);
   }
 
+  // §13.2 Manager/Staff xem + xử lý sự cố (đặt TRƯỚC `staff/:id`).
+  @Get("staff/incidents")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  listStaffIncidents(
+    @Query("status") status?: string,
+    @Query("q") q?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.changeRequests.listStaffIncidents({
+      status,
+      q,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get("staff/incidents/:id")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  getStaffIncident(@Param("id", ParseUUIDPipe) id: string) {
+    return this.changeRequests.getStaffIncident(id);
+  }
+
+  @Post("staff/incidents/:id/actions")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  applyStaffIncidentAction(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: ManagerIncidentActionDto,
+  ) {
+    return this.changeRequests.applyStaffIncidentAction(user, id, dto);
+  }
+
   @Get("staff/assets-needed")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("manager_owner", "admin")
@@ -270,6 +323,18 @@ export class BookingsController {
   @Roles("staff", "manager_owner", "admin")
   findOneForStaff(@Param("id", ParseUUIDPipe) id: string) {
     return this.bookingsService.findOneForStaff(id);
+  }
+
+  // §8.2 Manager/Admin hủy đơn đã thanh toán — bắt buộc lý do, chỉ khi có sự cố mở.
+  @Post("staff/:id/cancel")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("manager_owner", "admin")
+  staffCancel(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() dto: ManagerCancelDto,
+  ) {
+    return this.bookingsService.staffCancel(id, dto, user);
   }
 
   @Post("cancel-expired-payments")
@@ -311,4 +376,85 @@ export class BookingsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("staff", "manager_owner", "admin")
   runOverdueScan() { return this.bookingsService.markOverdueBookings(); }
+
+  // Demo/kiểm thử thủ công: chạy ngay một vòng quét sự cố (mục 4.4).
+  @Post("staff/incidents/run-scan")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("staff", "manager_owner", "admin")
+  runIncidentScan() { return this.incidents.runScan(); }
+
+  // ── Mục 4.4 — đổi mẫu / bỏ món (§7.1, §7.2, §7.4) ────────────────────────
+
+  @Get(":id/incidents")
+  @UseGuards(JwtAuthGuard)
+  listIncidents(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    return this.changeRequests.listIncidents(user, id);
+  }
+
+  @Post(":id/incidents/change-requests")
+  @UseGuards(JwtAuthGuard)
+  createChangeRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: CreateChangeRequestDto,
+  ) {
+    return this.changeRequests.createChangeRequest(user, id, body);
+  }
+
+  /**
+   * Báo giá LIVE (không tạo yêu cầu, không giữ chỗ): trang khách gọi lại mỗi khi
+   * đổi mẫu / số lượng phụ kiện để giá và danh sách món cập nhật ngay.
+   */
+  @Post(":id/incidents/change-requests/preview")
+  @UseGuards(JwtAuthGuard)
+  previewChangeRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: CreateChangeRequestDto,
+  ) {
+    return this.changeRequests.createChangeRequest(user, id, body, { preview: true });
+  }
+
+  @Get(":id/change-requests/:requestId")
+  @UseGuards(JwtAuthGuard)
+  getChangeRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+  ) {
+    return this.changeRequests.getChangeRequest(user, id, requestId);
+  }
+
+  @Patch(":id/change-requests/:requestId/cancel")
+  @UseGuards(JwtAuthGuard)
+  cancelChangeRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+  ) {
+    return this.changeRequests.cancelChangeRequest(user, id, requestId);
+  }
+
+  @Post(":id/change-requests/:requestId/confirm")
+  @UseGuards(JwtAuthGuard)
+  confirmChangeRequest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+  ) {
+    return this.changeRequests.confirmChangeRequest(user, id, requestId);
+  }
+
+  @Post(":id/incidents/:incidentId/decline")
+  @UseGuards(JwtAuthGuard)
+  declineIncident(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("incidentId", ParseUUIDPipe) incidentId: string,
+  ) {
+    return this.changeRequests.declineIncident(user, id, incidentId);
+  }
 }

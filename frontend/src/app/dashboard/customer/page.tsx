@@ -11,6 +11,7 @@ import {
   getCustomerBookingInspections,
   getGarmentById,
   getGarmentsGrouped,
+  getBookingIncidents,
 } from "@/lib/api";
 import type {
   BookingResponse,
@@ -217,6 +218,8 @@ export default function CustomerDashboardPage() {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [userName, setUserName] = useState("Khách hàng");
   const [refundMap, setRefundMap] = useState<Record<string, CustomerRefundResponse | null>>({});
+  // Sự cố đang mở của từng đơn (mục 4.4) → banner nhắc khách xử lý.
+  const [incidentBookingIds, setIncidentBookingIds] = useState<string[]>([]);
 
   // Delivery tracking
   const [deliveryTrack, setDeliveryTrack] = useState<DeliveryTrackData | null>(null);
@@ -376,6 +379,23 @@ export default function CustomerDashboardPage() {
         }
       });
     });
+
+    // Sự cố mở chỉ có trước khi bàn giao; gọi song song và bỏ qua lỗi từng đơn.
+    const preHandoverIds = data
+      .filter((b) =>
+        ["pending_confirmation", "confirmed", "awaiting_payment", "paid", "preparing", "ready_for_pickup"].includes(
+          b.status,
+        ),
+      )
+      .map((b) => b.id);
+    const incidentResults = await Promise.all(
+      preHandoverIds.map(async (bookingId) => {
+        const res = await getBookingIncidents(bookingId).catch(() => null);
+        const hasOpen = Boolean(res?.success && res.data && res.data.incidents.length > 0);
+        return hasOpen ? bookingId : null;
+      }),
+    );
+    setIncidentBookingIds(incidentResults.filter((id): id is string => Boolean(id)));
   }, []);
 
   useEffect(() => {
@@ -738,6 +758,39 @@ export default function CustomerDashboardPage() {
         {/* Decorative corner background motif */}
         <div className="pointer-events-none absolute -right-12 -top-12 h-52 w-52 rounded-full bg-radial from-antique/25 to-transparent blur-2xl" />
       </header>
+
+      {/* Banner: đơn có sự cố đổi mẫu cần khách xử lý (mục 4.4) */}
+      {incidentBookingIds.length > 0 ? (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5 sm:p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-display text-xl text-ink">Có món trong đơn cần thay đổi</h2>
+                <p className="mt-1 text-sm leading-6 text-amber-800">
+                  {incidentBookingIds.length === 1
+                    ? "Một đơn thuê có món không còn sẵn sàng cho lịch thuê. Vui lòng chọn mẫu khác, bỏ món hoặc huỷ đơn."
+                    : `${incidentBookingIds.length} đơn thuê có món không còn sẵn sàng. Vui lòng xử lý trước ngày nhận đồ.`}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+              {incidentBookingIds.slice(0, 2).map((bookingId) => (
+                <Link
+                  key={bookingId}
+                  href={`/booking/incidents/${bookingId}`}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-amber-600 px-5 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-amber-700"
+                >
+                  Xử lý đơn #{bookingId.slice(0, 8).toUpperCase()}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {/* 2. Quick Metric Cards (Overview) */}
       <section className="grid grid-cols-2 gap-3.5 sm:gap-4 lg:grid-cols-4">

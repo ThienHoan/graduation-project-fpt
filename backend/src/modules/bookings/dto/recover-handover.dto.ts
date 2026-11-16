@@ -1,17 +1,17 @@
-import { Type } from "class-transformer";
-import { ArrayMaxSize, IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from "class-validator";
+import { IsDateString, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
-class ReplacementAssetDto {
-  @IsUUID("4")
-  itemId!: string;
+export const HANDOVER_RECOVERY_ACTIONS = ["cancel"] as const;
+export type HandoverRecoveryAction = (typeof HANDOVER_RECOVERY_ACTIONS)[number];
 
-  @IsUUID("4")
-  garmentAssetId!: string;
-}
-
+/**
+ * Xử lý biên bản bàn giao bị từ chối. Từ chối bàn giao chỉ còn một hướng duy
+ * nhất: hủy đơn và hoàn tiền — không còn "thay thế sản phẩm" tại bước này.
+ */
 export class RecoverHandoverDto {
-  @IsIn(["replace", "cancel"])
-  action!: "replace" | "cancel";
+  /** Giữ lại để tương thích payload cũ; chỉ nhận `cancel` (mặc định cũng là hủy). */
+  @IsOptional()
+  @IsIn(HANDOVER_RECOVERY_ACTIONS)
+  action?: HandoverRecoveryAction;
 
   @IsDateString()
   expectedDecidedAt!: string;
@@ -20,11 +20,4 @@ export class RecoverHandoverDto {
   @MinLength(1)
   @MaxLength(1000)
   reason!: string;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(100)
-  @ValidateNested({ each: true })
-  @Type(() => ReplacementAssetDto)
-  replacements?: ReplacementAssetDto[];
 }

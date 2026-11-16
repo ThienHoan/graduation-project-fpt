@@ -134,4 +134,72 @@ describe("booking inventory helper", () => {
     );
     expect(result.available).toBe(1);
   });
+
+  it("counts a change-request hold as +1 demand (§10)", () => {
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-02"),
+        endDay: day("2026-01-03"),
+        assets: [asset("a1"), asset("a2")],
+        items: [],
+        holds: [{ garmentAssetId: "a1", startDay: day("2026-01-02"), endDay: day("2026-01-03") }],
+      }),
+    );
+    expect(result).toEqual({ capacity: 2, committed: 1, available: 1 });
+  });
+
+  it("does not double count a hold whose asset is already held by an item (§10)", () => {
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-02"),
+        endDay: day("2026-01-03"),
+        assets: [asset("a1")],
+        items: [
+          { garmentAssetId: "a1", booking: booking("b1", BookingStatus.confirmed, "2026-01-02", "2026-01-03") },
+        ],
+        holds: [{ garmentAssetId: "a1", startDay: day("2026-01-02"), endDay: day("2026-01-03") }],
+      }),
+    );
+    expect(result.committed).toBe(1);
+  });
+
+  it("only counts one demand per asset across duplicate holds", () => {
+    const result = sizeAvailability(
+      snapshot({
+        startDay: day("2026-01-02"),
+        endDay: day("2026-01-03"),
+        assets: [asset("a1"), asset("a2")],
+        items: [],
+        holds: [
+          { garmentAssetId: "a1", startDay: day("2026-01-02"), endDay: day("2026-01-03") },
+          { garmentAssetId: "a1", startDay: day("2026-01-02"), endDay: day("2026-01-03") },
+        ],
+      }),
+    );
+    expect(result.committed).toBe(1);
+  });
+
+  it("a hold does not reduce availability for its own booking but does for another (§10.1)", () => {
+    const holds = [{ garmentAssetId: "a1", startDay: day("2026-01-02"), endDay: day("2026-01-03") }];
+    // loadSizeInventory đã lọc hold theo excludeBookingId trước khi dựng snapshot:
+    // tính cho chính đơn X ⇒ danh sách hold rỗng ⇒ available = 2.
+    const ownView = sizeAvailability(
+      snapshot({ startDay: day("2026-01-02"), endDay: day("2026-01-03"), assets: [asset("a1"), asset("a2")], items: [], holds: [] }),
+    );
+    expect(ownView.available).toBe(2);
+    // Tính cho đơn khác ⇒ hold còn sống ⇒ giảm đúng 1.
+    const otherView = sizeAvailability(
+      snapshot({ startDay: day("2026-01-02"), endDay: day("2026-01-03"), assets: [asset("a1"), asset("a2")], items: [], holds }),
+    );
+    expect(otherView).toEqual({ capacity: 2, committed: 1, available: 1 });
+  });
+
+  it("expired holds are filtered upstream so they never add demand (§10.4)", () => {
+    // loadSizeInventory/loadAccessoryInventory chỉ truyền hold còn sống (expiresAt > now
+    // AND consumedAt IS NULL) vào snapshot; hold hết hạn ⇒ holds rỗng ⇒ không cộng demand.
+    const result = sizeAvailability(
+      snapshot({ startDay: day("2026-01-02"), endDay: day("2026-01-03"), assets: [asset("a1"), asset("a2")], items: [], holds: [] }),
+    );
+    expect(result).toEqual({ capacity: 2, committed: 0, available: 2 });
+  });
 });

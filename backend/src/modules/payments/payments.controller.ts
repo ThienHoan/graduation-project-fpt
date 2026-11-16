@@ -38,6 +38,29 @@ export class PaymentsController {
     return this.paymentsService.getExtensionStatus(extensionId, user);
   }
 
+  /** Poll trạng thái thanh toán phần chênh của yêu cầu đổi mẫu/bỏ món (§13.2). */
+  @Get("change-requests/:requestId/status")
+  @UseGuards(JwtAuthGuard)
+  getChangeRequestStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+  ) {
+    return this.paymentsService.getChangeRequestStatus(requestId, user);
+  }
+
+  /**
+   * Cấp lại link PayOS cho yêu cầu đổi khi khách đã huỷ ở cổng thanh toán
+   * (orderCode cũ không tái sử dụng được).
+   */
+  @Post("change-requests/:requestId/retry")
+  @UseGuards(JwtAuthGuard)
+  retryChangeRequestPayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("requestId", ParseUUIDPipe) requestId: string,
+  ) {
+    return this.paymentsService.retryChangeRequestPayment(requestId, user);
+  }
+
   @Post("webhook")
   handleWebhook(@Body() body: any) {
     return this.paymentsService.handleWebhook(body);

@@ -1,10 +1,12 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { AssetStatus, BookingStatus, Prisma } from "@prisma/client";
+import { ensureCancellationRefunds } from "../../common/settlement/settlement.helper";
 import {
   INVENTORY_RELEASED_STATUSES, InventoryItem, PHYSICAL_HOLD_STATUSES,
   RENTABLE_ASSET_STATUSES, isUnreturnedOverdue, parseRentalDateRange, vietnamToday,
   DAY_MS, DEFAULT_LAUNDRY_BUFFER_DAYS,
 } from "./booking-inventory";
+import { loadActiveHolds } from "./booking-change-holds";
 
 const ASSIGNMENT_SELECT = {
   id: true,
@@ -43,17 +45,26 @@ export interface AssetScheduleRequest {
   garmentSizeId?: string;
   now?: Date;
   laundryBufferDays?: number;
+  /** Yêu cầu đổi đang xét: bỏ qua hold của chính nó (§7.2). */
+  excludeChangeRequestId?: string;
 }
 
 export interface AccessoryAssetScheduleRequest {
   assetId: string;
   bookingId: string;
   accessoryItemId?: string;
+  /**
+   * Các dòng phụ kiện SẼ BỊ BỎ trong cùng yêu cầu đổi: bỏ qua assignment của
+   * chúng để chiếc đang gắn với dòng bị bỏ có thể tái dùng cho dòng thêm mới.
+   */
+  excludeAccessoryItemIds?: string[];
   accessoryId?: string;
   startDay: Date;
   endDay: Date;
   now?: Date;
   laundryBufferDays?: number;
+  /** Yêu cầu đổi đang xét: bỏ qua hold của chính nó (§7.2). */
+  excludeChangeRequestId?: string;
 }
 
 /** Bản sao của assertAssetScheduleAvailable cho phụ kiện (accessory_assets).
@@ -81,9 +92,11 @@ export async function assertAccessoryAssetScheduleAvailable(
   const buffer = request.laundryBufferDays !== undefined ? request.laundryBufferDays : DEFAULT_LAUNDRY_BUFFER_DAYS;
   const today = vietnamToday(request.now);
   const requestEndWithBuffer = new Date(+endDay + buffer * DAY_MS);
+  const excludedItemIds = new Set(request.excludeAccessoryItemIds ?? []);
 
   for (const assignment of assignments) {
     if (assignment.id === request.accessoryItemId) continue;
+    if (excludedItemIds.has(assignment.id)) continue;
     if (assignment.bookingId === request.bookingId) {
       throw new ConflictException("Không được gán cùng một accessory asset cho hai món trong một booking.");
     }
@@ -92,6 +105,18 @@ export async function assertAccessoryAssetScheduleAvailable(
     if (isUnreturnedOverdue(booking, today) || (booking.rentalStartDate <= requestEndWithBuffer && bookingEndWithBuffer >= startDay)) {
       throw new ConflictException("Accessory asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày (bao gồm ngày đệm giặt).");
     }
+  }
+
+  // Hold của yêu cầu đổi khác (chưa tiêu thụ, còn hạn) cũng chặn gán.
+  const holds = await loadActiveHolds(client, {
+    from: new Date(+startDay - buffer * DAY_MS),
+    to: requestEndWithBuffer,
+    now: request.now,
+    excludeBookingId: request.bookingId,
+    excludeChangeRequestId: request.excludeChangeRequestId,
+  });
+  if (holds.some((hold) => hold.accessoryAssetId === asset.id)) {
+    throw new ConflictException("Accessory asset đang được một yêu cầu đổi mẫu khác giữ chỗ.");
   }
 }
 
@@ -131,6 +156,18 @@ export async function assertAssetScheduleAvailable(
     if (isUnreturnedOverdue(booking, today) || (physicalStart <= requestEndWithBuffer && bookingEndWithBuffer >= startDay)) {
       throw new ConflictException("Asset đã được đơn khác giữ hoặc có lịch thuê trùng ngày (bao gồm ngày đệm giặt).");
     }
+  }
+
+  // Hold của yêu cầu đổi khác (chưa tiêu thụ, còn hạn) cũng chặn gán.
+  const holds = await loadActiveHolds(client, {
+    from: new Date(+startDay - buffer * DAY_MS),
+    to: requestEndWithBuffer,
+    now: request.now,
+    excludeBookingId: request.bookingId,
+    excludeChangeRequestId: request.excludeChangeRequestId,
+  });
+  if (holds.some((hold) => hold.garmentAssetId === asset.id)) {
+    throw new ConflictException("Asset đang được một yêu cầu đổi mẫu khác giữ chỗ.");
   }
 }
 
@@ -196,6 +233,29 @@ export async function claimBookingAssets(client: Prisma.TransactionClient, booki
   }
 }
 
+/** Release one of this booking's reserved physical holds, BEFORE removing/replacing
+ * its assignment (cancel, đổi mẫu, bỏ món). No-op when the asset is not reserved or
+ * its physical ownership is ambiguous. */
+export async function releaseBookingAsset(
+  client: Prisma.TransactionClient,
+  bookingId: string,
+  assetId: string,
+): Promise<void> {
+  const asset = await client.garmentAsset.findUnique({ where: { id: assetId } });
+  if (!asset || asset.status !== AssetStatus.reserved) return;
+  const assignments = await activeAssignments(client, assetId);
+  const owners = physicalOwners(asset.status, assignments);
+  if (!owners.includes(bookingId)) return;
+  const otherPhysical = assignments.filter(({ booking }) =>
+    booking.id !== bookingId && PHYSICAL_HOLD_STATUSES.includes(booking.status)
+  );
+  if (otherPhysical.length > 0) return;
+  const released = await client.garmentAsset.updateMany({
+    where: { id: assetId, status: AssetStatus.reserved }, data: { status: AssetStatus.available },
+  });
+  if (released.count !== 1) throw new ConflictException("Asset đã thay đổi; không thể giải phóng giữ đồ.");
+}
+
 /** Release only this booking's reserved physical holds, BEFORE cancelling it.
  * Future assignments to somebody else's held asset are simply left untouched.
  * Clear this booking's assignment rows separately in the same transaction if needed.
@@ -204,19 +264,7 @@ export async function releaseBookingAssets(client: Prisma.TransactionClient, boo
   const items = await client.bookingItem.findMany({ where: { bookingId }, select: { garmentAssetId: true } });
   const ids = new Set(items.map((item) => item.garmentAssetId).filter((id): id is string => Boolean(id)));
   for (const assetId of ids) {
-    const asset = await client.garmentAsset.findUnique({ where: { id: assetId } });
-    if (!asset || asset.status !== AssetStatus.reserved) continue;
-    const assignments = await activeAssignments(client, assetId);
-    const owners = physicalOwners(asset.status, assignments);
-    if (!owners.includes(bookingId)) continue;
-    const otherPhysical = assignments.filter(({ booking }) => 
-      booking.id !== bookingId && PHYSICAL_HOLD_STATUSES.includes(booking.status)
-    );
-    if (otherPhysical.length > 0) continue;
-    const released = await client.garmentAsset.updateMany({
-      where: { id: assetId, status: AssetStatus.reserved }, data: { status: AssetStatus.available },
-    });
-    if (released.count !== 1) throw new ConflictException("Asset đã thay đổi; không thể giải phóng giữ đồ.");
+    await releaseBookingAsset(client, bookingId, assetId);
   }
 }
 
@@ -252,4 +300,101 @@ export async function transitionBookingAssets(
     const changed = await client.garmentAsset.updateMany({ where: { id: assetId, status: from }, data: { status: to } });
     if (changed.count !== 1) throw new ConflictException("Asset đã được thay đổi bởi thao tác khác.");
   }
+}
+
+/** Trạng thái mà một đơn có thể bị hủy bởi staff/manager (đã thanh toán, đang vận hành). */
+export const STAFF_CANCELLABLE_STATUSES: BookingStatus[] = [
+  BookingStatus.pending_confirmation,
+  BookingStatus.confirmed,
+  BookingStatus.awaiting_payment,
+  BookingStatus.paid,
+  BookingStatus.preparing,
+  BookingStatus.ready_for_pickup,
+];
+
+/**
+ * Void mọi credit còn treo của đơn trước khi hoàn tiền (§8.3).
+ * `ensureCancellationRefunds` hoàn toàn bộ tiền đã thu (đã gồm phần credit đang treo),
+ * nên để nguyên credit thì khách bị hoàn hai lần.
+ */
+export async function voidPendingCredits(client: Prisma.TransactionClient, bookingId: string): Promise<void> {
+  await client.bookingAdjustment.updateMany({
+    where: { bookingId, status: { in: ["accrued", "pending_payment"] } },
+    data: { status: "void", note: "void do hủy đơn" },
+  });
+}
+
+/**
+ * Đóng mọi sự cố đổi mẫu còn mở của một đơn đã bị huỷ. Tách riêng để mọi đường
+ * chuyển đơn sang `cancelled` (kể cả cron tự huỷ quá hạn thanh toán — đường này
+ * không đi qua `cancelBookingTx`) đều dọn sạch, không để `awaiting_customer`
+ * mồ côi khiến khách vẫn thấy "chờ xác nhận" trên một đơn đã huỷ.
+ */
+export async function closeOpenIncidentsTx(
+  tx: Prisma.TransactionClient,
+  input: { bookingId: string; reason: string; actorId?: string | null },
+): Promise<number> {
+  const result = await tx.bookingIncident.updateMany({
+    where: {
+      bookingId: input.bookingId,
+      status: { in: ["open", "awaiting_customer", "needs_manager"] },
+    },
+    data: {
+      status: "resolved",
+      resolution: "booking_cancelled",
+      resolvedAt: new Date(),
+      resolvedBy: input.actorId ?? null,
+      note: input.reason,
+    },
+  });
+  return result.count;
+}
+
+/**
+ * Hủy đơn trong MỘT transaction dùng chung cho mọi đường hủy (§8.2):
+ * void credit → giải phóng asset → `ensureCancellationRefunds` → trả lượt voucher
+ * → `cancelled` + history. Caller tự bọc `runSerializable` (hoặc dùng trong tx sẵn có).
+ *
+ * Trả về `false` nếu đơn không còn ở `expectedStatus` (bị thao tác khác đổi) — để
+ * nơi gọi quyết định ném `ConflictException` hay bỏ qua.
+ */
+export async function cancelBookingTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    bookingId: string;
+    fromStatus: BookingStatus;
+    actorId?: string;
+    reason: string;
+    vouchers?: { releaseForBooking(tx: Prisma.TransactionClient, bookingId: string): Promise<void> };
+  },
+): Promise<boolean> {
+  await voidPendingCredits(tx, input.bookingId);
+  await releaseBookingAssets(tx, input.bookingId);
+  await ensureCancellationRefunds(tx, input.bookingId, input.actorId, input.reason);
+  const claimed = await tx.booking.updateMany({
+    where: { id: input.bookingId, status: input.fromStatus },
+    data: { status: BookingStatus.cancelled },
+  });
+  await tx.bookingStatusHistory.create({
+    data: {
+      bookingId: input.bookingId,
+      fromStatus: input.fromStatus,
+      toStatus: BookingStatus.cancelled,
+      changedBy: input.actorId ?? null,
+      note: input.reason,
+    },
+  });
+  // Đơn đã hủy thì mọi sự cố đổi mẫu đang mở hết hiệu lực — đóng lại ở ĐÂY để
+  // mọi đường hủy (khách tự hủy, staff/manager hủy, bỏ hết món) đều dọn sự cố,
+  // không sót `awaiting_customer`/`open` mồ côi. Chỉ chạy khi thực sự claim được
+  // đơn (nếu `count === 0` thì thao tác khác đã đổi trạng thái, để nơi gọi xử lý).
+  if (claimed.count === 1) {
+    await closeOpenIncidentsTx(tx, {
+      bookingId: input.bookingId,
+      reason: input.reason,
+      actorId: input.actorId,
+    });
+  }
+  await input.vouchers?.releaseForBooking(tx, input.bookingId);
+  return claimed.count === 1;
 }

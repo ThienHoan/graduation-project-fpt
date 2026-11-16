@@ -57,6 +57,7 @@ export const MANAGER_NAV_GROUPS: NavGroupConfig[] = [
     icon: Layers,
     items: [
       { key: "assets", label: "Gán tài sản", icon: ArrowLeftRight, href: "/dashboard/manager#assets" },
+      { key: "incidents", label: "Sự cố đổi mẫu", icon: AlertTriangle, href: "/dashboard/manager/incidents" },
       { key: "rejected-handovers", label: "Từ chối bàn giao", icon: XCircle, href: "/dashboard/manager#rejected-handovers" },
     ],
   },

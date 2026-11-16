@@ -40,6 +40,10 @@ function createTestService(customFeeTable: any = null) {
         createdAt: new Date("2026-10-10T10:00:00.000Z"),
       })),
     },
+    bookingAdjustment: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   };
 
   const prisma = {

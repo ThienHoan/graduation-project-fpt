@@ -16,10 +16,9 @@ export type ApiRequestOptions = RequestInit & {
 export type PickupMethod = "store_pickup" | "delivery";
 
 export type HandoverRecoveryPayload = {
-  action: "replace" | "cancel";
+  action: "cancel";
   expectedDecidedAt: string;
   reason: string;
-  replacements?: Array<{ itemId: string; garmentAssetId: string }>;
 };
 
 export function normalizePickupMethod(value: string | null | undefined): PickupMethod | null {
@@ -651,6 +650,16 @@ export type StaffBookingResponse = BookingResponse & {
   customerPhone: string | null;
   customerEmail?: string | null;
   allAssignedAssetsInspected?: boolean;
+  /** Σ credit đổi mẫu/bỏ món còn treo, đã gộp vào số hoàn cọc (§11). */
+  accruedCreditTotal?: number;
+  /**
+   * Đơn đã bị huỷ/từ chối: số hoàn = toàn bộ tiền đã thực thu − các phiếu hoàn
+   * đã tạo. `null` với đơn hoàn cọc thường (dùng cọc + credit − phạt).
+   */
+  cancellationRefund?: {
+    paidTotal: number;
+    coveringRefundsTotal: number;
+  } | null;
   refunds?: StaffRefundSummary[];
 };
 
@@ -2751,6 +2760,8 @@ export type NotificationItem = {
   userId: string | null;
   title: string;
   body: string | null;
+  /** Đường dẫn tương đối do server sinh (đã kiểm tra an toàn); null khi không có. */
+  linkUrl?: string | null;
   readAt: string | null;
   createdAt: string;
   isRead: boolean;
@@ -3565,6 +3576,539 @@ export async function redeemLoyaltyPoints(ruleId: string) {
     method: "POST",
     body: JSON.stringify({ ruleId }),
   });
+}
+
+// ---------- Mục 4.4 — đổi mẫu / bỏ món khi có sự cố ----------
+
+export type IncidentItemKind = "garment" | "accessory";
+export type IncidentStatus = "open" | "awaiting_customer" | "needs_manager" | "resolved" | "cancelled";
+export type ChangeRequestStatus =
+  | "quoted"
+  | "awaiting_payment"
+  | "applied"
+  | "expired"
+  | "cancelled"
+  | "needs_manager";
+
+/** Snapshot server chụp lúc phát hiện sự cố. `estimated` = dòng tiền phân bổ ước tính. */
+export type IncidentSnapshot = {
+  name: string | null;
+  sizeLabel: string | null;
+  imageUrl: string | null;
+  dailyPrice: number;
+  depositAmount: number;
+  lineRental: number;
+  /** Số lượng dòng bị sự cố (trang phục 1; phụ kiện theo `quantity`). */
+  quantity: number;
+  estimated: boolean;
+};
+
+export type BookingIncidentItem = {
+  id: string;
+  itemKind: IncidentItemKind;
+  bookingItemId: string | null;
+  bookingAccessoryItemId: string | null;
+  reason: string | null;
+  /** Nhãn tiếng Việt của `reason` (server dịch sẵn) — FE hiển thị thay cho mã. */
+  reasonLabel?: string | null;
+  status: IncidentStatus;
+  dueAt: string;
+  snapshot: IncidentSnapshot | null;
+};
+
+/**
+ * Gợi ý thay thế — cùng nguồn `buildSuggestions` ở server cho cả trang khách và
+ * trang quản lý.
+ *
+ * - Trang phục: cùng mẫu/cùng danh mục + đúng size, kèm ảnh + danh sách phụ kiện
+ *   đi kèm để FE dựng checklist sau khi khách chọn mẫu.
+ * - Phụ kiện (đơn chỉ lỗi phụ kiện): các MẪU phụ kiện khác của cùng trang phục
+ *   còn hàng và không trùng lịch thuê.
+ */
+export type IncidentSuggestionAccessory = {
+  accessoryId: string;
+  name: string;
+  imageUrl: string | null;
+  isIncluded: boolean;
+  extraPrice: number;
+  /** Số chiếc còn trống đúng khoảng ngày thuê (0 = hết). */
+  available: number;
+  /**
+   * Số đơn vị tối đa được thuê theo mẫu trang phục đang chọn
+   * (`garment_accessories.quantity` ∩ số chiếc còn trống).
+   */
+  maxQuantity: number;
+};
+
+export type IncidentSuggestion =
+  | {
+      incidentId: string;
+      itemKind: "garment";
+      garmentId: string;
+      options: Array<{
+        garmentId: string;
+        sizeId: string;
+        sizeLabel: string | null;
+        name: string;
+        imageUrl: string | null;
+        available: number;
+        /** Giá thuê 1 ngày của size (trước giảm giá). */
+        dailyPrice: number;
+        /** Tiền thuê cả kỳ của size. */
+        rentalTotal: number;
+        /** Tiền cọc của size. */
+        depositAmount: number;
+        accessories: IncidentSuggestionAccessory[];
+      }>;
+    }
+  | {
+      incidentId: string;
+      itemKind: "accessory";
+      accessoryId: string;
+      name: string;
+      options: IncidentSuggestionAccessory[];
+    };
+
+export type BookingIncidentGarmentItem = {
+  id: string;
+  garmentId: string;
+  garmentAssetId: string | null;
+  sizeId: string;
+  sizeLabel: string | null;
+  name: string;
+  imageUrl: string | null;
+};
+
+export type BookingIncidentAccessoryItem = {
+  id: string;
+  bookingItemId: string;
+  accessoryId: string;
+  accessoryAssetId: string | null;
+  name: string;
+  imageUrl: string | null;
+  /** Số đơn vị của dòng (đơn mới luôn = 1; dữ liệu cũ có thể > 1). */
+  quantity: number;
+  unitPrice: number;
+  isIncluded: boolean;
+  rentalTotal: number;
+};
+
+export type BookingIncidentsResponse = {
+  booking: {
+    id: string;
+    status: string;
+    rentalStartDate: string;
+    rentalEndDate: string;
+    /** Đơn đã thu tiền? Quyết định "Xác nhận đổi mẫu" (chưa TT) / "Giữ chỗ và thanh toán" (đã TT). */
+    paid?: boolean;
+    /**
+     * Thông tin liên hệ của khách (chỉ manager/admin hiển thị). Thiếu dữ liệu
+     * thì từng trường là `null` — FE hiện “Chưa có”, không tự bịa.
+     */
+    customer?: {
+      fullName: string | null;
+      phone: string | null;
+      email: string | null;
+    };
+    /**
+     * Tiền hoàn dự kiến nếu bỏ HẾT món (huỷ đơn) = Σ payment đã thu − refund
+     * đang có. 0 = đơn chưa thanh toán → không hiện khối hoàn tiền.
+     */
+    refundEstimate?: number;
+  };
+  incidents: BookingIncidentItem[];
+  /** Món áo hiện tại của đơn (để map sự cố → dòng đơn + ảnh/tên). */
+  items: BookingIncidentGarmentItem[];
+  /** Toàn bộ phụ kiện đang có trong đơn (checklist thuê / bỏ mẫu). */
+  accessoryItems: BookingIncidentAccessoryItem[];
+  suggestions: IncidentSuggestion[];
+  pendingRequest: { id: string; countdownSeconds: number; requiresHold: boolean } | null;
+};
+
+export type ChangeAdjustmentComponent = "rent" | "accessory_rent" | "deposit";
+export type ChangeAdjustmentLine = {
+  component: ChangeAdjustmentComponent;
+  direction: "charge" | "credit";
+  amount: number;
+};
+
+/** Một dòng món được thuê sau thay đổi (panel báo giá). */
+export type RentedItemSummary = {
+  id: string;
+  kind: "garment" | "accessory";
+  name: string;
+  imageUrl: string | null;
+  sizeLabel: string | null;
+  quantity: number;
+  lineTotal: number;
+  isIncluded: boolean;
+};
+
+/** Kết quả báo giá (POST tạo yêu cầu). Mọi số tiền do server tính. */
+export type ChangeQuoteResponse = {
+  requestId: string;
+  status: ChangeRequestStatus;
+  /** "replace" | "remove" — biết panel đang xác nhận bỏ món hay đổi mẫu. */
+  type?: "replace" | "remove";
+  source?: "customer" | "manager";
+  /** Bỏ hết trang phục → áp dụng xong đơn sẽ bị huỷ. */
+  cancelled?: boolean;
+  /** true khi đây là báo giá LIVE (chưa tạo yêu cầu, chưa giữ chỗ). */
+  preview?: boolean;
+  rentBefore: number;
+  rentAfter: number;
+  rentComponent?: number;
+  accessoryDelta?: number;
+  depositBefore: number;
+  depositAfter: number;
+  depositDelta?: number;
+  discountBefore: number;
+  discountAfter: number;
+  /** Tổng thu thêm ngay hôm nay (= Σ dòng `charge`). */
+  chargeNow: number;
+  /** Tổng ghi nhận hoàn khi trả đồ (= Σ dòng `credit`). */
+  accruedCredit: number;
+  lines: ChangeAdjustmentLine[];
+  /** Danh sách món được thuê SAU thay đổi (trang phục + phụ kiện kèm số lượng). */
+  afterItems?: RentedItemSummary[];
+  paymentRequired: boolean;
+  /** Đổi mẫu/thêm phụ kiện → giữ chỗ asset có đếm ngược. Bỏ món → không giữ chỗ. */
+  requiresHold: boolean;
+  holdExpiresAt: string;
+  countdownSeconds: number;
+};
+
+export type ChangeRequestSnapshot = {
+  chargeAmount?: number;
+  creditAmount?: number;
+  wasPaid?: boolean;
+  adjustmentLines?: ChangeAdjustmentLine[];
+  allRemoved?: boolean;
+};
+
+export type ChangeRequestDetail = {
+  id: string;
+  bookingId: string;
+  type: "replace" | "remove";
+  status: ChangeRequestStatus;
+  /** Ai tạo yêu cầu — `manager` = cửa hàng đề xuất. */
+  source?: "customer" | "manager";
+  rentBefore: number;
+  rentAfter: number;
+  depositBefore: number;
+  depositAfter: number;
+  discountBefore: number;
+  discountAfter: number;
+  chargeAmount: number;
+  requiresHold: boolean;
+  holdExpiresAt: string;
+  countdownSeconds: number;
+  checkoutUrl: string | null;
+  selection: unknown;
+  beforeSnapshot: unknown;
+  afterSnapshot: ChangeRequestSnapshot | null;
+};
+
+/** `POST .../confirm` trả về 2 hình dạng tuỳ đơn đã thanh toán hay chưa. */
+export type ConfirmChangeResponse = {
+  requestId: string;
+  status: ChangeRequestStatus;
+  type?: "replace" | "remove";
+  cancelled?: boolean;
+  rentAfter?: number;
+  depositAfter?: number;
+  discountAfter?: number;
+  paymentRequired?: boolean;
+  chargeAmount?: number;
+  checkoutUrl?: string | null;
+  countdownSeconds?: number;
+};
+
+export type ChangeRequestPaymentStatus = {
+  requestId: string;
+  status: ChangeRequestStatus;
+  paid: boolean;
+  chargeAmount: number;
+  checkoutUrl: string | null;
+  countdownSeconds: number;
+};
+
+export type CreateChangeRequestPayload = {
+  type: "replace" | "remove";
+  incidents: string[];
+  keepAccessoryItemIds?: string[];
+  removeAccessoryItemIds?: string[];
+  addAccessories?: Array<{ itemId: string; accessoryId: string; quantity: 1 }>;
+  replacements?: Array<{ incidentId: string; sizeId: string }>;
+  /**
+   * Thay phụ kiện bị sự cố. `accessoryId` = mẫu phụ kiện KHÁC muốn đổi sang
+   * (cùng trang phục); bỏ trống để giữ nguyên mẫu, chỉ đổi chiếc vật lý.
+   * `accessoryAssetId` bỏ trống để server tự chọn chiếc còn trống.
+   */
+  accessoryReplacements?: Array<{ incidentId: string; accessoryId?: string; accessoryAssetId?: string }>;
+  note?: string;
+};
+
+export async function getBookingIncidents(bookingId: string) {
+  return apiRequest<BookingIncidentsResponse>(`/bookings/${bookingId}/incidents`, { cache: "no-store" });
+}
+
+// ---------- Tab "Sự cố" của khách ----------
+
+/** Một sự cố còn mở trong tab "Sự cố" của khách. */
+export type MyIncidentItem = {
+  id: string;
+  itemKind: IncidentItemKind;
+  reason: string;
+  /** Nhãn tiếng Việt server dịch sẵn (FE không hiện mã kỹ thuật). */
+  reasonLabel: string;
+  status: IncidentStatus;
+  dueAt: string;
+  name: string | null;
+  sizeLabel: string | null;
+  imageUrl: string | null;
+};
+
+export type MyIncidentBooking = {
+  bookingId: string;
+  bookingCode: string;
+  bookingStatus: string;
+  rentalStartDate: string;
+  rentalEndDate: string;
+  incidents: MyIncidentItem[];
+  pendingRequest: { id: string; countdownSeconds: number; requiresHold: boolean } | null;
+};
+
+export type MyIncidentsResponse = {
+  /** Số ĐƠN đang có sự cố — con số hiện cạnh tab "Sự cố". */
+  count: number;
+  incidentCount: number;
+  bookings: MyIncidentBooking[];
+};
+
+/** Các đơn đang có sự cố còn mở của khách đang đăng nhập. */
+export async function getMyIncidents() {
+  return apiRequest<MyIncidentsResponse>("/bookings/me/incidents", { cache: "no-store" });
+}
+
+export async function createBookingChangeRequest(bookingId: string, payload: CreateChangeRequestPayload) {
+  return apiRequest<ChangeQuoteResponse>(`/bookings/${bookingId}/incidents/change-requests`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Báo giá LIVE: chỉ tính tiền + danh sách món sau thay đổi, KHÔNG tạo yêu cầu/giữ chỗ. */
+export async function previewBookingChangeRequest(bookingId: string, payload: CreateChangeRequestPayload) {
+  return apiRequest<ChangeQuoteResponse>(`/bookings/${bookingId}/incidents/change-requests/preview`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getBookingChangeRequest(bookingId: string, requestId: string) {
+  return apiRequest<ChangeRequestDetail>(`/bookings/${bookingId}/change-requests/${requestId}`, { cache: "no-store" });
+}
+
+export async function cancelBookingChangeRequest(bookingId: string, requestId: string) {
+  return apiRequest<{ id: string; status: string }>(`/bookings/${bookingId}/change-requests/${requestId}/cancel`, {
+    method: "PATCH",
+  });
+}
+
+export async function confirmBookingChangeRequest(bookingId: string, requestId: string) {
+  return apiRequest<ConfirmChangeResponse>(`/bookings/${bookingId}/change-requests/${requestId}/confirm`, {
+    method: "POST",
+  });
+}
+
+export async function declineBookingIncident(bookingId: string, incidentId: string) {
+  return apiRequest<{ id: string; status: string }>(`/bookings/${bookingId}/incidents/${incidentId}/decline`, {
+    method: "POST",
+  });
+}
+
+export async function getChangeRequestPaymentStatus(requestId: string) {
+  return apiRequest<ChangeRequestPaymentStatus>(`/payments/change-requests/${requestId}/status`, { cache: "no-store" });
+}
+
+/**
+ * Cấp lại link PayOS cho yêu cầu đổi sau khi khách huỷ ở cổng thanh toán
+ * (orderCode cũ không tái sử dụng được). Server dùng lại link nếu nó vẫn sống.
+ */
+export async function retryChangeRequestPayment(requestId: string) {
+  return apiRequest<ChangeRequestPaymentStatus>(`/payments/change-requests/${requestId}/retry`, {
+    method: "POST",
+  });
+}
+
+// ---------- §13.2 Manager/Staff — sự cố đổi mẫu ----------
+
+export type StaffIncidentListItem = {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  status: IncidentStatus;
+  reason: string | null;
+  dueAt: string;
+  detectedAt: string;
+  rentalStartDate: string;
+  rentalEndDate: string;
+  daysRemaining: number;
+  /** Số ngày đã trễ so với ngày thuê (0 nếu chưa tới). */
+  daysOverdue: number;
+  bookingStatus: string;
+  customer: { fullName: string | null; phone: string | null; email: string | null };
+  item: {
+    kind: IncidentItemKind;
+    bookingItemId: string | null;
+    bookingAccessoryItemId: string | null;
+    assetCode: string | null;
+    name: string | null;
+    sizeLabel: string | null;
+    imageUrl: string | null;
+  };
+};
+
+export type StaffIncidentDetail = {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  itemKind: IncidentItemKind;
+  reason: string | null;
+  /** Nhãn tiếng Việt server dịch sẵn cho `reason` (dữ liệu cũ có thể thiếu). */
+  reasonLabel?: string | null;
+  status: IncidentStatus;
+  dueAt: string;
+  detectedAt: string;
+  assetCode: string | null;
+  snapshot: IncidentSnapshot | null;
+  resolution: string | null;
+  /** Nhãn tiếng Việt server dịch sẵn cho `resolution` (dữ liệu cũ có thể thiếu). */
+  resolutionLabel?: string | null;
+  resolvedAt: string | null;
+  note: string | null;
+  item: unknown;
+  accessoryItem: unknown;
+  booking: {
+    id: string;
+    status: string;
+    rentalStartDate: string;
+    rentalEndDate: string;
+    rentalTotal: number;
+    depositTotal: number;
+    customerId: string;
+    customer: unknown;
+    items: unknown[];
+    accessoryItems: unknown[];
+  };
+  relatedRequests: Array<{
+    id: string;
+    type: string;
+    status: string;
+    source: string;
+    chargeAmount: number;
+    createdAt: string;
+    /** Lúc yêu cầu được áp dụng vào đơn (dùng cho timeline xử lý sự cố). */
+    appliedAt?: string | null;
+    updatedAt?: string | null;
+    note?: string | null;
+  }>;
+  /** Gợi ý mẫu thay thế — cùng nguồn `buildSuggestions` với trang khách (§13.3). */
+  suggestions: IncidentSuggestion[];
+  /** Tác động tiền của sự cố (VND). */
+  settlement?: {
+    bookingCancelled: boolean;
+    /** Tổng phần chênh phải thu thêm của yêu cầu đã áp dụng. */
+    extraChargeAmount: number;
+    /** Số tiền sẽ hoàn (đơn huỷ: tiền đã thu; đơn giảm: hoàn dự kiến). */
+    refundAmount: number;
+    /** Số dư cọc hiện tại của đơn. */
+    depositAmount: number;
+  };
+};
+
+export type ManagerIncidentActionPayload = {
+  action: "cancel" | "remove" | "proposal" | "preview";
+  reason: string;
+  type?: "replace" | "remove";
+  /**
+   * Chỉ dùng khi `action: "preview"`: loại email muốn xem trước.
+   * Bỏ trống → đề xuất đổi mẫu.
+   */
+  previewAction?: "proposal" | "remove" | "cancel";
+  /**
+   * Sự cố áp dụng. Trang `/booking/incidents/[bookingId]` gộp theo ĐƠN nên gửi
+   * toàn bộ sự cố đang mở; bỏ trống → chỉ áp dụng sự cố trong URL.
+   */
+  incidents?: string[];
+  replacements?: Array<{ incidentId: string; sizeId: string }>;
+  /** Thay/đổi mẫu phụ kiện (cùng trang phục). */
+  accessoryReplacements?: Array<{ incidentId: string; accessoryId?: string; accessoryAssetId?: string }>;
+  /** Checklist phụ kiện sau khi đổi trang phục: dòng cần bỏ. */
+  removeAccessoryItemIds?: string[];
+  addAccessories?: Array<{ itemId: string; accessoryId: string; quantity: 1 }>;
+  /** Tiêu đề email tuỳ chỉnh (bản xem trước / khi gửi). Bỏ trống → server dùng mặc định. */
+  emailSubject?: string;
+  /** Lời nhắn mở đầu tuỳ chỉnh trong email gửi khách. */
+  emailMessage?: string;
+};
+
+/** Kết quả dựng bản xem trước email (server tự dựng HTML, không nhận HTML từ client). */
+export type ManagerIncidentEmailPreview = {
+  action: "preview";
+  /** Loại email đã dựng: đề xuất đổi mẫu, bỏ món hay huỷ đơn. */
+  previewAction?: "proposal" | "remove" | "cancel";
+  incidentId: string;
+  bookingId: string;
+  emailSubject: string;
+  emailHtml: string;
+  emailRecipient: string | null;
+  /** Bản xem trước bỏ món có huỷ cả đơn không. */
+  cancelled?: boolean;
+  quote: Record<string, unknown> | null;
+};
+
+/** Trang danh sách sự cố có phân trang (server sắp sự cố còn mở lên đầu). */
+export type StaffIncidentPage = {
+  items: StaffIncidentListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export async function listStaffIncidents(query?: { status?: string; q?: string; page?: number; limit?: number }) {
+  const params = new URLSearchParams();
+  if (query?.status) params.set("status", query.status);
+  if (query?.q) params.set("q", query.q);
+  if (query?.page) params.set("page", String(query.page));
+  if (query?.limit) params.set("limit", String(query.limit));
+  const queryStr = params.toString() ? `?${params.toString()}` : "";
+  return apiRequest<StaffIncidentPage>(`/bookings/staff/incidents${queryStr}`, { cache: "no-store" });
+}
+
+export async function getStaffIncident(incidentId: string) {
+  return apiRequest<StaffIncidentDetail>(`/bookings/staff/incidents/${incidentId}`, { cache: "no-store" });
+}
+
+export async function applyStaffIncidentAction(incidentId: string, payload: ManagerIncidentActionPayload) {
+  return apiRequest<{ incidentId: string; bookingId?: string; action: string; status?: string; requestId?: string }>(
+    `/bookings/staff/incidents/${incidentId}/actions`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** Dựng bản xem trước email quản lý sắp gửi (không tạo yêu cầu, không giữ chỗ). */
+export async function previewStaffIncidentEmail(incidentId: string, payload: ManagerIncidentActionPayload) {
+  return apiRequest<ManagerIncidentEmailPreview>(`/bookings/staff/incidents/${incidentId}/actions`, {
+    method: "POST",
+    body: JSON.stringify({ ...payload, action: "preview" }),
+  });
+}
+
+export async function runIncidentScan() {
+  return apiRequest<{ opened: number; resolved: number }>("/bookings/staff/incidents/run-scan", { method: "POST" });
 }
 
 

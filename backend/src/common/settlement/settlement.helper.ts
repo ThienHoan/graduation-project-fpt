@@ -19,6 +19,36 @@ const COVERING_REFUND_STATUSES: PaymentStatus[] = [
   PaymentStatus.partially_refunded,
 ];
 
+/**
+ * Σ credit `accrued` (direction = "credit") của đơn — phần tiền khách đã trả thừa
+ * do đổi mẫu/bỏ món, được cộng vào phiếu hoàn cọc khi trả đồ (§11). Trả `Decimal(0)`
+ * khi không có adjustment (đơn không sự cố giữ nguyên hành vi cũ).
+ */
+export async function sumAccruedCredits(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<Prisma.Decimal> {
+  const credits = await tx.bookingAdjustment.findMany({
+    where: { bookingId, status: "accrued", direction: "credit" },
+    select: { amount: true },
+  });
+  return credits.reduce((sum, row) => sum.plus(row.amount), new Prisma.Decimal(0));
+}
+
+/**
+ * Đánh dấu các credit `accrued` của đơn đã tất toán qua phiếu hoàn `refundId` (§11).
+ */
+export async function settleAccruedCredits(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  refundId: string | null,
+): Promise<void> {
+  await tx.bookingAdjustment.updateMany({
+    where: { bookingId, status: "accrued", direction: "credit" },
+    data: { status: "settled", ...(refundId ? { refundId } : {}) },
+  });
+}
+
 export async function ensureCancellationRefunds(
   tx: Prisma.TransactionClient,
   bookingId: string,

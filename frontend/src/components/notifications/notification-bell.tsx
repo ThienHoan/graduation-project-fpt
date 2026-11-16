@@ -8,6 +8,7 @@ import {
   markMyNotificationRead,
   type NotificationItem,
 } from "@/lib/api";
+import { isSafeLink } from "@/lib/safe-link";
 import { normalizeStatusInText } from "@/lib/status-labels";
 import { useRealtimeInvalidation } from "@/lib/use-realtime-invalidation";
 import { Bell } from "lucide-react";
@@ -112,23 +113,49 @@ export function NotificationBell({ notificationsHref }: { notificationsHref?: st
             {notifications.length === 0 ? (
               <div className="px-4 py-10 text-center text-sm text-stone-400">Chưa có thông báo.</div>
             ) : (
-              notifications.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => !item.isRead && handleMarkRead(item.id)}
-                  className={`flex w-full gap-3 border-b border-sand/60 px-4 py-3 text-left transition hover:bg-mist ${
-                    item.isRead ? "bg-white" : "bg-lotus/5"
-                  }`}
-                >
-                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${item.isRead ? "bg-transparent" : "bg-oxblood"}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-ink">{normalizeStatusInText(item.title)}</p>
-                    {item.body && <p className="mt-0.5 whitespace-pre-line text-xs leading-5 text-stone-600">{normalizeStatusInText(item.body)}</p>}
-                    <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-stone-400">{formatRelative(item.createdAt)}</p>
-                  </div>
-                </button>
-              ))
+              notifications.map((item) => {
+                const content = (
+                  <>
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${item.isRead ? "bg-transparent" : "bg-oxblood"}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-ink">{normalizeStatusInText(item.title)}</p>
+                      {item.body && <p className="mt-0.5 whitespace-pre-line text-xs leading-5 text-stone-600">{normalizeStatusInText(item.body)}</p>}
+                      <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-stone-400">{formatRelative(item.createdAt)}</p>
+                    </div>
+                  </>
+                );
+                const itemClassName = `flex w-full gap-3 border-b border-sand/60 px-4 py-3 text-left transition hover:bg-mist ${
+                  item.isRead ? "bg-white" : "bg-lotus/5"
+                }`;
+
+                // Có link nội bộ hợp lệ → mở chi tiết rồi đóng panel; không thì chỉ đánh dấu đã đọc.
+                if (isSafeLink(item.linkUrl)) {
+                  return (
+                    <Link
+                      key={item.id}
+                      href={item.linkUrl}
+                      onClick={() => {
+                        if (!item.isRead) void handleMarkRead(item.id);
+                        setOpen(false);
+                      }}
+                      className={itemClassName}
+                    >
+                      {content}
+                      <span className="mt-1 shrink-0 text-[11px] font-semibold text-lotus">Xem chi tiết</span>
+                    </Link>
+                  );
+                }
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => !item.isRead && handleMarkRead(item.id)}
+                    className={itemClassName}
+                  >
+                    {content}
+                  </button>
+                );
+              })
             )}
           </div>
 

@@ -1,8 +1,10 @@
 import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { BookingAutomationService } from "./booking-automation.service";
+import { BookingChangeRequestsService } from "./booking-change-requests.service";
 import { BookingExtensionsService } from "./booking-extensions.service";
 import { BookingsService } from "./bookings.service";
+import { BookingIncidentsService } from "./booking-incidents.service";
 
 @Injectable()
 export class BookingsScheduler implements OnApplicationBootstrap {
@@ -12,6 +14,8 @@ export class BookingsScheduler implements OnApplicationBootstrap {
     private readonly bookingsService: BookingsService,
     private readonly automation: BookingAutomationService,
     private readonly extensions: BookingExtensionsService,
+    private readonly incidents: BookingIncidentsService,
+    private readonly changeRequests: BookingChangeRequestsService,
   ) {}
 
   // Quét bù khi server khởi động — cron chỉ chạy đúng giờ nên nếu server
@@ -152,6 +156,43 @@ export class BookingsScheduler implements OnApplicationBootstrap {
       }
     } catch (error) {
       this.logger.error("Lỗi khi quét đơn quá hạn", error instanceof Error ? error.stack : String(error));
+    }
+  }
+
+  // Mỗi 30 phút: quét sự cố trang phục/phụ kiện trước bàn giao (dùng lại
+  // `BookingIncidentsService.scanIncidents` của nút "Quét ngay"). Tắt bằng env
+  // `INCIDENT_SCAN_ENABLED=false` (rollback nhanh, không cần deploy lại code).
+  @Cron("0 */30 * * * *", { timeZone: "Asia/Ho_Chi_Minh" })
+  async runIncidentScan() {
+    if (process.env.INCIDENT_SCAN_ENABLED === "false") return;
+    try {
+      const result = await this.incidents.scanIncidents();
+      if (result.opened || result.resolved) {
+        this.logger.log(
+          `Quét sự cố: ${result.scanned} đơn, mở ${result.opened}, đóng ${result.resolved}.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error("Lỗi khi quét sự cố trang phục", error instanceof Error ? error.stack : String(error));
+    }
+  }
+
+  // Mỗi phút: yêu cầu đổi mẫu/bỏ món quá hạn giữ chỗ → đóng intent PayOS
+  // trước, rồi `expired` + incident `needs_manager` + báo manager (§7.4).
+  // Chạy mỗi phút để đề xuất giữ chỗ 30 phút của quản lý được giải phóng đúng hạn.
+  @Cron("0 * * * * *", { timeZone: "Asia/Ho_Chi_Minh" })
+  async runExpireChangeRequests() {
+    try {
+      const result = await this.changeRequests.expireChangeRequests();
+      const expired = result.data?.expired ?? [];
+      const applied = result.data?.applied ?? [];
+      if (expired.length || applied.length) {
+        this.logger.log(
+          `Đổi mẫu: hết hạn ${expired.length} yêu cầu, áp dụng muộn ${applied.length}.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error("Lỗi khi xử lý yêu cầu đổi mẫu quá hạn", error instanceof Error ? error.stack : String(error));
     }
   }
 }

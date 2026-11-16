@@ -219,6 +219,9 @@ model Booking {
   refunds               Refund[]
   reviews               Review[]               @relation("BookingReviews")
   pointLogs             loyalty_point_logs[]
+  incidents             BookingIncident[]
+  changeRequests        BookingChangeRequest[]
+  adjustments           BookingAdjustment[]
 
   @@map("bookings")
 }
@@ -240,6 +243,7 @@ model BookingItem {
   garment         Garment        @relation(fields: [garmentId], references: [id])
   garment_sizes   garment_sizes? @relation(fields: [garment_size_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   accessoryItems  BookingAccessoryItem[]
+  incidents       BookingIncident[]
 
   @@map("booking_items")
 }
@@ -287,6 +291,7 @@ model Payment {
   booking               Booking                @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   refunds               Refund[]
   extension             BookingExtension?
+  changeRequest         BookingChangeRequest?
 
   @@map("payments")
 }
@@ -486,6 +491,8 @@ model Notification {
   userId    String?      @map("user_id") @db.Uuid
   title     String
   body      String?
+  /// Đường dẫn tương đối do server sinh (không nhận từ client) để FE bấm vào.
+  linkUrl   String?      @map("link_url")
   readAt    DateTime?    @map("read_at") @db.Timestamptz(6)
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   user      UserAccount? @relation(fields: [userId], references: [id])
@@ -842,6 +849,7 @@ model BookingAccessoryItem {
   bookingItem      BookingItem       @relation(fields: [bookingItemId], references: [id], onDelete: Cascade)
   accessory        accessories       @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
   accessoryAsset   accessory_assets? @relation(fields: [accessoryAssetId], references: [id], onDelete: SetNull)
+  incidents        BookingIncident[]
 
   @@index([bookingId])
   @@index([bookingItemId])
@@ -1122,5 +1130,137 @@ model loyalty_redemption_rules {
   updatedAt           DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("loyalty_redemption_rules")
+}
+
+/// Mục 4.4 — sự cố trang phục/phụ kiện trước khi bàn giao (đổi mẫu / bỏ món / hủy đơn).
+/// Mỗi món chỉ có tối đa 1 sự cố đang mở (partial unique index trong migration SQL).
+model BookingIncident {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId              String                @map("booking_id") @db.Uuid
+  /// garment | accessory
+  itemKind               String                @map("item_kind")
+  bookingItemId          String?               @map("booking_item_id") @db.Uuid
+  bookingAccessoryItemId String?               @map("booking_accessory_item_id") @db.Uuid
+  /// "g:<itemId>" | "a:<accessoryItemId>"
+  dedupeKey              String                @map("dedupe_key")
+  /// asset_damaged | asset_lost | asset_retired | asset_maintenance | asset_conflict | no_asset_available | accessory_unavailable
+  reason                 String
+  assetId                String?               @map("asset_id") @db.Uuid
+  assetCode              String?               @map("asset_code")
+  /// { name, sizeLabel, imageUrl, dailyPrice, depositAmount, lineRental, estimated }
+  snapshot               Json
+  /// open | awaiting_customer | needs_manager | resolved | cancelled
+  status                 String                @default("open")
+  dueAt                  DateTime              @map("due_at") @db.Date
+  detectedAt             DateTime              @default(now()) @map("detected_at") @db.Timestamptz(6)
+  notifiedAt             DateTime?             @map("notified_at") @db.Timestamptz(6)
+  /// Cột thường, không FK (tránh vòng quan hệ với BookingChangeRequest).
+  changeRequestId        String?               @map("change_request_id") @db.Uuid
+  /// replaced | removed | booking_cancelled | asset_recovered | manual
+  resolution             String?
+  resolvedAt             DateTime?             @map("resolved_at") @db.Timestamptz(6)
+  resolvedBy             String?               @map("resolved_by") @db.Uuid
+  note                   String?
+  createdAt              DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  booking       Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  item          BookingItem?          @relation(fields: [bookingItemId], references: [id], onDelete: SetNull)
+  accessoryItem BookingAccessoryItem? @relation(fields: [bookingAccessoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status])
+  @@index([status, dueAt])
+  @@map("booking_incidents")
+}
+
+/// Yêu cầu đổi mẫu / bỏ món do khách hoặc manager tạo. Mỗi đơn chỉ 1 yêu cầu
+/// `quoted/awaiting_payment` (partial unique index trong migration SQL).
+model BookingChangeRequest {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId      String              @map("booking_id") @db.Uuid
+  /// replace | remove
+  type           String
+  /// customer | manager
+  source         String              @default("customer")
+  /// quoted | awaiting_payment | applied | expired | cancelled | needs_manager
+  status         String              @default("quoted")
+  createdBy      String?             @map("created_by") @db.Uuid
+  /// Lựa chọn + giá đã chốt lúc báo giá (KHÔNG tính lại khi áp dụng).
+  selection      Json
+  beforeSnapshot Json                @map("before_snapshot")
+  afterSnapshot  Json                @map("after_snapshot")
+  rentBefore     Decimal             @map("rent_before") @db.Decimal(12, 2)
+  rentAfter      Decimal             @map("rent_after") @db.Decimal(12, 2)
+  depositBefore  Decimal             @map("deposit_before") @db.Decimal(12, 2)
+  depositAfter   Decimal             @map("deposit_after") @db.Decimal(12, 2)
+  discountBefore Decimal             @map("discount_before") @db.Decimal(12, 2)
+  discountAfter  Decimal             @map("discount_after") @db.Decimal(12, 2)
+  chargeAmount   Decimal             @default(0) @map("charge_amount") @db.Decimal(12, 2)
+  holdExpiresAt  DateTime            @map("hold_expires_at") @db.Timestamptz(6)
+  paymentId      String?             @unique @map("payment_id") @db.Uuid
+  checkoutUrl    String?             @map("checkout_url")
+  appliedAt      DateTime?           @map("applied_at") @db.Timestamptz(6)
+  note           String?
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime            @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  booking     Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  payment     Payment?            @relation(fields: [paymentId], references: [id])
+  holds       BookingChangeHold[]
+  adjustments BookingAdjustment[]
+
+  @@index([bookingId, status])
+  @@index([status, holdExpiresAt])
+  @@map("booking_change_requests")
+}
+
+/// Giữ chỗ tạm (30 phút) một asset CỤ THỂ cho một yêu cầu đổi đang báo giá.
+/// Hold chỉ "sống" khi `expiresAt > now` VÀ `consumedAt IS NULL`.
+model BookingChangeHold {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  changeRequestId  String              @map("change_request_id") @db.Uuid
+  bookingId        String              @map("booking_id") @db.Uuid
+  /// garment | accessory
+  kind             String
+  garmentAssetId   String?             @map("garment_asset_id") @db.Uuid
+  accessoryAssetId String?             @map("accessory_asset_id") @db.Uuid
+  startDay         DateTime            @map("start_day") @db.Date
+  endDay           DateTime            @map("end_day") @db.Date
+  expiresAt        DateTime            @map("expires_at") @db.Timestamptz(6)
+  consumedAt       DateTime?           @map("consumed_at") @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  changeRequest BookingChangeRequest @relation(fields: [changeRequestId], references: [id], onDelete: Cascade)
+
+  @@index([garmentAssetId, expiresAt])
+  @@index([accessoryAssetId, expiresAt])
+  @@map("booking_change_holds")
+}
+
+/// Chênh lệch tiền do đổi mẫu / bỏ món. Chỉ ghi cho đơn ĐÃ thanh toán.
+/// status: pending_payment | collected | accrued | settled | void
+model BookingAdjustment {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId       String               @map("booking_id") @db.Uuid
+  changeRequestId String?              @map("change_request_id") @db.Uuid
+  incidentId      String?              @map("incident_id") @db.Uuid
+  /// rent | deposit | accessory_rent
+  component       String
+  /// charge | credit
+  direction       String
+  amount          Decimal              @db.Decimal(12, 2)
+  status          String               @default("pending_payment")
+  paymentId       String?              @map("payment_id") @db.Uuid
+  refundId        String?              @map("refund_id") @db.Uuid
+  note            String?
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  booking       Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changeRequest BookingChangeRequest? @relation(fields: [changeRequestId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status])
+  @@index([status])
+  @@map("booking_adjustments")
 }
 

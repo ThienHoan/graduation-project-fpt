@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   getMyNotifications,
@@ -11,6 +12,7 @@ import {
   type NotificationItem,
   type NotificationPreferences,
 } from "@/lib/api";
+import { isSafeLink } from "@/lib/safe-link";
 import { normalizeStatusInText } from "@/lib/status-labels";
 import {
   Calendar,
@@ -319,6 +321,14 @@ export default function CustomerNotificationsPage() {
                         </div>
                         <p className="mt-2 whitespace-pre-line text-sm leading-7 text-stone-600">{normalizeStatusInText(item.body ?? "(Không có nội dung)")}</p>
                         <p className="mt-3 text-xs uppercase tracking-[0.14em] text-stone-400">{formatDateTime(item.createdAt)}</p>
+                        {isSafeLink(item.linkUrl) ? (
+                          <Link
+                            href={item.linkUrl}
+                            className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-lotus transition hover:text-oxblood"
+                          >
+                            Xem chi tiết
+                          </Link>
+                        ) : null}
                       </div>
                       <button
                         type="button"

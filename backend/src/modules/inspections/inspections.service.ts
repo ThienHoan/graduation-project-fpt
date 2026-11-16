@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { InspectionsExportService, type InspectionSlipData } from "./inspections-export.service";
 import { AssetStatus, BookingStatus, InspectionStatus, MaintenanceStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { ok } from "../../common/api-response";
+import { settleAccruedCredits, sumAccruedCredits } from "../../common/settlement/settlement.helper";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { AiService } from "../ai/ai.service";
@@ -1797,22 +1798,94 @@ export class InspectionsService {
       staffId: string;
     },
   ) {
-    const refundAmount = Math.max(0, input.depositTotal - input.penaltyTotal);
+    // §11: credit `accrued` (đổi mẫu/bỏ món đã trả thừa) cộng vào phiếu hoàn cọc.
+    // Đơn không sự cố → credits = 0 ⇒ hành vi cũ không đổi.
+    const credits = Number(await sumAccruedCredits(tx, input.bookingId));
+    const refundAmount = Math.max(0, input.depositTotal + credits - input.penaltyTotal);
     const existingRefund = await tx.refund.findFirst({
       where: { bookingId: input.bookingId, status: { in: ACTIVE_REFUND_STATUSES } },
       orderBy: { createdAt: "desc" },
     });
+    const existingPendingRefund = existingRefund?.status === PaymentStatus.pending ? existingRefund : null;
+    // `refunding` = tiền có thể đang được chuyển → KHÔNG sửa amount; cùng với
+    // `refunded`/`partially_refunded` thì tạo phiếu MỚI chỉ cho phần credit (§11).
+    const existingLockedRefund =
+      existingRefund?.status === PaymentStatus.refunding ||
+      existingRefund?.status === PaymentStatus.refunded ||
+      existingRefund?.status === PaymentStatus.partially_refunded
+        ? existingRefund
+        : null;
 
     let hasRefundToApprove =
       existingRefund?.status === PaymentStatus.pending || existingRefund?.status === PaymentStatus.refunding;
-    const hasCompletedRefund =
+    let hasCompletedRefund =
       existingRefund?.status === PaymentStatus.refunded || existingRefund?.status === PaymentStatus.partially_refunded;
 
+    const creditNote = credits > 0 ? ` + Điều chỉnh đổi mẫu/bỏ món: ${credits.toLocaleString("vi-VN")}đ` : "";
     const refundReason = input.penaltyTotal > 0
-      ? `Hoàn cọc sau kiểm tra (Cọc ban đầu: ${input.depositTotal.toLocaleString("vi-VN")}đ - Khấu trừ hư tổn: ${input.penaltyTotal.toLocaleString("vi-VN")}đ ➔ Thực hoàn: ${refundAmount.toLocaleString("vi-VN")}đ)`
-      : `Hoàn 100% tiền cọc sau kiểm tra (Không phát sinh hư hại): ${refundAmount.toLocaleString("vi-VN")}đ`;
+      ? `Hoàn cọc sau kiểm tra (Cọc: ${input.depositTotal.toLocaleString("vi-VN")}đ − Phạt: ${input.penaltyTotal.toLocaleString("vi-VN")}đ${creditNote} ➔ Thực hoàn: ${refundAmount.toLocaleString("vi-VN")}đ)`
+      : `Hoàn 100% tiền cọc sau kiểm tra${credits > 0 ? ` (kèm điều chỉnh đổi mẫu: ${credits.toLocaleString("vi-VN")}đ)` : " (Không phát sinh hư hại)"}: ${refundAmount.toLocaleString("vi-VN")}đ`;
 
-    if (refundAmount > 0 && !existingRefund) {
+    if (credits > 0 && existingPendingRefund) {
+      // §11: chỉ phiếu `pending` mới được cộng credit — cộng ĐÚNG phần credit vào
+      // số tiền hiện có của phiếu (KHÔNG tính lại depositTotal − penalty), cập nhật
+      // `financialTransaction` tương ứng và tất toán credit.
+      const existingAmount = Number(existingPendingRefund.amount ?? 0);
+      const newAmount = existingAmount + credits;
+      const mergedReason = `Hoàn cọc sau kiểm tra + Điều chỉnh đổi mẫu/bỏ món: ${credits.toLocaleString("vi-VN")}đ ➔ Thực hoàn: ${newAmount.toLocaleString("vi-VN")}đ`;
+      await tx.refund.update({
+        where: { id: existingPendingRefund.id },
+        data: { amount: new Prisma.Decimal(newAmount), reason: mergedReason },
+      });
+      const coveringTx = await tx.financialTransaction.findFirst({
+        where: { refundId: existingPendingRefund.id },
+        orderBy: { createdAt: "desc" },
+      });
+      if (coveringTx) {
+        const coveringAmount = Number(coveringTx.amount ?? 0);
+        await tx.financialTransaction.update({
+          where: { id: coveringTx.id },
+          data: { amount: new Prisma.Decimal(coveringAmount + credits), note: mergedReason },
+        });
+      }
+      await settleAccruedCredits(tx, input.bookingId, existingPendingRefund.id);
+      hasRefundToApprove = true;
+    } else if (credits > 0 && existingLockedRefund) {
+      // §11: phiếu `refunding` (tiền có thể đang chuyển) / `refunded` / `partially_refunded`
+      // → KHÔNG sửa amount của phiếu cũ; tạo phiếu MỚI chỉ cho phần credit.
+      const payment = await this.findAuthoritativePaidPayment(tx, input.bookingId);
+      if (!payment) {
+        throw new BadRequestException("Không tìm thấy payment đã thanh toán để xác định phương thức hoàn cọc.");
+      }
+      const refundMethod = this.refundMethodForPayment(payment);
+      if (!refundMethod) {
+        throw new BadRequestException(`Không hỗ trợ phương thức thanh toán '${payment.paymentMethod ?? payment.provider}' để tự động hoàn cọc.`);
+      }
+      const creditReason = `Hoàn phần điều chỉnh đổi mẫu/bỏ món còn treo: ${credits.toLocaleString("vi-VN")}đ`;
+      const createdRefund = await tx.refund.create({
+        data: {
+          bookingId: input.bookingId,
+          paymentId: payment.id,
+          amount: credits,
+          status: PaymentStatus.pending,
+          refund_method: refundMethod,
+          reason: creditReason,
+          processed_by: input.staffId,
+        },
+      });
+      await tx.financialTransaction.create({
+        data: {
+          bookingId: input.bookingId,
+          refundId: createdRefund.id,
+          transactionType: refundMethod === "cash" ? "refund_cash_pending" : "refund_bank_transfer_pending",
+          amount: credits,
+          note: creditReason,
+        },
+      });
+      await settleAccruedCredits(tx, input.bookingId, createdRefund.id);
+      hasRefundToApprove = true;
+      hasCompletedRefund = false; // có phiếu mới đang chờ → refund_pending, không completed.
+    } else if (refundAmount > 0 && !existingRefund) {
       const payment = await this.findAuthoritativePaidPayment(tx, input.bookingId);
       if (!payment) {
         throw new BadRequestException("Không tìm thấy payment đã thanh toán để xác định phương thức hoàn cọc.");
@@ -1842,7 +1915,12 @@ export class InspectionsService {
           note: refundReason,
         },
       });
+      // Credit đã gộp vào phiếu này → đánh dấu đã tất toán (§11).
+      if (credits > 0) await settleAccruedCredits(tx, input.bookingId, createdRefund.id);
       hasRefundToApprove = true;
+    } else if (credits > 0 && refundAmount <= 0) {
+      // Không có gì để hoàn nhưng vẫn còn credit treo → tất toán để không treo vô hạn.
+      await settleAccruedCredits(tx, input.bookingId, null);
     }
 
     if (refundAmount <= 0 && input.depositTotal > 0 && input.penaltyTotal > 0) {

@@ -17,6 +17,7 @@ vi.mock("@/lib/api", () => ({
   getCustomerRefund: (...args: unknown[]) => mockGetCustomerRefund(...args),
   getDeliveryTrack: (...args: unknown[]) => mockGetDeliveryTrack(...args),
   getCustomerBookingInspections: (...args: unknown[]) => mockGetCustomerBookingInspections(...args),
+  getBookingIncidents: vi.fn().mockResolvedValue({ success: true, data: { incidents: [] } }),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -166,5 +167,39 @@ describe("CustomerDashboardPage", () => {
     expect(screen.getAllByText("Áo Tấc Thêu Rồng Phượng").length).toBeGreaterThanOrEqual(1);
     // Active hero section still exists, but in table "Áo Nhật Bình Cung Đình" should not be matched in history
     expect(screen.getByDisplayValue("Tấc Thêu")).toBeInTheDocument();
+  });
+
+  it("shows an incident banner linking to the customer incident page", async () => {
+    mockGetMyBookings.mockResolvedValue({
+      success: true,
+      data: [sampleActiveBooking],
+    });
+    const api = await import("@/lib/api");
+    vi.mocked(api.getBookingIncidents).mockResolvedValue({
+      success: true,
+      data: {
+        booking: { id: "bk-active-001", status: "confirmed", rentalStartDate: "2026-11-01", rentalEndDate: "2026-11-03" },
+        incidents: [
+          {
+            id: "inc-1",
+            itemKind: "garment",
+            reason: "Đang giặt",
+            status: "awaiting_customer",
+            dueAt: "2026-11-01",
+            snapshot: null,
+          },
+        ],
+        suggestions: [],
+        pendingRequest: null,
+      },
+    } as never);
+
+    render(<CustomerDashboardPage />);
+
+    expect(await screen.findByText("Có món trong đơn cần thay đổi")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Xử lý đơn #BK-ACTIV/i })).toHaveAttribute(
+      "href",
+      "/booking/incidents/bk-active-001",
+    );
   });
 });
