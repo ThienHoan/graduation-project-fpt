@@ -19,6 +19,7 @@ import {
   completeInspection,
   inspectBookingAccessory,
   finalizeBookingInspection,
+  markBookingReturned,
   downloadInspectionSlip,
   type StaffBookingResponse,
   type InspectionSessionResponse,
@@ -1179,6 +1180,28 @@ async function handleInspectAccessory(accId: string) {
   setInspectingAcc(null);
 }
 
+async function handleMarkReturnedFromInspection() {
+  if (!booking || actioning !== null) return;
+  setActioning("mark-returned");
+  setErrorMsg(null);
+  try {
+    const res = await markBookingReturned(booking.id);
+    if (res.success && res.data) {
+      setFinalizeMsg({ type: "success", text: "Đã ghi nhận nhận lại đồ thành công! Bạn có thể bắt đầu kiểm tra hiện vật." });
+      setBookings((prev) =>
+        prev.map((b) => (b.id === booking.id ? { ...b, status: "returned" } : b)),
+      );
+      void refreshAll();
+    } else {
+      setErrorMsg(res.message ?? "Không thể ghi nhận đã trả đồ.");
+    }
+  } catch {
+    setErrorMsg("Có lỗi xảy ra khi ghi nhận trả đồ.");
+  } finally {
+    setActioning(null);
+  }
+}
+
 async function handleFinalizeBooking() {
   if (!booking) return;
   setFinalizingBooking(true);
@@ -1932,6 +1955,30 @@ async function handleComplete(finalAssetStatus: string) {
 
           {/* ── Main content ── */}
           <div className="space-y-6 lg:col-span-8">
+            {booking?.status === "overdue" && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-xs text-red-950 shadow-2xs">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-sm text-red-900">
+                      Đơn hàng #{booking.id.slice(0, 8).toUpperCase()} đang ở trạng thái Quá hạn trả ({booking.overdueDays ?? 0} ngày)
+                    </p>
+                    <p className="mt-0.5 text-red-800">
+                      Khách hàng đã mang đồ tới hoàn trả? Vui lòng bấm &ldquo;Ghi nhận đã nhận lại đồ&rdquo; để hệ thống chốt phụ phí quá hạn và chuyển đơn sang trạng thái sẵn sàng kiểm định.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={actioning !== null}
+                  onClick={handleMarkReturnedFromInspection}
+                  className="shrink-0 rounded-lg bg-lotus px-4 py-2 text-xs font-semibold text-white shadow-2xs transition hover:bg-oxblood disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {actioning === "mark-returned" ? "Đang ghi nhận..." : "Ghi nhận đã nhận lại đồ"}
+                </button>
+              </div>
+            )}
+
             {/* Top Action Toolbar — Đặt ở vị trí trên cùng trang trọng & thoáng đãng, đồng bộ phong cách như Quản lý */}
             {booking && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-white px-5 py-3.5 shadow-2xs">
@@ -3450,7 +3497,7 @@ async function handleComplete(finalAssetStatus: string) {
 
                         {/* Hàng nút bấm bên phải */}
                         <div className="flex flex-wrap items-center gap-2.5 ml-auto">
-                          {booking?.status === "inspection_pending" && bookingReadiness.ready && !hasPendingManagerApproval && (
+                          {(booking?.status === "inspection_pending" || booking?.status === "returned") && bookingReadiness.ready && !hasPendingManagerApproval && (
                             <button
                               type="button"
                               disabled={finalizingBooking || actioning !== null}
@@ -3459,6 +3506,12 @@ async function handleComplete(finalAssetStatus: string) {
                             >
                               {finalizingBooking ? "Đang xử lý..." : "✓ Hoàn tất kiểm tra đơn"}
                             </button>
+                          )}
+                          {!bookingReadiness.ready && bookingReadiness.blockers.length > 0 && (
+                            <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                              <span>Chưa thể hoàn tất: còn {bookingReadiness.blockers.length} món chưa kiểm</span>
+                            </span>
                           )}
                           {FINAL_ACTIONS.map((action) => (
                             <button

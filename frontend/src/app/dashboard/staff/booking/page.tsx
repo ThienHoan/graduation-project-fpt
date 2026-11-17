@@ -812,8 +812,7 @@ export default function StaffBookingManagementPage() {
 
             const canPrintInspection =
               ["inspection_pending", "refund_pending", "completed"].includes(booking.status) ||
-              Boolean(booking.allAssignedAssetsInspected) ||
-              Number(booking.penaltyTotal ?? 0) > 0;
+              Boolean(booking.allAssignedAssetsInspected);
 
             return (
               <div key={booking.id}>
@@ -1119,7 +1118,12 @@ export default function StaffBookingManagementPage() {
                       )
                     )
                   ) : (
-                    (actions.length > 0 || booking.status === "awaiting_payment" || booking.status === "ready_for_pickup" || booking.status === "delivering") && (
+                    (actions.length > 0 ||
+                      booking.status === "awaiting_payment" ||
+                      booking.status === "ready_for_pickup" ||
+                      booking.status === "delivering" ||
+                      booking.status === "renting" ||
+                      booking.status === "overdue") && (
                       <>
                         {booking.status === "awaiting_payment" && booking.pickupMethod !== "delivery" && (
                             <button

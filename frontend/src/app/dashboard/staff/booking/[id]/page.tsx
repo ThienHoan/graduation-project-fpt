@@ -343,8 +343,7 @@ export default function StaffBookingDetailPage() {
         "refund_pending",
         "completed",
       ].includes(booking.status) ||
-        Boolean(booking.allAssignedAssetsInspected) ||
-        Number(booking.penaltyTotal ?? 0) > 0)
+        Boolean(booking.allAssignedAssetsInspected))
   );
 
   return (

@@ -287,6 +287,34 @@ export class LoyaltyService {
     });
     if (!user) throw new NotFoundException("Không tìm thấy thông tin tài khoản.");
 
+    // Xác định hạng chuẩn tương ứng với điểm vòng đời (hỗ trợ tự động đồng bộ khi test DB)
+    let expectedTier: loyalty_tier = "basic";
+    if (user.loyaltyPointsLifetime >= TIER_THRESHOLDS.premium) {
+      expectedTier = "premium";
+    } else if (user.loyaltyPointsLifetime >= TIER_THRESHOLDS.plus) {
+      expectedTier = "plus";
+    } else {
+      expectedTier = "basic";
+    }
+
+    let userTier = user.loyaltyTier;
+    let tierExpiresAt = user.loyaltyTierExpiresAt;
+    let tierUpdatedAt = user.loyaltyTierUpdatedAt;
+
+    if (user.loyaltyTier !== expectedTier) {
+      userTier = expectedTier;
+      tierExpiresAt = expectedTier === "basic" ? null : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      tierUpdatedAt = new Date();
+      await this.prisma.userAccount.update({
+        where: { id: customerId },
+        data: {
+          loyaltyTier: expectedTier,
+          loyaltyTierExpiresAt: tierExpiresAt,
+          loyaltyTierUpdatedAt: tierUpdatedAt,
+        },
+      });
+    }
+
     // Lấy các đơn thuê đã được xác nhận/thanh toán đang tiến hành nhưng chưa hoàn tất tích điểm
     // Quy tắc nghiệp vụ:
     // 1. TUYỆT ĐỐI KHÔNG tính pending points cho đơn 'pending_confirmation'
@@ -379,10 +407,10 @@ export class LoyaltyService {
       _sum: { delta: true },
     });
     const cyclePoints = Number(cycleLogs._sum.delta ?? 0);
-    const maintainThreshold = TIER_THRESHOLDS[user.loyaltyTier];
-    const maintainPointsNeeded = user.loyaltyTier === "basic" ? 0 : Math.max(0, maintainThreshold - cyclePoints);
-    const daysRemaining = user.loyaltyTierExpiresAt
-      ? Math.max(0, Math.ceil((new Date(user.loyaltyTierExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+    const maintainThreshold = TIER_THRESHOLDS[userTier];
+    const maintainPointsNeeded = userTier === "basic" ? 0 : Math.max(0, maintainThreshold - cyclePoints);
+    const daysRemaining = tierExpiresAt
+      ? Math.max(0, Math.ceil((new Date(tierExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
       : null;
 
     return ok({
@@ -390,11 +418,11 @@ export class LoyaltyService {
       lifetimePoints: user.loyaltyPointsLifetime,
       pendingPoints,
       pendingBookings,
-      tier: user.loyaltyTier,
+      tier: userTier,
       nextTier,
-      tierBenefits: TIER_BENEFITS[user.loyaltyTier],
-      tierExpiresAt: user.loyaltyTierExpiresAt,
-      tierUpdatedAt: user.loyaltyTierUpdatedAt,
+      tierBenefits: TIER_BENEFITS[userTier],
+      tierExpiresAt,
+      tierUpdatedAt,
       cyclePoints,
       maintainPointsNeeded,
       daysRemaining,
