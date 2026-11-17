@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { BookingStatus, Prisma, loyalty_tier } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 /** 1.000đ chi tiêu thuê thực tế = 1 điểm tích luỹ */
 export const POINTS_PER_VND = 1 / 1000;
@@ -38,7 +39,12 @@ export const TIER_BENEFITS: Record<loyalty_tier, string[]> = {
 
 @Injectable()
 export class LoyaltyService {
-  constructor(private readonly prisma: PrismaService) { }
+  private readonly logger = new Logger(LoyaltyService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationsService?: NotificationsService,
+  ) { }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Tích điểm khi đơn thuê hoàn tất (completed)
@@ -443,6 +449,7 @@ export class LoyaltyService {
       },
       select: {
         id: true,
+        email: true,
         loyaltyTier: true,
         loyaltyPoints: true,
         loyaltyTierUpdatedAt: true,
@@ -502,6 +509,23 @@ export class LoyaltyService {
             },
           });
           renewed += 1;
+
+          if (this.notificationsService) {
+            const tierLabel = newTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+            const expiresAtFormatted = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN");
+            void this.notificationsService
+              .notifyUser({
+                userId: user.id,
+                email: user.email,
+                templateKey: "loyalty.tier_renewed",
+                linkUrl: "/dashboard/customer/loyalty",
+                data: {
+                  tierName: tierLabel,
+                  expiresAt: expiresAtFormatted,
+                },
+              })
+              .catch((err) => this.logger.warn(`Lỗi gửi thông báo gia hạn hạng: ${err instanceof Error ? err.message : String(err)}`));
+          }
         } else {
           const newExpiresAt = newTier === "basic" ? null : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
           await tx.$executeRaw`
@@ -523,11 +547,125 @@ export class LoyaltyService {
             },
           });
           downgraded += 1;
+
+          if (this.notificationsService) {
+            const oldLabel = oldTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+            const newLabel =
+              newTier === "premium"
+                ? "Hoàng Gia (Premium)"
+                : newTier === "plus"
+                  ? "Thân Thiết (Plus)"
+                  : "Khởi Đầu (Basic)";
+            void this.notificationsService
+              .notifyUser({
+                userId: user.id,
+                email: user.email,
+                templateKey: "loyalty.tier_downgraded",
+                linkUrl: "/dashboard/customer/loyalty",
+                data: {
+                  oldTierName: oldLabel,
+                  newTierName: newLabel,
+                },
+              })
+              .catch((err) => this.logger.warn(`Lỗi gửi thông báo hạ hạng: ${err instanceof Error ? err.message : String(err)}`));
+          }
         }
       });
     }
 
     return { renewed, downgraded };
+  }
+
+  /**
+   * Quét và gửi thông báo nhắc nhở giữ hạng cho các tài khoản sắp hết hạn chu kỳ 12 tháng (trong vòng 30 ngày).
+   * - Chỉ áp dụng cho hạng có thời hạn (Plus, Premium).
+   * - Chỉ gửi nếu khách CHƯA tích đủ điểm chu kỳ để duy trì hạng.
+   * - Cơ chế chống spam: gửi tại 2 mốc quan trọng (trước 30 ngày và trước 7 ngày khẩn cấp).
+   */
+  async sendTierExpirationWarnings(): Promise<{ warnedCount: number }> {
+    if (!this.notificationsService) return { warnedCount: 0 };
+
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const upcomingUsers = await this.prisma.userAccount.findMany({
+      where: {
+        loyaltyTier: { in: ["plus", "premium"] },
+        loyaltyTierExpiresAt: {
+          gt: now,
+          lte: in30Days,
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        loyaltyTier: true,
+        loyaltyTierExpiresAt: true,
+        loyaltyTierUpdatedAt: true,
+      },
+    });
+
+    let warnedCount = 0;
+
+    for (const user of upcomingUsers) {
+      if (!user.loyaltyTierExpiresAt) continue;
+
+      const daysRemaining = Math.max(
+        0,
+        Math.ceil((user.loyaltyTierExpiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
+      );
+
+      // Tính điểm chu kỳ hiện tại
+      const cycleLogs = await this.prisma.loyalty_point_logs.aggregate({
+        where: {
+          customerId: user.id,
+          delta: { gt: 0 },
+          reason: "earn_rental",
+          ...(user.loyaltyTierUpdatedAt ? { createdAt: { gte: user.loyaltyTierUpdatedAt } } : {}),
+        },
+        _sum: { delta: true },
+      });
+      const cyclePoints = Number(cycleLogs._sum.delta ?? 0);
+      const maintainThreshold = TIER_THRESHOLDS[user.loyaltyTier];
+
+      // Nếu đã đủ điểm duy trì thì không cần cảnh báo
+      if (cyclePoints >= maintainThreshold) continue;
+
+      const pointsNeeded = maintainThreshold - cyclePoints;
+
+      // Chống spam: mốc <= 7 ngày thì kiểm tra 6 ngày qua; mốc <= 30 ngày thì kiểm tra 25 ngày qua
+      const lookbackDays = daysRemaining <= 7 ? 6 : 25;
+      const recentNotification = await this.prisma.notification.findFirst({
+        where: {
+          userId: user.id,
+          linkUrl: "/dashboard/customer/loyalty",
+          createdAt: { gte: new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000) },
+          title: { contains: "Nhắc hạn thành viên" },
+        },
+      });
+
+      if (recentNotification) continue;
+
+      const tierLabel = user.loyaltyTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+      const expiresAtFormatted = user.loyaltyTierExpiresAt.toLocaleDateString("vi-VN");
+
+      await this.notificationsService.notifyUser({
+        userId: user.id,
+        email: user.email,
+        templateKey: "loyalty.tier_expiration_warning",
+        linkUrl: "/dashboard/customer/loyalty",
+        data: {
+          tierName: tierLabel,
+          expiresAt: expiresAtFormatted,
+          daysRemaining,
+          pointsNeeded: pointsNeeded.toLocaleString("vi-VN"),
+        },
+      });
+
+      warnedCount += 1;
+    }
+
+    return { warnedCount };
   }
 
   /**

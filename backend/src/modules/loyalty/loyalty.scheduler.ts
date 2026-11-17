@@ -11,7 +11,8 @@ export class LoyaltyScheduler {
   /**
    * Chạy vào lúc 01:00 AM (giờ Việt Nam) hàng đêm:
    * 1. Quét và xét duyệt các tài khoản thành viên (Plus, Premium) đã hết hạn 12 tháng.
-   * 2. Quét và trừ điểm thưởng tích lũy quá 12 tháng chưa dùng.
+   * 2. Quét và gửi thông báo nhắc hạn thành viên trước 30 ngày (và 7 ngày) cho các tài khoản chưa đủ điểm chu kỳ.
+   * 3. Quét và trừ điểm thưởng tích lũy quá 12 tháng chưa dùng.
    */
   @Cron("0 0 1 * * *", { timeZone: "Asia/Ho_Chi_Minh" })
   async runNightlyLoyaltyMaintenance() {
@@ -21,6 +22,13 @@ export class LoyaltyScheduler {
       if (tierResult.renewed > 0 || tierResult.downgraded > 0) {
         this.logger.log(
           `Xét duyệt hạn thành viên: ${tierResult.renewed} tài khoản được gia hạn, ${tierResult.downgraded} tài khoản bị hạ bậc.`,
+        );
+      }
+
+      const warningResult = await this.loyaltyService.sendTierExpirationWarnings();
+      if (warningResult.warnedCount > 0) {
+        this.logger.log(
+          `Gửi thông báo nhắc hạn thành viên (trước 30 ngày): ${warningResult.warnedCount} tài khoản.`,
         );
       }
 

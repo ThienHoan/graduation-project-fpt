@@ -372,6 +372,99 @@ describe("LoyaltyService", () => {
     });
   });
 
+  describe("sendTierExpirationWarnings", () => {
+    it("warns user approaching expiration within 30 days when cycle points are insufficient", async () => {
+      const mockNotificationsService = {
+        notifyUser: vi.fn().mockResolvedValue({}),
+      };
+      const serviceWithNotif = new LoyaltyService(prisma, mockNotificationsService as any);
+
+      prisma.notification = {
+        findFirst: vi.fn().mockResolvedValue(null),
+      };
+
+      const expiresAt = new Date(Date.now() + 20 * 86400000); // 20 days left
+      prisma.userAccount.findMany = vi.fn().mockResolvedValueOnce([
+        {
+          id: "user-warn",
+          email: "warn@example.com",
+          loyaltyTier: "plus",
+          loyaltyTierExpiresAt: expiresAt,
+          loyaltyTierUpdatedAt: new Date(Date.now() - 345 * 86400000),
+        },
+      ]);
+      // Only 500 cycle points earned out of 2000 needed
+      prisma.loyalty_point_logs.aggregate.mockResolvedValueOnce({ _sum: { delta: 500 } });
+
+      const res = await serviceWithNotif.sendTierExpirationWarnings();
+      expect(res.warnedCount).toBe(1);
+      expect(mockNotificationsService.notifyUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: "user-warn",
+          email: "warn@example.com",
+          templateKey: "loyalty.tier_expiration_warning",
+          linkUrl: "/dashboard/customer/loyalty",
+          data: expect.objectContaining({
+            tierName: "Thân Thiết (Plus)",
+            daysRemaining: 20,
+            pointsNeeded: "1.500",
+          }),
+        }),
+      );
+    });
+
+    it("skips warning if user already has enough cycle points to maintain", async () => {
+      const mockNotificationsService = {
+        notifyUser: vi.fn(),
+      };
+      const serviceWithNotif = new LoyaltyService(prisma, mockNotificationsService as any);
+
+      const expiresAt = new Date(Date.now() + 15 * 86400000);
+      prisma.userAccount.findMany = vi.fn().mockResolvedValueOnce([
+        {
+          id: "user-safe",
+          email: "safe@example.com",
+          loyaltyTier: "plus",
+          loyaltyTierExpiresAt: expiresAt,
+          loyaltyTierUpdatedAt: new Date(Date.now() - 350 * 86400000),
+        },
+      ]);
+      // 2500 points earned >= 2000 required
+      prisma.loyalty_point_logs.aggregate.mockResolvedValueOnce({ _sum: { delta: 2500 } });
+
+      const res = await serviceWithNotif.sendTierExpirationWarnings();
+      expect(res.warnedCount).toBe(0);
+      expect(mockNotificationsService.notifyUser).not.toHaveBeenCalled();
+    });
+
+    it("skips warning if user already received a reminder recently (anti-spam)", async () => {
+      const mockNotificationsService = {
+        notifyUser: vi.fn(),
+      };
+      const serviceWithNotif = new LoyaltyService(prisma, mockNotificationsService as any);
+
+      prisma.notification = {
+        findFirst: vi.fn().mockResolvedValue({ id: "notif-recent" }),
+      };
+
+      const expiresAt = new Date(Date.now() + 20 * 86400000);
+      prisma.userAccount.findMany = vi.fn().mockResolvedValueOnce([
+        {
+          id: "user-already-warned",
+          email: "warned@example.com",
+          loyaltyTier: "plus",
+          loyaltyTierExpiresAt: expiresAt,
+          loyaltyTierUpdatedAt: new Date(Date.now() - 345 * 86400000),
+        },
+      ]);
+      prisma.loyalty_point_logs.aggregate.mockResolvedValueOnce({ _sum: { delta: 200 } });
+
+      const res = await serviceWithNotif.sendTierExpirationWarnings();
+      expect(res.warnedCount).toBe(0);
+      expect(mockNotificationsService.notifyUser).not.toHaveBeenCalled();
+    });
+  });
+
   describe("expireOutdatedPoints", () => {
     it("deducts expired points and logs expiration entry", async () => {
       prisma.loyalty_point_logs.findMany.mockResolvedValueOnce([
