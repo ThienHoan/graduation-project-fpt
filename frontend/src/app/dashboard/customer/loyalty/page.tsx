@@ -30,6 +30,7 @@ import {
   TrendingUp,
   Receipt,
   Ticket,
+  Calendar,
 } from "lucide-react";
 
 interface TierDesign {
@@ -65,7 +66,7 @@ const TIER_META: Record<LoyaltyTier, TierDesign> = {
     cardGlow: "from-emerald-500/15 via-transparent to-teal-900/10",
     accentColor: "#34d399",
     icon: Sparkles,
-    description: "Ưu đãi giảm 5% giá trị thuê trang phục cùng quyền ưu tiên giữ size độc bản.",
+    description: "Ưu đãi giảm 5% giá trị thuê trang phục, chu kỳ 12 tháng cùng quyền ưu tiên giữ size độc bản.",
   },
   premium: {
     label: "Hạng Hoàng Gia",
@@ -76,7 +77,7 @@ const TIER_META: Record<LoyaltyTier, TierDesign> = {
     cardGlow: "from-amber-400/20 via-lotus/20 to-transparent",
     accentColor: "#fbbf24",
     icon: Crown,
-    description: "Đặc quyền cao nhất: Giảm 10% trọn đời, miễn phí phụ kiện và phục vụ riêng.",
+    description: "Đặc quyền cao nhất: Giảm 10% giá trị thuê trong chu kỳ 12 tháng, miễn phí phụ kiện và phục vụ riêng.",
   },
 };
 
@@ -188,6 +189,11 @@ export default function CustomerLoyaltyPage() {
   const nextTier = loyalty?.nextTier;
   const progressPercent = nextTier
     ? Math.min(100, Math.round((lifetimePoints / nextTier.targetPoints) * 100))
+    : 100;
+
+  const maintainTarget = currentTier === "premium" ? 6000 : currentTier === "plus" ? 2000 : 0;
+  const maintainPercent = maintainTarget > 0
+    ? Math.min(100, Math.round(((loyalty?.cyclePoints ?? 0) / maintainTarget) * 100))
     : 100;
 
   return (
@@ -329,6 +335,21 @@ export default function CustomerLoyaltyPage() {
                   </strong>{" "}
                   điểm
                 </span>
+                {loyalty?.tierExpiresAt && currentTier !== "basic" && (
+                  <>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-1 text-amber-200">
+                      <Clock className="h-3 w-3" />
+                      Hạn hạng:{" "}
+                      <strong className="text-white font-semibold">
+                        {new Date(loyalty.tierExpiresAt).toLocaleDateString("vi-VN")}
+                      </strong>
+                      {typeof loyalty.daysRemaining === "number" && (
+                        <span>({loyalty.daysRemaining} ngày)</span>
+                      )}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -441,9 +462,113 @@ export default function CustomerLoyaltyPage() {
                 </div>
               ))}
             </div>
+
           </div>
         </div>
       </div>
+
+      {/* ── BENTO: TIẾN ĐỘ DUY TRÌ HẠNG CHU KỲ 12 THÁNG (Chỉ hiển thị cho Plus & Premium) ── */}
+      {currentTier !== "basic" && (
+        <div className="relative overflow-hidden rounded-3xl border border-sand bg-white p-6 sm:p-7 shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-2 max-w-xl">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
+                    currentTier === "premium"
+                      ? "bg-amber-100 text-amber-900 border border-amber-300"
+                      : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Chu kỳ hội viên 12 tháng</span>
+                </span>
+                {typeof loyalty?.daysRemaining === "number" && (
+                  <span
+                    className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
+                      loyalty.daysRemaining <= 30
+                        ? "bg-rose-100 text-rose-800 border border-rose-200"
+                        : "bg-stone-100 text-stone-700 border border-stone-200"
+                    }`}
+                  >
+                    {loyalty.daysRemaining <= 30
+                      ? `⚠️ Còn ${loyalty.daysRemaining} ngày để giữ hạng`
+                      : `Còn ${loyalty.daysRemaining} ngày`}
+                  </span>
+                )}
+              </div>
+
+              <h3 className="font-display text-xl sm:text-2xl font-bold text-ink">
+                Tiến Trình Duy Trì Hạng {tierInfo.label}
+              </h3>
+
+              <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+                Hạng hội viên được cấp quyền lợi trong chu kỳ{" "}
+                <strong className="text-ink font-semibold">12 tháng</strong>.
+                {loyalty?.tierExpiresAt && (
+                  <>
+                    {" "}Hạn chót xét duyệt gia hạn:{" "}
+                    <strong className="text-lotus font-semibold">
+                      {new Date(loyalty.tierExpiresAt).toLocaleDateString("vi-VN")}
+                    </strong>
+                    .
+                  </>
+                )}
+                {" "}Nếu không đạt đủ điểm duy trì, hệ thống áp dụng cơ chế{" "}
+                <strong className="text-ink font-semibold">hạ từng bậc nhẹ nhàng</strong> (không hạ trực tiếp về Basic) để bảo lưu quyền lợi cho bạn.
+              </p>
+            </div>
+
+            {/* Khối thanh tiến độ & điểm */}
+            <div className="rounded-2xl border border-sand/80 bg-stone-50/70 p-5 min-w-[280px] sm:min-w-[340px] space-y-3">
+              <div className="flex justify-between items-baseline">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  Điểm chu kỳ hiện tại
+                </span>
+                <span className="text-xs font-bold text-stone-700">
+                  Mục tiêu: {maintainTarget.toLocaleString("vi-VN")} điểm
+                </span>
+              </div>
+
+              <div className="flex items-baseline gap-2">
+                <span className="font-sans text-3xl font-extrabold text-ink tabular-nums">
+                  {(loyalty?.cyclePoints ?? 0).toLocaleString("vi-VN")}
+                </span>
+                <span className="text-xs text-stone-500 font-medium">
+                  / {maintainTarget.toLocaleString("vi-VN")} điểm
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className="relative h-2 w-full rounded-full bg-stone-200 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    currentTier === "premium" ? "bg-amber-500" : "bg-emerald-600"
+                  }`}
+                  style={{ width: `${maintainPercent}%` }}
+                />
+              </div>
+
+              <div className="pt-1 text-xs font-medium">
+                {(loyalty?.maintainPointsNeeded ?? 0) <= 0 ? (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-700 font-bold">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Đã đủ điều kiện gia hạn {tierInfo.label} năm tới!
+                  </span>
+                ) : (
+                  <span className="text-stone-600">
+                    Cần tích thêm{" "}
+                    <strong className="text-lotus font-bold tabular-nums">
+                      {(loyalty?.maintainPointsNeeded ?? 0).toLocaleString("vi-VN")}
+                    </strong>{" "}
+                    điểm trước hạn chót.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── KHỐI ĐƠN THUÊ ĐANG CHỜ TÍCH ĐIỂM (Pending Ledger Bento) ── */}
       {pendingBookings.length > 0 && (
@@ -692,6 +817,46 @@ export default function CustomerLoyaltyPage() {
             <div className="divide-y divide-sand/70">
               {history.map((log) => {
                 const isEarn = log.delta > 0;
+                const isRenew = log.reason === "tier_renewed";
+                const isDowngrade = log.reason === "tier_downgraded";
+                const isExpire = log.reason === "points_expired";
+                const isClawback = log.reason === "clawback_cancelled";
+
+                let badgeLabel = "Quy đổi";
+                let badgeStyle = "bg-amber-100 text-amber-900 border border-amber-200";
+
+                if (isEarn) {
+                  badgeLabel = "Tích lũy";
+                  badgeStyle = "bg-emerald-100 text-emerald-800 border border-emerald-200";
+                } else if (isRenew) {
+                  badgeLabel = "Gia hạn hạng";
+                  badgeStyle = "bg-blue-100 text-blue-900 border border-blue-200";
+                } else if (isDowngrade) {
+                  badgeLabel = "Điều chỉnh hạng";
+                  badgeStyle = "bg-purple-100 text-purple-900 border border-purple-200";
+                } else if (isExpire) {
+                  badgeLabel = "Hết hạn điểm";
+                  badgeStyle = "bg-rose-100 text-rose-900 border border-rose-200";
+                } else if (isClawback) {
+                  badgeLabel = "Thu hồi";
+                  badgeStyle = "bg-stone-100 text-stone-700 border border-stone-300";
+                }
+
+                let reasonText = log.reason;
+                if (log.reason === "earn_rental") {
+                  reasonText = "Tích lũy sau khi hoàn thành đơn thuê";
+                } else if (log.reason === "redeem_voucher") {
+                  reasonText = `Đổi mã voucher ${String(log.meta?.voucherCode ?? "")}`;
+                } else if (log.reason === "clawback_cancelled") {
+                  reasonText = "Thu hồi điểm do đơn bị hủy/hoàn cọc";
+                } else if (log.reason === "tier_renewed") {
+                  reasonText = "Gia hạn thành công hạng thành viên (chu kỳ 12 tháng mới)";
+                } else if (log.reason === "tier_downgraded") {
+                  reasonText = "Điều chỉnh hạng thành viên theo chu kỳ 12 tháng";
+                } else if (log.reason === "points_expired") {
+                  reasonText = "Điểm thưởng hết hạn sau 12 tháng chưa sử dụng";
+                }
+
                 const formattedDate = new Date(log.createdAt).toLocaleDateString("vi-VN", {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -708,21 +873,12 @@ export default function CustomerLoyaltyPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${isEarn
-                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                            : "bg-amber-100 text-amber-900 border border-amber-200"
-                            }`}
+                          className={`inline-flex items-center justify-center rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${badgeStyle}`}
                         >
-                          {isEarn ? "Tích lũy" : "Quy đổi"}
+                          {badgeLabel}
                         </span>
                         <span className="text-xs font-semibold text-ink">
-                          {log.reason === "earn_rental"
-                            ? "Tích lũy sau khi hoàn thành đơn thuê"
-                            : log.reason === "redeem_voucher"
-                              ? `Đổi mã voucher ${String(log.meta?.voucherCode ?? "")}`
-                              : log.reason === "clawback_cancelled"
-                                ? "Thu hồi điểm do hủy/hoàn đơn"
-                                : log.reason}
+                          {reasonText}
                         </span>
                       </div>
                       <p className="text-[11px] text-stone-400 font-medium">
@@ -734,13 +890,20 @@ export default function CustomerLoyaltyPage() {
                     </div>
 
                     <div className="sm:text-right">
-                      <span
-                        className={`font-sans text-sm sm:text-base font-bold tabular-nums ${isEarn ? "text-emerald-700" : "text-amber-700"
+                      {log.delta !== 0 ? (
+                        <span
+                          className={`font-sans text-sm sm:text-base font-bold tabular-nums ${
+                            isEarn ? "text-emerald-700" : isExpire ? "text-rose-600" : "text-amber-700"
                           }`}
-                      >
-                        {isEarn ? "+" : ""}
-                        {log.delta.toLocaleString("vi-VN")} điểm
-                      </span>
+                        >
+                          {isEarn ? "+" : ""}
+                          {log.delta.toLocaleString("vi-VN")} điểm
+                        </span>
+                      ) : (
+                        <span className="font-sans text-xs font-semibold text-stone-400">
+                          Xét duyệt hạng
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -806,11 +969,12 @@ export default function CustomerLoyaltyPage() {
               </div>
               <h5 className="font-display text-lg font-bold text-emerald-950">Hạng Plus</h5>
               <p className="text-[11px] text-stone-500 leading-relaxed">
-                Đạt từ <strong className="text-emerald-800 tabular-nums">2.000 điểm trọn đời</strong> (~2.000.000đ tiền thuê).
+                Đạt từ <strong className="text-emerald-800 tabular-nums">2.000 điểm tích lũy</strong> (~2.000.000đ tiền thuê). Chu kỳ giữ hạng 12 tháng.
               </p>
               <ul className="space-y-1.5 pt-2 text-[11px] text-emerald-900 border-t border-emerald-100 font-medium">
                 <li className="flex items-center gap-1.5">✓ Toàn bộ đặc quyền của hạng Basic</li>
                 <li className="flex items-center gap-1.5 font-bold text-emerald-800">★ Giảm trực tiếp 5% tiền thuê trang phục</li>
+                <li className="flex items-center gap-1.5">✓ Duy trì 2.000 điểm/năm để gia hạn tự động</li>
                 <li className="flex items-center gap-1.5">✓ Ưu tiên hỗ trợ giữ size mùa cao điểm</li>
               </ul>
             </div>
@@ -834,15 +998,27 @@ export default function CustomerLoyaltyPage() {
               </div>
               <h5 className="font-display text-lg font-bold text-amber-950">Hạng Premium</h5>
               <p className="text-[11px] text-stone-500 leading-relaxed">
-                Đạt từ <strong className="text-amber-900 tabular-nums">6.000 điểm trọn đời</strong> (~6.000.000đ tiền thuê).
+                Đạt từ <strong className="text-amber-900 tabular-nums">6.000 điểm tích lũy</strong> (~6.000.000đ tiền thuê). Chu kỳ giữ hạng 12 tháng.
               </p>
               <ul className="space-y-1.5 pt-2 text-[11px] text-amber-950 border-t border-amber-100 font-medium">
                 <li className="flex items-center gap-1.5">✓ Toàn bộ đặc quyền của hạng Plus</li>
                 <li className="flex items-center gap-1.5 font-bold text-amber-900">★ Giảm trực tiếp 10% tiền thuê trang phục</li>
                 <li className="flex items-center gap-1.5">★ Miễn phí phụ kiện đi kèm theo bộ</li>
+                <li className="flex items-center gap-1.5">✓ Duy trì 6.000 điểm/năm để gia hạn tự động</li>
                 <li className="flex items-center gap-1.5">✓ Chuyên viên stylist tư vấn riêng 1-1</li>
               </ul>
             </div>
+          </div>
+        </div>
+
+        {/* Note về quy chuẩn 12 tháng & hạ bậc mềm */}
+        <div className="rounded-2xl border border-sand/70 bg-white p-4 text-xs text-stone-600 flex items-start gap-3">
+          <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <span className="font-bold text-ink">Chính sách bảo lưu quyền lợi & hạ bậc mềm mại (Soft Downgrade)</span>
+            <p className="text-[11px] text-stone-500 leading-relaxed">
+              Quyền lợi hạng thành viên và điểm thưởng có hiệu lực trong chu kỳ 12 tháng. Khi hết hạn chu kỳ, nếu không đủ điểm tích lũy để duy trì, hệ thống chỉ hạ 1 bậc nhẹ nhàng (ví dụ từ Premium xuống Plus) chứ không hạ về Basic, giúp quý khách luôn được bảo lưu những ưu đãi tốt nhất.
+            </p>
           </div>
         </div>
       </section>
