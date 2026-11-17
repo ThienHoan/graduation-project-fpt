@@ -42,6 +42,8 @@ model UserAccount {
   loyaltyTier                                            loyalty_tier            @default(basic) @map("loyalty_tier")
   loyaltyPoints                                          Int                     @default(0) @map("loyalty_points")
   loyaltyPointsLifetime                                  Int                     @default(0) @map("loyalty_points_lifetime")
+  loyaltyTierExpiresAt                                   DateTime?               @map("loyalty_tier_expires_at") @db.Timestamptz(6)
+  loyaltyTierUpdatedAt                                   DateTime                @default(now()) @map("loyalty_tier_updated_at") @db.Timestamptz(6)
 
   @@map("user_accounts")
 }
@@ -1107,6 +1109,7 @@ model loyalty_point_logs {
   reason        String
   meta          Json         @default("{}")
   balanceAfter  Int          @map("balance_after")
+  expiresAt     DateTime?    @map("expires_at") @db.Timestamptz(6)
   createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   customer      UserAccount  @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   booking       Booking?     @relation(fields: [bookingId], references: [id], onDelete: SetNull, onUpdate: NoAction)

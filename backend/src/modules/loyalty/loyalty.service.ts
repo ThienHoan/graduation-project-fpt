@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { BookingStatus, Prisma, loyalty_tier } from "@prisma/client";
 import { ok } from "../../common/api-response";
 import { PrismaService } from "../../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 /** 1.000đ chi tiêu thuê thực tế = 1 điểm tích luỹ */
 export const POINTS_PER_VND = 1 / 1000;
@@ -38,7 +39,12 @@ export const TIER_BENEFITS: Record<loyalty_tier, string[]> = {
 
 @Injectable()
 export class LoyaltyService {
-  constructor(private readonly prisma: PrismaService) { }
+  private readonly logger = new Logger(LoyaltyService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly notificationsService?: NotificationsService,
+  ) { }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Tích điểm khi đơn thuê hoàn tất (completed)
@@ -64,20 +70,49 @@ export class LoyaltyService {
     });
     if (existing) return null;
 
-    // Cập nhật atomic điểm và tự động nâng hạng theo lifetime points
-    await tx.$executeRaw`
-      UPDATE "user_accounts"
-      SET
-        "loyalty_points"          = "loyalty_points" + ${delta},
-        "loyalty_points_lifetime" = "loyalty_points_lifetime" + ${delta},
-        "loyalty_tier"            = CASE
-          WHEN "loyalty_points_lifetime" + ${delta} >= ${TIER_THRESHOLDS.premium} THEN 'premium'::loyalty_tier
-          WHEN "loyalty_points_lifetime" + ${delta} >= ${TIER_THRESHOLDS.plus}    THEN 'plus'::loyalty_tier
-          ELSE 'basic'::loyalty_tier
-        END,
-        "updated_at"              = now()
-      WHERE "id" = ${customerId}::uuid
-    `;
+    // Lấy thông tin hạng hiện tại của khách trước khi cộng điểm
+    const beforeUser = await tx.userAccount.findUnique({
+      where: { id: customerId },
+      select: { loyaltyTier: true, loyaltyPointsLifetime: true },
+    });
+    const oldTier = beforeUser?.loyaltyTier ?? "basic";
+    const currentLifetime = beforeUser?.loyaltyPointsLifetime ?? 0;
+    const newLifetime = currentLifetime + delta;
+
+    let targetTier: loyalty_tier = "basic";
+    if (newLifetime >= TIER_THRESHOLDS.premium) {
+      targetTier = "premium";
+    } else if (newLifetime >= TIER_THRESHOLDS.plus) {
+      targetTier = "plus";
+    }
+
+    const isUpgrade = (oldTier === "basic" && targetTier !== "basic") || (oldTier === "plus" && targetTier === "premium");
+
+    if (isUpgrade) {
+      // Khi thăng hạng mới (Basic -> Plus/Premium hoặc Plus -> Premium): cấp thời hạn 365 ngày
+      await tx.$executeRaw`
+        UPDATE "user_accounts"
+        SET
+          "loyalty_points"          = "loyalty_points" + ${delta},
+          "loyalty_points_lifetime" = "loyalty_points_lifetime" + ${delta},
+          "loyalty_tier"            = ${targetTier}::loyalty_tier,
+          "loyalty_tier_expires_at" = now() + INTERVAL '365 days',
+          "loyalty_tier_updated_at" = now(),
+          "updated_at"              = now()
+        WHERE "id" = ${customerId}::uuid
+      `;
+    } else {
+      // Không đổi bậc hoặc đã ở hạng đó: cộng điểm bình thường
+      await tx.$executeRaw`
+        UPDATE "user_accounts"
+        SET
+          "loyalty_points"          = "loyalty_points" + ${delta},
+          "loyalty_points_lifetime" = "loyalty_points_lifetime" + ${delta},
+          "loyalty_tier"            = ${targetTier}::loyalty_tier,
+          "updated_at"              = now()
+        WHERE "id" = ${customerId}::uuid
+      `;
+    }
 
     // Lấy số dư sau cập nhật để ghi nhận ledger
     const user = await tx.userAccount.findUnique({
@@ -86,6 +121,7 @@ export class LoyaltyService {
     });
 
     const balanceAfter = user?.loyaltyPoints ?? delta;
+    const pointsExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
 
     await tx.loyalty_point_logs.create({
       data: {
@@ -95,6 +131,7 @@ export class LoyaltyService {
         reason: "earn_rental",
         meta: { rentalSpend, pointsPerVnd: POINTS_PER_VND },
         balanceAfter,
+        expiresAt: pointsExpiresAt,
       },
     });
 
@@ -250,9 +287,39 @@ export class LoyaltyService {
         loyaltyPoints: true,
         loyaltyPointsLifetime: true,
         loyaltyTier: true,
+        loyaltyTierExpiresAt: true,
+        loyaltyTierUpdatedAt: true,
       },
     });
     if (!user) throw new NotFoundException("Không tìm thấy thông tin tài khoản.");
+
+    // Xác định hạng chuẩn tương ứng với điểm vòng đời (hỗ trợ tự động đồng bộ khi test DB)
+    let expectedTier: loyalty_tier = "basic";
+    if (user.loyaltyPointsLifetime >= TIER_THRESHOLDS.premium) {
+      expectedTier = "premium";
+    } else if (user.loyaltyPointsLifetime >= TIER_THRESHOLDS.plus) {
+      expectedTier = "plus";
+    } else {
+      expectedTier = "basic";
+    }
+
+    let userTier = user.loyaltyTier;
+    let tierExpiresAt = user.loyaltyTierExpiresAt;
+    let tierUpdatedAt = user.loyaltyTierUpdatedAt;
+
+    if (user.loyaltyTier !== expectedTier) {
+      userTier = expectedTier;
+      tierExpiresAt = expectedTier === "basic" ? null : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      tierUpdatedAt = new Date();
+      await this.prisma.userAccount.update({
+        where: { id: customerId },
+        data: {
+          loyaltyTier: expectedTier,
+          loyaltyTierExpiresAt: tierExpiresAt,
+          loyaltyTierUpdatedAt: tierUpdatedAt,
+        },
+      });
+    }
 
     // Lấy các đơn thuê đã được xác nhận/thanh toán đang tiến hành nhưng chưa hoàn tất tích điểm
     // Quy tắc nghiệp vụ:
@@ -335,15 +402,338 @@ export class LoyaltyService {
     const pendingPoints = pendingBookings.reduce((sum, b) => sum + b.points, 0);
     const nextTier = this.calcNextTier(user.loyaltyPointsLifetime);
 
+    // Tính điểm tích luỹ trong chu kỳ 12 tháng hiện tại
+    const cycleLogs = await this.prisma.loyalty_point_logs.aggregate({
+      where: {
+        customerId,
+        delta: { gt: 0 },
+        reason: "earn_rental",
+        ...(user.loyaltyTierUpdatedAt ? { createdAt: { gte: user.loyaltyTierUpdatedAt } } : {}),
+      },
+      _sum: { delta: true },
+    });
+    const cyclePoints = Number(cycleLogs._sum.delta ?? 0);
+    const maintainThreshold = TIER_THRESHOLDS[userTier];
+    const maintainPointsNeeded = userTier === "basic" ? 0 : Math.max(0, maintainThreshold - cyclePoints);
+    const daysRemaining = tierExpiresAt
+      ? Math.max(0, Math.ceil((new Date(tierExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+      : null;
+
     return ok({
       points: user.loyaltyPoints,
       lifetimePoints: user.loyaltyPointsLifetime,
       pendingPoints,
       pendingBookings,
-      tier: user.loyaltyTier,
+      tier: userTier,
       nextTier,
-      tierBenefits: TIER_BENEFITS[user.loyaltyTier],
+      tierBenefits: TIER_BENEFITS[userTier],
+      tierExpiresAt,
+      tierUpdatedAt,
+      cyclePoints,
+      maintainPointsNeeded,
+      daysRemaining,
     });
+  }
+
+  /**
+   * Quét và xử lý các tài khoản đã hết hạn 12 tháng (gọi từ cron hàng đêm).
+   * - Nếu đủ điểm chu kỳ: Gia hạn thêm 365 ngày.
+   * - Nếu không đủ điểm: Hạ bậc mềm mại (Premium -> Plus, Plus -> Basic).
+   */
+  async evaluateExpiredTiers(): Promise<{ renewed: number; downgraded: number }> {
+    const now = new Date();
+    const expiredUsers = await this.prisma.userAccount.findMany({
+      where: {
+        loyaltyTierExpiresAt: { lte: now },
+        loyaltyTier: { not: "basic" },
+      },
+      select: {
+        id: true,
+        email: true,
+        loyaltyTier: true,
+        loyaltyPoints: true,
+        loyaltyTierUpdatedAt: true,
+      },
+    });
+
+    let renewed = 0;
+    let downgraded = 0;
+
+    for (const user of expiredUsers) {
+      const cycleLogs = await this.prisma.loyalty_point_logs.aggregate({
+        where: {
+          customerId: user.id,
+          delta: { gt: 0 },
+          reason: "earn_rental",
+          ...(user.loyaltyTierUpdatedAt ? { createdAt: { gte: user.loyaltyTierUpdatedAt } } : {}),
+        },
+        _sum: { delta: true },
+      });
+      const cyclePoints = Number(cycleLogs._sum.delta ?? 0);
+      const oldTier = user.loyaltyTier;
+      let newTier: loyalty_tier = "basic";
+
+      if (oldTier === "premium") {
+        if (cyclePoints >= TIER_THRESHOLDS.premium) {
+          newTier = "premium";
+        } else if (cyclePoints >= TIER_THRESHOLDS.plus) {
+          newTier = "plus";
+        } else {
+          newTier = "basic";
+        }
+      } else if (oldTier === "plus") {
+        if (cyclePoints >= TIER_THRESHOLDS.plus) {
+          newTier = "plus";
+        } else {
+          newTier = "basic";
+        }
+      }
+
+      await this.prisma.runSerializable(async (tx) => {
+        if (newTier === oldTier) {
+          await tx.$executeRaw`
+            UPDATE "user_accounts"
+            SET
+              "loyalty_tier_expires_at" = now() + INTERVAL '365 days',
+              "loyalty_tier_updated_at" = now(),
+              "updated_at"              = now()
+            WHERE "id" = ${user.id}::uuid
+          `;
+          await tx.loyalty_point_logs.create({
+            data: {
+              customerId: user.id,
+              delta: 0,
+              reason: "tier_renewed",
+              meta: { oldTier, newTier, cyclePoints, note: `Gia hạn thành công hạng ${newTier}` },
+              balanceAfter: user.loyaltyPoints,
+            },
+          });
+          renewed += 1;
+
+          if (this.notificationsService) {
+            const tierLabel = newTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+            const expiresAtFormatted = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN");
+            void this.notificationsService
+              .notifyUser({
+                userId: user.id,
+                email: user.email,
+                templateKey: "loyalty.tier_renewed",
+                linkUrl: "/dashboard/customer/loyalty",
+                data: {
+                  tierName: tierLabel,
+                  expiresAt: expiresAtFormatted,
+                },
+              })
+              .catch((err) => this.logger.warn(`Lỗi gửi thông báo gia hạn hạng: ${err instanceof Error ? err.message : String(err)}`));
+          }
+        } else {
+          const newExpiresAt = newTier === "basic" ? null : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+          await tx.$executeRaw`
+            UPDATE "user_accounts"
+            SET
+              "loyalty_tier"            = ${newTier}::loyalty_tier,
+              "loyalty_tier_expires_at" = ${newExpiresAt},
+              "loyalty_tier_updated_at" = now(),
+              "updated_at"              = now()
+            WHERE "id" = ${user.id}::uuid
+          `;
+          await tx.loyalty_point_logs.create({
+            data: {
+              customerId: user.id,
+              delta: 0,
+              reason: "tier_downgraded",
+              meta: { oldTier, newTier, cyclePoints, note: `Hạ bậc từ ${oldTier} xuống ${newTier} do không đủ điểm duy trì` },
+              balanceAfter: user.loyaltyPoints,
+            },
+          });
+          downgraded += 1;
+
+          if (this.notificationsService) {
+            const oldLabel = oldTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+            const newLabel =
+              newTier === "premium"
+                ? "Hoàng Gia (Premium)"
+                : newTier === "plus"
+                  ? "Thân Thiết (Plus)"
+                  : "Khởi Đầu (Basic)";
+            void this.notificationsService
+              .notifyUser({
+                userId: user.id,
+                email: user.email,
+                templateKey: "loyalty.tier_downgraded",
+                linkUrl: "/dashboard/customer/loyalty",
+                data: {
+                  oldTierName: oldLabel,
+                  newTierName: newLabel,
+                },
+              })
+              .catch((err) => this.logger.warn(`Lỗi gửi thông báo hạ hạng: ${err instanceof Error ? err.message : String(err)}`));
+          }
+        }
+      });
+    }
+
+    return { renewed, downgraded };
+  }
+
+  /**
+   * Quét và gửi thông báo nhắc nhở giữ hạng cho các tài khoản sắp hết hạn chu kỳ 12 tháng (trong vòng 30 ngày).
+   * - Chỉ áp dụng cho hạng có thời hạn (Plus, Premium).
+   * - Chỉ gửi nếu khách CHƯA tích đủ điểm chu kỳ để duy trì hạng.
+   * - Cơ chế chống spam: gửi tại 2 mốc quan trọng (trước 30 ngày và trước 7 ngày khẩn cấp).
+   */
+  async sendTierExpirationWarnings(): Promise<{ warnedCount: number }> {
+    if (!this.notificationsService) return { warnedCount: 0 };
+
+    const now = new Date();
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const upcomingUsers = await this.prisma.userAccount.findMany({
+      where: {
+        loyaltyTier: { in: ["plus", "premium"] },
+        loyaltyTierExpiresAt: {
+          gt: now,
+          lte: in30Days,
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        loyaltyTier: true,
+        loyaltyTierExpiresAt: true,
+        loyaltyTierUpdatedAt: true,
+      },
+    });
+
+    let warnedCount = 0;
+
+    for (const user of upcomingUsers) {
+      if (!user.loyaltyTierExpiresAt) continue;
+
+      const daysRemaining = Math.max(
+        0,
+        Math.ceil((user.loyaltyTierExpiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
+      );
+
+      // Tính điểm chu kỳ hiện tại
+      const cycleLogs = await this.prisma.loyalty_point_logs.aggregate({
+        where: {
+          customerId: user.id,
+          delta: { gt: 0 },
+          reason: "earn_rental",
+          ...(user.loyaltyTierUpdatedAt ? { createdAt: { gte: user.loyaltyTierUpdatedAt } } : {}),
+        },
+        _sum: { delta: true },
+      });
+      const cyclePoints = Number(cycleLogs._sum.delta ?? 0);
+      const maintainThreshold = TIER_THRESHOLDS[user.loyaltyTier];
+
+      // Nếu đã đủ điểm duy trì thì không cần cảnh báo
+      if (cyclePoints >= maintainThreshold) continue;
+
+      const pointsNeeded = maintainThreshold - cyclePoints;
+
+      // Chống spam: mốc <= 7 ngày thì kiểm tra 6 ngày qua; mốc <= 30 ngày thì kiểm tra 25 ngày qua
+      const lookbackDays = daysRemaining <= 7 ? 6 : 25;
+      const recentNotification = await this.prisma.notification.findFirst({
+        where: {
+          userId: user.id,
+          linkUrl: "/dashboard/customer/loyalty",
+          createdAt: { gte: new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000) },
+          title: { contains: "Nhắc hạn thành viên" },
+        },
+      });
+
+      if (recentNotification) continue;
+
+      const tierLabel = user.loyaltyTier === "premium" ? "Hoàng Gia (Premium)" : "Thân Thiết (Plus)";
+      const expiresAtFormatted = user.loyaltyTierExpiresAt.toLocaleDateString("vi-VN");
+
+      await this.notificationsService.notifyUser({
+        userId: user.id,
+        email: user.email,
+        templateKey: "loyalty.tier_expiration_warning",
+        linkUrl: "/dashboard/customer/loyalty",
+        data: {
+          tierName: tierLabel,
+          expiresAt: expiresAtFormatted,
+          daysRemaining,
+          pointsNeeded: pointsNeeded.toLocaleString("vi-VN"),
+        },
+      });
+
+      warnedCount += 1;
+    }
+
+    return { warnedCount };
+  }
+
+  /**
+   * Quét và trừ các điểm tích luỹ quá 12 tháng chưa dùng (gọi từ cron hàng đêm).
+   */
+  async expireOutdatedPoints(): Promise<{ expiredCount: number; pointsDeducted: number }> {
+    const now = new Date();
+    const expiredPointLogs = await this.prisma.loyalty_point_logs.findMany({
+      where: {
+        delta: { gt: 0 },
+        reason: "earn_rental",
+        expiresAt: { lte: now },
+      },
+      select: {
+        id: true,
+        customerId: true,
+        delta: true,
+      },
+    });
+
+    let expiredCount = 0;
+    let pointsDeducted = 0;
+
+    for (const log of expiredPointLogs) {
+      const alreadyHandled = await this.prisma.loyalty_point_logs.findFirst({
+        where: {
+          customerId: log.customerId,
+          reason: "points_expired",
+          meta: { path: ["expiredLogId"], equals: log.id },
+        },
+      });
+      if (alreadyHandled) continue;
+
+      await this.prisma.runSerializable(async (tx) => {
+        const user = await tx.userAccount.findUnique({
+          where: { id: log.customerId },
+          select: { loyaltyPoints: true },
+        });
+        if (!user || user.loyaltyPoints <= 0) return;
+
+        const deduct = Math.min(user.loyaltyPoints, log.delta);
+        if (deduct <= 0) return;
+
+        await tx.$executeRaw`
+          UPDATE "user_accounts"
+          SET
+            "loyalty_points" = GREATEST(0, "loyalty_points" - ${deduct}),
+            "updated_at"     = now()
+          WHERE "id" = ${log.customerId}::uuid
+        `;
+
+        const newBalance = user.loyaltyPoints - deduct;
+        await tx.loyalty_point_logs.create({
+          data: {
+            customerId: log.customerId,
+            delta: -deduct,
+            reason: "points_expired",
+            meta: { expiredLogId: log.id, originalPoints: log.delta, note: "Điểm thưởng hết hạn sau 12 tháng" },
+            balanceAfter: newBalance,
+          },
+        });
+
+        expiredCount += 1;
+        pointsDeducted += deduct;
+      });
+    }
+
+    return { expiredCount, pointsDeducted };
   }
 
   async getMyHistory(customerId: string, cursor?: string) {

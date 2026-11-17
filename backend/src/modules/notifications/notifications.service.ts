@@ -263,6 +263,27 @@ const DEFAULT_TEMPLATES: NotificationTemplateMap = {
     channels: ["email"],
     enabled: true,
   },
+  "loyalty.tier_expiration_warning": {
+    subject: "Hạng thành viên của bạn sắp hết hạn",
+    title: "Nhắc hạn thành viên {{tierName}}",
+    body: "Hạng {{tierName}} của bạn sẽ hết hạn vào ngày {{expiresAt}} (còn {{daysRemaining}} ngày). Bạn cần tích lũy thêm {{pointsNeeded}} điểm chu kỳ để duy trì quyền lợi hạng.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "loyalty.tier_renewed": {
+    subject: "Chúc mừng gia hạn thành công hạng thành viên",
+    title: "Gia hạn thành công {{tierName}}",
+    body: "Chúc mừng bạn đã tích đủ điểm duy trì và được gia hạn thêm 12 tháng hạng {{tierName}} đến ngày {{expiresAt}}.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
+  "loyalty.tier_downgraded": {
+    subject: "Thông báo điều chỉnh hạng thành viên",
+    title: "Thay đổi hạng thành viên",
+    body: "Chu kỳ 12 tháng của hạng {{oldTierName}} đã kết thúc. Hạng thành viên hiện tại của bạn đã được chuyển sang {{newTierName}}.",
+    channels: ["inApp", "email"],
+    enabled: true,
+  },
   "refund.approved": {
     subject: "Đã hoàn cọc",
     title: "Hoàn cọc thành công",

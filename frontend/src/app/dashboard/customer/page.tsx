@@ -233,6 +233,7 @@ export default function CustomerDashboardPage() {
 
   // Inspection report modal state
   const [inspectingBooking, setInspectingBooking] = useState<BookingResponse | null>(null);
+  const [returnGuideBooking, setReturnGuideBooking] = useState<BookingResponse | null>(null);
   const [inspectionSessions, setInspectionSessions] = useState<InspectionSessionResponse[]>([]);
   const [loadingInspections, setLoadingInspections] = useState(false);
   const [customerLightboxUrl, setCustomerLightboxUrl] = useState<string | null>(null);
@@ -1322,12 +1323,13 @@ export default function CustomerDashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <Link
-                      href={`/booking/success?bookingId=${b.id}`}
+                    <button
+                      type="button"
+                      onClick={() => setReturnGuideBooking(b)}
                       className="shrink-0 rounded-full bg-red-700 px-3.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-red-800 active:scale-[0.98]"
                     >
                       Xử lý hoàn trả
-                    </Link>
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1776,6 +1778,132 @@ export default function CustomerDashboardPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Overdue Return Instructions Modal */}
+      {mounted && returnGuideBooking && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 sm:p-4 md:p-6 backdrop-blur-sm animate-in fade-in duration-200"
+          data-lenis-prevent
+          onClick={() => setReturnGuideBooking(null)}
+        >
+          <div
+            className="relative flex flex-col max-h-[92vh] w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-stone-200 overflow-hidden"
+            data-lenis-prevent
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex shrink-0 items-start justify-between border-b border-sand bg-parchment p-5 sm:p-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-700">
+                  <RotateCcw className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-display text-lg font-bold text-ink sm:text-xl">
+                    Hướng dẫn hoàn trả đơn quá hạn
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Đơn #{returnGuideBooking.id.slice(0, 8).toUpperCase()} · Quá hạn trả {returnGuideBooking.overdueDays} ngày
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReturnGuideBooking(null)}
+                className="rounded-full p-1 text-stone-400 hover:bg-sand/40 hover:text-stone-700 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="overflow-y-auto p-5 sm:p-6 space-y-4 text-xs text-stone-700">
+              {/* Financial Box */}
+              <div className="rounded-xl border border-red-200 bg-red-50/70 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-600">Hạn trả dự kiến ban đầu:</span>
+                  <span className="font-medium text-stone-900">{formatDate(returnGuideBooking.rentalEndDate)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-stone-600">Phụ phí quá hạn hiện tại (10.000đ/ngày):</span>
+                  <span className="font-bold text-red-700 font-sans tabular-nums">
+                    {formatVND(returnGuideBooking.overdueAmount ?? 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-red-200 pt-2">
+                  <span className="text-stone-600">Tiền cọc đang giữ:</span>
+                  <span className="font-semibold text-stone-900 font-sans tabular-nums">
+                    {formatVND(returnGuideBooking.depositTotal ?? 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-bold text-ink">
+                  <span>Dự kiến cọc hoàn lại:</span>
+                  <span className="text-emerald-700 font-sans tabular-nums text-sm">
+                    {formatVND(Math.max(0, (Number(returnGuideBooking.depositTotal) || 0) - (returnGuideBooking.overdueAmount ?? 0)))}
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-500 italic mt-1">
+                  * Phí quá hạn sẽ dừng tính ngay khi Atelier nhận lại đồ. Tiền cọc sẽ được hoàn trả tự động vào tài khoản sau khi hoàn tất kiểm tra tình trạng trang phục.
+                </p>
+              </div>
+
+              {/* Instructions */}
+              <div className="space-y-3">
+                <h4 className="font-bold text-stone-900 text-sm flex items-center gap-1.5">
+                  <Store className="h-4 w-4 text-lotus" />
+                  Phương thức gửi trả trang phục:
+                </h4>
+
+                <div className="rounded-xl border border-sand bg-mist/30 p-3.5 space-y-1.5">
+                  <p className="font-semibold text-ink">Cách 1: Trả trực tiếp tại Atelier (Khuyên dùng)</p>
+                  <p className="text-stone-600">
+                    Mang đồ trực tiếp đến xưởng tại địa chỉ Atelier. Nghệ nhân sẽ kiểm tra tình trạng áo và quyết toán cọc ngay tại quầy cho bạn trong 15 phút.
+                  </p>
+                  <p className="text-stone-500 font-medium text-[11px]">
+                    Giờ mở cửa: 08:30 – 21:00 (tất cả các ngày trong tuần)
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-sand bg-mist/30 p-3.5 space-y-1.5">
+                  <p className="font-semibold text-ink">Cách 2: Gửi chuyển phát hoặc gọi shipper</p>
+                  <p className="text-stone-600">
+                    Đóng gói trang phục kèm đầy đủ phụ kiện (nếu có). Ghi rõ ngoài gói hàng: <strong className="text-ink">#{returnGuideBooking.id.slice(0, 8).toUpperCase()} - SĐT của bạn</strong>.
+                  </p>
+                  <p className="text-stone-500 font-medium text-[11px]">
+                    Người nhận: Xưởng Cổ Phục Rental · SĐT nhận đồ: 0988 776 655
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-sand bg-parchment/60 p-4 sm:p-5">
+              <a
+                href="tel:0988776655"
+                className="inline-flex items-center gap-1.5 rounded-full border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-700 shadow-2xs hover:border-lotus hover:text-lotus transition active:scale-[0.98]"
+              >
+                <PhoneCall className="h-3.5 w-3.5 text-lotus" />
+                Hotline hỗ trợ: 0988 776 655
+              </a>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/booking/success?bookingId=${returnGuideBooking.id}`}
+                  className="rounded-full border border-sand bg-white px-4 py-2 text-xs font-semibold text-stone-700 shadow-2xs hover:bg-sand/30 transition active:scale-[0.98]"
+                >
+                  Xem chi tiết đơn
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setReturnGuideBooking(null)}
+                  className="rounded-full bg-stone-900 px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-stone-800 transition active:scale-[0.98]"
+                >
+                  Đã hiểu
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* Confirm Action Dialog */}

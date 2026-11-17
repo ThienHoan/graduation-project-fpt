@@ -3527,6 +3527,11 @@ export type LoyaltyInfo = {
     targetPoints: number;
   } | null;
   tierBenefits: string[];
+  tierExpiresAt?: string | null;
+  tierUpdatedAt?: string | null;
+  cyclePoints?: number;
+  maintainPointsNeeded?: number;
+  daysRemaining?: number | null;
 };
 
 export type LoyaltyPointLog = {
